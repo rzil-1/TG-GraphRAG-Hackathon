@@ -1,6 +1,8 @@
 import logging
 import json
 import time
+import boto3
+import re 
 from typing import Dict, List
 
 from agent.agent_graph import TigerGraphAgentGraph
@@ -101,6 +103,36 @@ class TigerGraphAgent:
 
         logger.debug(f"request_id={req_id_cv.get()} agent initialized")
 
+
+    def replace_s3_urls_with_presigned(self, content, expires_in=3600):
+        """
+        Detects S3 URLs in the content and replaces them with presigned URLs.
+        Args:
+            content (str): The text content to process.
+            expires_in (int): Expiration time for the presigned URL in seconds.
+        Returns:
+            str: The content with S3 URLs replaced by presigned URLs.
+        """
+        
+        s3_url_pattern = r's3://([\w\-\.]+)/([\w\-\./]+)'
+        s3 = boto3.client('s3')
+
+        def presign(match):
+            bucket, key = match.group(1), match.group(2)
+            try:
+                url = s3.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': bucket, 'Key': key},
+                    ExpiresIn=expires_in
+                )
+                return url
+            except Exception as e:
+                logger.error(f"Failed to presign S3 url for s3://{bucket}/{key}: {e}")
+                return match.group(0)
+
+        return re.sub(s3_url_pattern, presign, content)
+
+    
     def question_for_agent(
         self, question: str, conversation: List[Dict[str, str]] = None
     ):
@@ -148,7 +180,17 @@ class TigerGraphAgent:
                     LogWriter.info(f"request_id={req_id_cv.get()} executed node {key}")
 
             LogWriter.info(f"request_id={req_id_cv.get()} EXIT question_for_agent")
+           
+           
+            from common.llm_services.aws_bedrock_service import AWSBedrock
+
+        # ... inside question_for_agent, after value["answer"] is set:
+        if isinstance(self.llm, AWSBedrock):
+            answer_with_presigned = self.replace_s3_urls_with_presigned(value["answer"])
+            return answer_with_presigned
+        else:
             return value["answer"]
+        
         except Exception as e:
             metrics.llm_query_error_total.labels(self.model_name).inc()
             LogWriter.error(f"request_id={req_id_cv.get()} FAILURE question_for_agent")
