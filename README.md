@@ -228,7 +228,8 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
     "llm_config": {
         "embedding_service": {
             "embedding_model_service": "bedrock",
-            "model_name":"amazon.titan-embed-text-v1",
+            "model_name":"amazon.titan-embed-text-v2",
+            "region_name":"us-west-2",
             "authentication_configuration": {
                 "AWS_ACCESS_KEY_ID": "ACCESS_KEY",
                 "AWS_SECRET_ACCESS_KEY": "SECRET"
@@ -236,7 +237,8 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
         },
         "completion_service": {
             "llm_service": "bedrock",
-            "llm_model": "anthropic.claude-3-haiku-20240307-v1:0",
+            "llm_model": "anthropic.claude-3-5-haiku-20241022-v1:0",
+            "region_name":"us-west-2",
             "authentication_configuration": {
                 "AWS_ACCESS_KEY_ID": "ACCESS_KEY",
                 "AWS_SECRET_ACCESS_KEY": "SECRET"
