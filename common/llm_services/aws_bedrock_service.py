@@ -14,7 +14,7 @@
 
 import os
 import boto3
-from langchain_community.chat_models import BedrockChat
+from langchain_aws import ChatBedrock
 import logging
 from common.llm_services import LLM_Model
 from common.logs.log import req_id_cv
@@ -37,9 +37,10 @@ class AWSBedrock(LLM_Model):
                 "AWS_SECRET_ACCESS_KEY"
             ],
         )
-        self.llm = BedrockChat(
+        self.llm = ChatBedrock(
             client=client,
             model_id=model_name,
+            region_name=config.get("region_name", "us-east-1"),
             model_kwargs=config.get("model_kwargs", {"temperature": 0}),
         )
 
