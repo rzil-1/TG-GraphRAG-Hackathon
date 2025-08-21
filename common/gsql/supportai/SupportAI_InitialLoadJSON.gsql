@@ -1,4 +1,4 @@
-CREATE LOADING JOB load_documents_content_json {
+CREATE LOADING JOB load_documents_content_json@uuid@ {
     //this is the loading job used for AWS data automation by lambda function
     DEFINE FILENAME DocumentContent;
     LOAD DocumentContent TO VERTEX Document VALUES(gsql_lower($"doc_id"), gsql_current_time_epoch(0), _, _) USING JSON_FILE="true";
