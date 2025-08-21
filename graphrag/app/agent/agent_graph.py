@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import boto3
+import re
 import json
 import logging
 from typing import Dict, List, Optional
@@ -31,6 +33,7 @@ from typing_extensions import TypedDict
 
 from common.logs.log import req_id_cv
 from common.py_schemas import GraphRAGResponse, MapQuestionToSchemaResponse
+from common.llm_services.aws_bedrock_service import AWSBedrock
 
 logger = logging.getLogger(__name__)
 
@@ -228,9 +231,9 @@ class TigerGraphAgentGraph:
         step = retriever.search(
             state["question"],
             indices=["Document", "DocumentChunk", "Entity", "Relationship"],
-            top_k=5,
+            top_k=3,
             num_seen_min=2,
-            num_hops=3,
+            num_hops=2,
         )
 
         query_name = "GraphRAG_Hybrid_Search"
@@ -390,6 +393,8 @@ class TigerGraphAgentGraph:
             state["context"]["reasoning"] = list(set(citations))
 
         try:
+            if isinstance(self.llm_provider, AWSBedrock):
+                answer.generated_answer = self.replace_s3_urls_with_presigned(answer.generated_answer)
             resp = GraphRAGResponse(
                 natural_language_response=answer.generated_answer,
                 answered_question=True,
@@ -406,6 +411,49 @@ class TigerGraphAgentGraph:
         state["answer"] = resp
 
         return state
+
+
+    def replace_s3_urls_with_presigned(self, content, expires_in=3600):
+        """
+        Recursively detects S3 URLs in content (string, list, or dict) 
+        and replaces them with presigned URLs.
+        
+        Args:
+            content (Any): String, dict, or list containing potential S3 URLs.
+            expires_in (int): Expiration time for the presigned URL in seconds.
+        
+        Returns:
+            Any: Content with S3 URLs replaced by presigned URLs (same type as input).
+        """
+        
+        s3_url_pattern = r's3://([\w\-.]+)/([\w\-\./]+)'
+        s3 = boto3.client('s3')
+
+        def presign(match):
+            bucket, key = match.group(1), match.group(2)
+            try:
+                url = s3.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': bucket, 'Key': key},
+                    ExpiresIn=expires_in
+                )
+                return url
+            except Exception as e:
+                logger.error(f"Failed to presign S3 url for s3://{bucket}/{key}: {e}")
+                return match.group(0)
+
+        def process(value):
+            if isinstance(value, str):
+                return re.sub(s3_url_pattern, presign, value)
+            elif isinstance(value, list):
+                return [process(v) for v in value]
+            elif isinstance(value, dict):
+                return {k: process(v) for k, v in value.items()}
+            else:
+                return value
+
+        return process(content)
+
 
     def rewrite_question(self, state):
         """

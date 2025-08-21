@@ -1,10 +1,7 @@
 import logging
 import json
 import time
-import boto3
-import re 
 from typing import Dict, List
-from common.llm_services.aws_bedrock_service import AWSBedrock
 from agent.agent_graph import TigerGraphAgentGraph
 from agent.Q import Q
 from fastapi import WebSocket
@@ -104,47 +101,6 @@ class TigerGraphAgent:
         logger.debug(f"request_id={req_id_cv.get()} agent initialized")
 
 
-    def replace_s3_urls_with_presigned(self, content, expires_in=3600):
-        """
-        Recursively detects S3 URLs in content (string, list, or dict) 
-        and replaces them with presigned URLs.
-        
-        Args:
-            content (Any): String, dict, or list containing potential S3 URLs.
-            expires_in (int): Expiration time for the presigned URL in seconds.
-        
-        Returns:
-            Any: Content with S3 URLs replaced by presigned URLs (same type as input).
-        """
-        
-        s3_url_pattern = r's3://([\w\-.]+)/([\w\-\./]+)'
-        s3 = boto3.client('s3')
-
-        def presign(match):
-            bucket, key = match.group(1), match.group(2)
-            try:
-                url = s3.generate_presigned_url(
-                    'get_object',
-                    Params={'Bucket': bucket, 'Key': key},
-                    ExpiresIn=expires_in
-                )
-                return url
-            except Exception as e:
-                logger.error(f"Failed to presign S3 url for s3://{bucket}/{key}: {e}")
-                return match.group(0)
-
-        def process(value):
-            if isinstance(value, str):
-                return re.sub(s3_url_pattern, presign, value)
-            elif isinstance(value, list):
-                return [process(v) for v in value]
-            elif isinstance(value, dict):
-                return {k: process(v) for k, v in value.items()}
-            else:
-                return value
-
-        return process(content)
-
     
     def question_for_agent(
         self, question: str, conversation: List[Dict[str, str]] = None
@@ -194,17 +150,7 @@ class TigerGraphAgent:
 
             LogWriter.info(f"request_id={req_id_cv.get()} EXIT question_for_agent")
            
-           
-            
-
-            # ... inside question_for_agent, after value["answer"] is set:
-            if isinstance(self.llm, AWSBedrock):
-                logger.info(f"""replacing s3 urls with presigned urls for {value["answer"]}""")
-                #answer_with_presigned = self.replace_s3_urls_with_presigned(value["answer"])
-                answer_with_presigned = value["answer"]
-                return answer_with_presigned
-            else:
-                return value["answer"]
+            return value["answer"]
         
         except Exception as e:
             metrics.llm_query_error_total.labels(self.model_name).inc()
