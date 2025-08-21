@@ -4,7 +4,7 @@ import time
 import boto3
 import re 
 from typing import Dict, List
-
+from common.llm_services.aws_bedrock_service import AWSBedrock
 from agent.agent_graph import TigerGraphAgentGraph
 from agent.Q import Q
 from fastapi import WebSocket
@@ -106,15 +106,18 @@ class TigerGraphAgent:
 
     def replace_s3_urls_with_presigned(self, content, expires_in=3600):
         """
-        Detects S3 URLs in the content and replaces them with presigned URLs.
+        Recursively detects S3 URLs in content (string, list, or dict) 
+        and replaces them with presigned URLs.
+        
         Args:
-            content (str): The text content to process.
+            content (Any): String, dict, or list containing potential S3 URLs.
             expires_in (int): Expiration time for the presigned URL in seconds.
+        
         Returns:
-            str: The content with S3 URLs replaced by presigned URLs.
+            Any: Content with S3 URLs replaced by presigned URLs (same type as input).
         """
         
-        s3_url_pattern = r's3://([\w\-\.]+)/([\w\-\./]+)'
+        s3_url_pattern = r's3://([\w\-.]+)/([\w\-\./]+)'
         s3 = boto3.client('s3')
 
         def presign(match):
@@ -130,7 +133,17 @@ class TigerGraphAgent:
                 logger.error(f"Failed to presign S3 url for s3://{bucket}/{key}: {e}")
                 return match.group(0)
 
-        return re.sub(s3_url_pattern, presign, content)
+        def process(value):
+            if isinstance(value, str):
+                return re.sub(s3_url_pattern, presign, value)
+            elif isinstance(value, list):
+                return [process(v) for v in value]
+            elif isinstance(value, dict):
+                return {k: process(v) for k, v in value.items()}
+            else:
+                return value
+
+        return process(content)
 
     
     def question_for_agent(
@@ -182,7 +195,7 @@ class TigerGraphAgent:
             LogWriter.info(f"request_id={req_id_cv.get()} EXIT question_for_agent")
            
            
-            from common.llm_services.aws_bedrock_service import AWSBedrock
+            
 
             # ... inside question_for_agent, after value["answer"] is set:
             if isinstance(self.llm, AWSBedrock):
