@@ -367,7 +367,7 @@ class TigerGraphAgentGraph:
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
             try:
-                context_data_str = json.dumps(state["context"]["result"])
+                context_data_str = json.dumps(state["context"]["result"], indent=2)
             except (TypeError, ValueError) as e:
                 logger.error(f"Failed to serialize context to JSON: {e}")
                 raise ValueError("Invalid context data format. Unable to convert to JSON.")

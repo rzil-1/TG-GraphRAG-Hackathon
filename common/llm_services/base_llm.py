@@ -141,6 +141,7 @@ Format: {format_instructions}\
         prompt ="""Given the answer context in JSON format, rephrase it to answer the question. \n
                    Use only the provided information in context without adding any reasoning or additional logic. \n
                    Make sure all information in the answer are covered in the generated answer.\n
+
                    Question: {question} \n
                    Answer: {context} \n
                    Format: {format_instructions}"""

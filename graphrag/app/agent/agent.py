@@ -184,12 +184,14 @@ class TigerGraphAgent:
            
             from common.llm_services.aws_bedrock_service import AWSBedrock
 
-        # ... inside question_for_agent, after value["answer"] is set:
-        if isinstance(self.llm, AWSBedrock):
-            answer_with_presigned = self.replace_s3_urls_with_presigned(value["answer"])
-            return answer_with_presigned
-        else:
-            return value["answer"]
+            # ... inside question_for_agent, after value["answer"] is set:
+            if isinstance(self.llm, AWSBedrock):
+                logger.info(f"""replacing s3 urls with presigned urls for {value["answer"]}""")
+                #answer_with_presigned = self.replace_s3_urls_with_presigned(value["answer"])
+                answer_with_presigned = value["answer"]
+                return answer_with_presigned
+            else:
+                return value["answer"]
         
         except Exception as e:
             metrics.llm_query_error_total.labels(self.model_name).inc()
