@@ -256,14 +256,16 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
 {
     "llm_config": {
         "embedding_service": {
-            "embedding_model_service": "openai",
-            "model_name": "GPT-4o",
+            "embedding_model_service": "ollama",
+            "base_url": "http://ollama:11434",
+            "model_name": "nomic-embed-text",
+            "dimensions": 768,
             "authentication_configuration": {
-                "OPENAI_API_KEY": ""
             }
         },
         "completion_service": {
             "llm_service": "ollama",
+            "base_url": "http://ollama:11434",
             "llm_model": "calebfahlgren/natural-functions",
             "model_kwargs": {
                 "temperature": 0.0000001

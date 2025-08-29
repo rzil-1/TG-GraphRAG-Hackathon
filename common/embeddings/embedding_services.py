@@ -6,6 +6,7 @@ from typing import List
 from langchain.schema.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_ollama import OllamaEmbeddings
 
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
@@ -23,14 +24,16 @@ class EmbeddingModel(Embeddings):
         """Initialize an EmbeddingModel
         Read JSON config file and export the details as environment variables.
         """
-        for auth_detail in config["authentication_configuration"].keys():
-            os.environ[auth_detail] = config["authentication_configuration"][
-                auth_detail
-            ]
+        if "authentication_configuration" in config:
+            for auth_detail in config["authentication_configuration"].keys():
+                os.environ[auth_detail] = config["authentication_configuration"][
+                    auth_detail
+                ]
         self.embeddings = None
         self.model_name = model_name
+        self.dimensions = config.get("dimensions", 1536)
         LogWriter.info(
-            f"request_id={req_id_cv.get()} instantiated AI model_name={model_name}"
+            f"request_id={req_id_cv.get()} instantiated AI model_name={model_name} with dimensions={self.dimensions}"
         )
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -171,8 +174,6 @@ class GenAI_Embedding(EmbeddingModel):
         super().__init__(config, model_name=config.get("model_name", "gemini-embedding-exp-03-07"))
 
         self.embeddings = GoogleGenerativeAIEmbeddings(model=self.model_name)
-        self.dimensions = config.get("dimensions", 1536)
-
 
 
 class AWS_Bedrock_Embedding(EmbeddingModel):
@@ -195,3 +196,21 @@ class AWS_Bedrock_Embedding(EmbeddingModel):
             ],
         )
         self.embeddings = BedrockEmbeddings(client=client)
+
+
+class Ollama_Embedding(EmbeddingModel):
+    """Ollama Embedding Model"""
+
+    def __init__(self, config):
+        from langchain_ollama import OllamaEmbeddings
+
+        super().__init__(config=config, model_name=config.get("model_name", "llama2"))
+
+        # Get Ollama configuration from config
+        base_url = config.get("base_url", "http://localhost:11434")
+        model_name = config.get("model_name", "llama3")
+
+        self.embeddings = OllamaEmbeddings(
+            model=model_name,
+            base_url=base_url
+        )
