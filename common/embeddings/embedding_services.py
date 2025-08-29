@@ -6,6 +6,7 @@ from typing import List
 from langchain.schema.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_ollama import OllamaEmbeddings
 
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
@@ -195,3 +196,21 @@ class AWS_Bedrock_Embedding(EmbeddingModel):
             ],
         )
         self.embeddings = BedrockEmbeddings(client=client)
+
+
+class Ollama_Embedding(EmbeddingModel):
+    """Ollama Embedding Model"""
+
+    def __init__(self, config):
+        from langchain_ollama import OllamaEmbeddings
+
+        super().__init__(config=config, model_name=config.get("model_name", "llama2"))
+
+        # Get Ollama configuration from config
+        base_url = config.get("base_url", "http://localhost:11434")
+        model_name = config.get("model_name", "llama3")
+
+        self.embeddings = OllamaEmbeddings(
+            model=model_name,
+            base_url=base_url
+        )
