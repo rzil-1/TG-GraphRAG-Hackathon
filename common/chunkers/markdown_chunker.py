@@ -19,8 +19,8 @@ class MarkdownChunker(BaseChunker):
     
     def __init__(
         self,
-        chunk_size: int = 4192,
-        chunk_overlap: int = 256
+        chunk_size: int = 1024,
+        chunk_overlap: int = 0
     ):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
