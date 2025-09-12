@@ -4,6 +4,7 @@ import uuid
 import logging
 import boto3
 import time
+import re
 
 from pyTigerGraph import TigerGraphConnection
 
@@ -124,18 +125,21 @@ def trigger_bedrock_bda(bucket_name, output_bucket):
     bda_runtime_client = boto3.client('bedrock-data-automation-runtime')
 
     try:
+        # there is a bug in AWS bedrock, it does not delete projects properly, so here 
+        # we generate random project name each time below
         # Delete existing project if it exists
-        existing_projects = bda_client.list_data_automation_projects()["projects"]
-        for project in existing_projects:
-            if project["projectName"] == "barclays-preprocessing-project":
-                bda_client.delete_data_automation_project(projectArn=project["projectArn"])
-                time.sleep(2)
-                break
+        # existing_projects = bda_client.list_data_automation_projects()["projects"]
+        # for project in existing_projects:
+        #     if project["projectName"] == "barclays-preprocessing-project":
+        #         bda_client.delete_data_automation_project(projectArn=project["projectArn"])
+        #         time.sleep(2)
+        #         break
 
         # Create BDA project
+        project_name = f"bda-preprocessing-{uuid.uuid4().hex[:6]}"
         project_response = bda_client.create_data_automation_project(
-            projectName='barclays-preprocessing-project6',
-            projectDescription='Preprocessing project for Barclays data',
+            projectName=project_name,
+            projectDescription='Preprocessing multi data formats using bedrock data automation',
             projectStage='DEVELOPMENT',
             standardOutputConfiguration={
                 "document": {
@@ -253,11 +257,10 @@ def create_ingest(
 
     if ingest_config.data_source.lower() == "s3":
         data_conn = ingest_config.data_source_config
-        if (
-            data_conn.get("aws_access_key") is None
-            or data_conn.get("aws_secret_key") is None
-        ):
-            raise Exception("AWS credentials not provided")
+        if data_conn.get("aws_access_key") is None:
+            raise Exception("AWS access key is missing in data_source_config")
+        if data_conn.get("aws_secret_key") is None:
+            raise Exception("AWS secret key is missing in data_source_config")
         connector = {
             "type": "s3",
             "access.key": data_conn["aws_access_key"],
@@ -269,22 +272,22 @@ def create_ingest(
         )
 
         if ingest_config.file_format.lower() == "multi":
-            lambda_arn = ingest_config.data_source_config["lambda_arn"]
+           
             bucket_name = ingest_config.data_source_config["bucket_name"]
             output_bucket = ingest_config.data_source_config["output_bucket"]
 
             try:
-                lambda_result = trigger_bedrock_bda(
+                bedrock_bda_result = trigger_bedrock_bda(
                     bucket_name, output_bucket)
-                if lambda_result.get("statusCode") != 200:
-                    raise Exception(f"Lambda failed: {lambda_result}")
-                body = lambda_result.get("body")
+                if bedrock_bda_result.get("statusCode") != 200:
+                    raise Exception(f"Bedrock BDA failed: {bedrock_bda_result}")
+                body = bedrock_bda_result.get("body")
                 if not body:
-                    raise Exception("Lambda response missing 'body'")
+                    raise Exception("Bedrock BDA response missing 'body'")
                 jobs = json.loads(body).get("jobs")
                 if not jobs or not jobs[0].get("output_json_path"):
                     raise Exception(
-                        "No output_json_path found in Lambda result")
+                        "No output_json_path found in Bedrock BDA result")
                 output_json_path = jobs[0]["output_json_path"]
                 ingest_config.data_source_config["data_path"] = output_json_path
                 ingest_config.file_format = "json"
@@ -306,26 +309,30 @@ def create_ingest(
                         key = obj['Key']
                         if key.endswith('/0/standard_output/0/result.md'):
                             path_parts = key.split('/')
+                            print(f"Path parts: {path_parts}")
                             if len(path_parts) >= 7:
                                 pdf_name = path_parts[3]
-                                file_uuid = path_parts[4] if len(
-                                    path_parts) <= 9 else "/".join(path_parts[4:-4])
-                                response = s3_client.get_object(
-                                    Bucket=bucket_name, Key=key)
-                                content = response['Body'].read().decode(
-                                    'utf-8')
+                                file_uuid = path_parts[4] if len(path_parts) <= 9 else "/".join(path_parts[4:-4])
+                                response = s3_client.get_object(Bucket=bucket_name, Key=key)
+                                content = response['Body'].read().decode('utf-8')
                                 base_path = f"bda/output/BarclaysDocs/{pdf_name}/{file_uuid}/0/standard_output/0/assets/"
-                                import re
-                                content = re.sub(
-                                    r'!\[([^\]]*)\]\(\./([^)]+)\)', lambda m: f'![{m.group(1)}](s3://{bucket_name}/{base_path}{m.group(2)})', content)
-                                # doc_id = f"{pdf_name}"
+                                
+                                # Find and log image matches before replacement
+                                matches = re.findall(r'!\[([^\]]*)\]\(\./([^)]+)\)', content)
+                                content = re.sub(r'!\[([^\]]*)\]\(\./([^)]+)\)', lambda m: f'![{m.group(1)}](s3://{bucket_name}/{base_path}{m.group(2)})', content)
+                                doc_id = f"{pdf_name}"
+                                processed_files.append({
+                                    'file_path': key,
+                                    'doc_id': doc_id,
+                                })
                                 # payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
                                 # Loading into TigerGraph is now handled elsewhere.
                 logger.info(
                     f"Processed {len(processed_files)} markdown files from S3 and loaded into TigerGraph.")
                 # --- End: S3 markdown extraction and TigerGraph loading ---
             except Exception as e:
-                logger.error(f"Error during Lambda preprocessing: {e}")
+                logger.error(f"Error during Bedrock BDA preprocessing: {e}")
+                return {"error": str(e), "stage": "bedrock_bda_preprocessing"}
                 
     elif ingest_config.data_source.lower() == "azure":
         if ingest_config.data_source_config.get("account_key") is not None:
