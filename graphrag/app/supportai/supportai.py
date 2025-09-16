@@ -257,10 +257,11 @@ def create_ingest(
 
     if ingest_config.data_source.lower() == "s3":
         data_conn = ingest_config.data_source_config
-        if data_conn.get("aws_access_key") is None:
-            raise Exception("AWS access key is missing in data_source_config")
-        if data_conn.get("aws_secret_key") is None:
-            raise Exception("AWS secret key is missing in data_source_config")
+        if (
+            data_conn.get("aws_access_key") is None
+            or data_conn.get("aws_secret_key") is None
+        ):
+            raise Exception("AWS credentials not provided")
         connector = {
             "type": "s3",
             "access.key": data_conn["aws_access_key"],
@@ -392,6 +393,9 @@ def create_ingest(
     if ingest_config.data_source.lower() == "local":
         res["data_source_id"] = "DocumentContent"
     else:
+        logger.info(
+            f"Creating data source with {data_stream_conn}"
+        )
         data_source_created = conn.gsql(
             "USE GRAPH {}\n".format(graphname) + data_stream_conn
         )
