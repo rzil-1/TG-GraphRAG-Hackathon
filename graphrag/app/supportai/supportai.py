@@ -119,10 +119,11 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
     return schema_res, index_res, query_res
 
 
-def trigger_bedrock_bda(bucket_name, output_bucket):
-    s3 = boto3.client('s3')
-    bda_client = boto3.client('bedrock-data-automation')
-    bda_runtime_client = boto3.client('bedrock-data-automation-runtime')
+def trigger_bedrock_bda(bucket_name, output_bucket, region):
+    s3 = boto3.client('s3', region_name=region)
+    bda_client = boto3.client('bedrock-data-automation', region_name=region)
+    bda_runtime_client = boto3.client('bedrock-data-automation-runtime', region_name=region)
+    
 
     try:
         # there is a bug in AWS bedrock, it does not delete projects properly, so here 
@@ -274,12 +275,13 @@ def create_ingest(
 
         if ingest_config.file_format.lower() == "multi":
            
-            bucket_name = ingest_config.data_source_config["bucket_name"]
-            output_bucket = ingest_config.data_source_config["output_bucket"]
+            bucket_name = data_conn["bucket_name"]
+            output_bucket = data_conn["output_bucket"]
+            region_name = data_conn["region_name"]
 
             try:
                 bedrock_bda_result = trigger_bedrock_bda(
-                    bucket_name, output_bucket)
+                    bucket_name, output_bucket, region_name)
                 if bedrock_bda_result.get("statusCode") != 200:
                     raise Exception(f"Bedrock BDA failed: {bedrock_bda_result}")
                 body = bedrock_bda_result.get("body")
@@ -393,9 +395,7 @@ def create_ingest(
     if ingest_config.data_source.lower() == "local":
         res["data_source_id"] = "DocumentContent"
     else:
-        logger.info(
-            f"Creating data source with {data_stream_conn}"
-        )
+        
         data_source_created = conn.gsql(
             "USE GRAPH {}\n".format(graphname) + data_stream_conn
         )
