@@ -88,7 +88,6 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
     onOpen: () => {
       // Send authentication credentials
       queryGraphragWs2(localStorage.getItem("creds")!);
-      console.log("WebSocket connection established to " + WS_URL);
       
       // Send RAG pattern
       sendMessage(localStorage.getItem("ragPattern") || "Hybrid Search");
@@ -96,6 +95,7 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
       // Send conversation ID (or "new" for new conversation)
       const conversationId = conversationManager.getCurrentConversationId();
       const conversationIdToSend = conversationId || "new";
+      console.log("WebSocket connection " + conversationIdToSend + " established to " + WS_URL);
       sendMessage(conversationIdToSend);
     },
   });

@@ -53,6 +53,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { FaPaperclip } from "react-icons/fa6";
 import { useEffect } from "react";
 import { conversationManager } from "../actions/ActionProvider";
+import { useNavigate } from "react-router-dom";
 
 // TODO make dynamic
 const WS_HISTORY_URL = "/ui/user";
@@ -60,11 +61,11 @@ const WS_CONVO_URL = "/ui/conversation";
 
 const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetConversationId?: any }) => {
   const getTheme = useTheme().theme;
-  // const [conhistory, setConHistory] = useState([])
-  const [conversationId, setConversationId] = useState([])
-  const [conversationId2, setConversationId2] = useState([])
-  const [newSet, setNewSet] = useState([])
-
+  // const [conhistory, setConHistory] = useState([]);
+  const [conversationId, setConversationId] = useState([]);
+  const [conversationId2, setConversationId2] = useState([]);
+  const [newSet, setNewSet] = useState([]);
+  const navigate = useNavigate();
   
 
   const fetchHistory2 = async () => {
@@ -100,6 +101,12 @@ const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetCon
     return new Date(dateString).toLocaleDateString(undefined, options)
   }
 
+  const handleNewChat = () => {
+    conversationManager.startNewConversation();
+    navigate("/chat");
+    //window.location.reload();
+  };
+
   // eslint-disable-next-line
   // @ts-ignore
   const resumeConvo = async (id):any => {
@@ -123,7 +130,8 @@ const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetCon
     localStorage.setItem('selectedConversationData', JSON.stringify(data));
     
     // Reload the page to restart the WebSocket connection with the new conversation ID
-    window.location.reload();
+    navigate("/chat");
+    //window.location.reload();
   }
 
   const renderConvoHistory = () => {
@@ -345,10 +353,7 @@ const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetCon
 
       <div 
         className="gradient rounded-lg h-[44px] flex items-center justify-center mx-5 mt-5 text-white cursor-pointer"
-        onClick={() => {
-          conversationManager.startNewConversation();
-          window.location.reload();
-        }}
+        onClick={() => handleNewChat()}
       >
         + New Chat
       </div>
