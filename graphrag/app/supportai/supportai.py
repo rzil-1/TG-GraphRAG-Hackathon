@@ -167,7 +167,7 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
         logger.info(f"Found {len(objects)} objects in S3 bucket {bucket_name}")
         job_results = []
 
-        # Create BDA job for each file
+        # Launch all BDA jobs first and collect job_arns
         for obj in objects:
             time.sleep(2)
             file_key = obj['Key']
@@ -187,27 +187,34 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
                 },
                 dataAutomationProfileArn='arn:aws:bedrock:us-west-2:734036167395:data-automation-profile/us.data-automation-v1'
             )
-            logger.info(f"Created BDA job for file {file_key} with job ID {bda_response.get('invocationArn')}") 
-                
-                # Poll for job status
-            job_arn = bda_response.get('invocationArn')  
-            while True:
-                status_response = bda_runtime_client.get_data_automation_status(invocationArn=job_arn)
-                status = status_response.get('status')
-                logger.info(f"BDA job {job_arn} status: {status}")
-                if status in ['Success', 'FAILED', 'STOPPED']: #Success, InProgress
-                    break
-                time.sleep(3)  # Wait before polling again
-            logger.info(f"Completed polling for BDA job {job_arn}")
-            if status != 'Success':
-                logger.error(f"BDA job {job_arn} failed with status: {status}")
-                # Optionally, handle failure here
-            logger.info(f"Appending results for BDA job {job_arn}")
+            job_arn = bda_response.get('invocationArn')
+            logger.info(f"Created BDA job for file {file_key} with job ID {job_arn}")
             job_results.append({
                 'file': file_key,
                 'jobId': job_arn,
-                'status': status
+                'status': None
             })
+
+        # Poll all jobs' statuses
+        for job in job_results:
+            job_arn = job['jobId']
+            file_key = job['file']
+            while True:
+                status_response = bda_runtime_client.get_data_automation_status(invocationArn=job_arn)
+                status = status_response.get('status')
+                if status in ['Success', 'FAILED', 'STOPPED']:
+                    if status not in ['Success']:
+                        logger.info(f"ERROR: job not success for {job_arn} on file {file_key}with end status {status}")
+                    else:
+                        logger.info(f"BDA job {job_arn} on file {file_key} completed successfully.")
+                    break     
+                time.sleep(3)
+            logger.info(f"Completed polling for BDA job {job_arn}")
+            if status != 'Success':
+                logger.error(f"BDA job {job_arn} failed with status: {status}")
+            logger.info(f"Appending results for BDA job {job_arn}")
+            job['status'] = status
+
         logger.info(f"Created {len(job_results)} BDA jobs")
         return {
             'statusCode': 200,
@@ -314,18 +321,7 @@ def create_ingest(
                     f"Starting S3 markdown extraction and TigerGraph loading...")
                 
                 jobs = bedrock_bda_result.get("body")
-                if isinstance(jobs, str):
-                    jobs = json.loads(jobs).get("jobs", [])
-
-                all_success = all(job.get("status") == "Success" for job in jobs)
-
-                if all_success:
-                    # Proceed with next steps
-                    print("All BDA jobs succeeded.")
-                else:
-                    # Handle failure
-                    failed_jobs = [job for job in jobs if job.get("status") != "Success"]
-                    print(f"Some jobs failed: {failed_jobs}")
+                
                                 
                 
                 s3 = boto3.client('s3', region_name=region_name, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
@@ -334,11 +330,6 @@ def create_ingest(
              
                 TG_instance_payloads = []  
                  # Initialize connection
-                conn = tg.TigerGraphConnection(host=data_conn["host"], 
-                                   graphname=data_conn["graphname"], 
-                                   username="tigergraph", 
-                                   password="tigergraph",
-                                   restppPort="14240")
                
 
                 paginator = s3.get_paginator('list_objects_v2')
@@ -347,6 +338,8 @@ def create_ingest(
                 
                 load_job_created = conn.gsql("USE GRAPH {}\n".format(data_conn["graphname"]) + ingest_template)
                 load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
+                res["load_job_id"] = load_job_id
+                res["data_source_id"] = "DocumentContent"
                 for page in pages:
                     if 'Contents' not in page:
                         continue
@@ -370,13 +363,14 @@ def create_ingest(
                                 payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
                                 
                                 #CALL API 
-                                conn.runLoadingJobWithData(payload, "DocumentContent", load_job_id, None, None, 16000, 128000000)
+                                conn.runLoadingJobWithData(payload, "DocumentContent", load_job_id)
                                 processed_files.append({
                                     'file_path': key,
                                     'doc_id': doc_id,
                                 })
                                 # payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
                                 # Loading into TigerGraph is now handled elsewhere.
+                                
                 logger.info(f"check bda results all completed {bedrock_bda_result} and jobs are {jobs}")
                 logger.info(
                     f"Processed {len(processed_files)} markdown files from S3 and loaded into TigerGraph.")
@@ -384,7 +378,9 @@ def create_ingest(
             except Exception as e:
                 logger.error(f"Error during Bedrock BDA preprocessing: {e}")
                 return {"error": str(e), "stage": "bedrock_bda_preprocessing"}
-        return res
+            logger.info(f"load_job_created: {load_job_created}")
+            logger.info(f"res: {res}")
+            return res
                 
     elif ingest_config.data_source.lower() == "azure":
         if ingest_config.data_source_config.get("account_key") is not None:
@@ -436,8 +432,9 @@ def create_ingest(
         raise Exception("Data source not implemented")
 
     load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
-
+    logger.info(f"load_job_created: {load_job_created}")
     res["load_job_id"] = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
+    logger.info(f"res: {res}")
     if ingest_config.data_source_config:
         res["data_path"] = ingest_config.data_source_config.get("data_path", "")
 

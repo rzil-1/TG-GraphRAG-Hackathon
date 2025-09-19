@@ -132,18 +132,18 @@ def ingest(
         else:
             raise e
     
+    log_section = res.split(
+        "Running the following loading job in background with '-noprint' option:"
+    )[1]
+    # Try to extract 'Job name' or 'Log directory'
+    if "Job name: " in log_section:
+        log_location = log_section.split("Job name: ")[1].split("\n")[0]
+    else:
+        log_location = log_section.split("Log directory: ")[1].split("\n")[0]
     return {
         "job_name": loader_info.load_job_id,
-        "job_id": res.split(
-            "Running the following loading job in background with '-noprint' option:"
-        )[1]
-        .split("Jobid: ")[1]
-        .split("\n")[0],
-        "log_location": res.split(
-            "Running the following loading job in background with '-noprint' option:"
-        )[1]
-        .split("Job name: ")[1]
-        .split("\n")[0],
+        "job_id": log_section.split("Jobid: ")[1].split("\n")[0],
+        "log_location": log_location,
     }
 
 
