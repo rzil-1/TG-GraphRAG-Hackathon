@@ -124,8 +124,13 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
     s3 = boto3.client('s3', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     bda_client = boto3.client('bedrock-data-automation', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     bda_runtime_client = boto3.client('bedrock-data-automation-runtime', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
+    
+    # Get AWS account ID from STS
+    sts_client = boto3.client('sts', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
+    account_id = sts_client.get_caller_identity()['Account']
 
 
+    project_arn = None
     try:
         # there is a bug in AWS bedrock, it does not delete projects properly, so here 
         # we generate random project name each time below
@@ -185,7 +190,7 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
                     'dataAutomationProjectArn': project_arn,
                     'stage': 'DEVELOPMENT'
                 },
-                dataAutomationProfileArn='arn:aws:bedrock:us-west-2:734036167395:data-automation-profile/us.data-automation-v1'
+                dataAutomationProfileArn=f'arn:aws:bedrock:{region}:{account_id}:data-automation-profile/us.data-automation-v1'
             )
             job_arn = bda_response.get('invocationArn')
             logger.info(f"Created BDA job for file {file_key} with job ID {job_arn}")
@@ -216,6 +221,7 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
             job['status'] = status
 
         logger.info(f"Created {len(job_results)} BDA jobs")
+        
         return {
             'statusCode': 200,
             'body': json.dumps({
@@ -229,6 +235,17 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
+    
+    finally:
+        # Clean up: Delete the BDA project after all jobs are completed
+        if project_arn:
+            try:
+                logger.info(f"Cleaning up BDA project: {project_arn}")
+                delete_response = bda_client.delete_data_automation_project(projectArn=project_arn)
+                logger.info(f"Successfully deleted BDA project: {delete_response}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to delete BDA project {project_arn}: {cleanup_error}")
+                # Don't fail the entire operation if cleanup fails
 
 
 def create_ingest(
