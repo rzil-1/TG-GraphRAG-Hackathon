@@ -81,6 +81,44 @@ async def stream_docs(
     logger.info("closing docs chan")
     docs_chan.close()
 
+async def stream_chunks(
+    conn: AsyncTigerGraphConnection,
+    extract_chan: Channel,
+    embed_chan: Channel,
+    ttl_batches: int = 10,
+):
+    """
+    Streams the chunk contents into the extract_chan and embed_chan
+    """
+    logger.info("streaming chunks")
+    for i in range(ttl_batches):
+        chunk_ids = await stream_ids(conn, "DocumentChunk", i, ttl_batches)
+        if chunk_ids["error"]:
+            continue
+            
+        for c in chunk_ids["ids"]:
+            try:
+                async with tg_sem:
+                    res = await conn.runInstalledQuery(
+                        "StreamChunkContent",
+                        params={"chunk": c},
+                    )
+                content = res[0]["ChunkContent"][0]["attributes"]["text"].encode('utf-8').decode('unicode_escape')
+                logger.info("chunk writes to extract_chan")
+                await extract_chan.put((content, c))
+
+                # send chunks to be embedded
+                logger.info("chunk writes to embed_chan")
+                await embed_chan.put((c, content, "DocumentChunk"))
+            except Exception as e:
+                exc = traceback.format_exc()
+                logger.error(f"Error retrieving chunk: {c} --> {e}\n{exc}")
+                continue  # try retrieving the next doc
+
+
+    logger.info("stream_chunks done")
+    logger.info("closing extract_chan")
+    await extract_chan.put(None)
 
 async def chunk_docs(
     conn: AsyncTigerGraphConnection,
@@ -109,11 +147,9 @@ async def chunk_docs(
                 raise
 
     logger.info("Chunk Processing End")
-
-    # close the extract chan -- chunk_doc is the only sender
-    # and chunk_doc calls are kicked off from here
+    
     logger.info("closing extract_chan")
-    extract_chan.close()
+    await extract_chan.put(None)
 
 
 async def upsert(upsert_chan: Channel):
@@ -248,6 +284,7 @@ async def extract(
     embed_chan: Channel,
     extractor: BaseExtractor,
     conn: AsyncTigerGraphConnection,
+    num_senders: int,
 ):
     """
     Creates and starts one worker for each extract job
@@ -257,13 +294,20 @@ async def extract(
     logger.info("Entity Extration Start")
     # consume task queue
     async with asyncio.TaskGroup() as grp:
+        done_count = 0
         while True:
             try:
                 item = await extract_chan.get()
-                if entity_extraction_switch:
-                    grp.create_task(
-                        workers.extract(upsert_chan, embed_chan, extractor, conn, *item)
-                    )
+                if item is None:  # sender finished
+                    done_count += 1
+                    if done_count == num_senders:
+                        logger.info("All senders finished, exiting extract.")
+                        break
+                else:
+                    if entity_extraction_switch:
+                        grp.create_task(
+                            workers.extract(upsert_chan, embed_chan, extractor, conn, *item)
+                        )
             except ChannelClosed:
                 break
             except Exception:
@@ -271,7 +315,8 @@ async def extract(
 
     logger.info("Entity Extration End")
 
-    logger.info("closing upsert and embed chan")
+    logger.info("closing extract, upsert and embed chan")
+    extract_chan.close()
     upsert_chan.close()
     embed_chan.close()
 
@@ -497,6 +542,8 @@ async def run(graphname: str, conn: AsyncTigerGraphConnection):
         embed_chan = Channel()
         upsert_chan = Channel()
         extract_chan = Channel()
+        num_chunk_senders = 2
+
         async with asyncio.TaskGroup() as grp:
             # get docs
             grp.create_task(stream_docs(conn, docs_chan, 100))
@@ -504,6 +551,9 @@ async def run(graphname: str, conn: AsyncTigerGraphConnection):
             grp.create_task(
                 chunk_docs(conn, docs_chan, embed_chan, upsert_chan, extract_chan)
             )
+            # process existing chunks
+            grp.create_task(stream_chunks(conn, extract_chan, embed_chan, 100))
+
             # upsert chunks
             grp.create_task(upsert(upsert_chan))
             grp.create_task(load(conn))
@@ -511,7 +561,7 @@ async def run(graphname: str, conn: AsyncTigerGraphConnection):
             grp.create_task(embed(embed_chan, embedding_store, graphname))
             # extract entities
             grp.create_task(
-                extract(extract_chan, upsert_chan, embed_chan, extractor, conn)
+                extract(extract_chan, upsert_chan, embed_chan, extractor, conn, num_chunk_senders)
             )
     logger.info("Join docs_chan")
     await docs_chan.join()

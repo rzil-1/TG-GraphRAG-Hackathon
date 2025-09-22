@@ -36,17 +36,18 @@ class TigerGraphConnectionProxy:
     def _req(self, method: str, url: str, authMode: str = "token", *args, **kwargs):
         # we always use token auth
         # always use proxy endpoint in GUI for restpp and gsql
+        # logger.info(f"Requesting {method} {url} with authMode {authMode} and args {args} and kwargs {kwargs}")
         if self.auth_mode == "pwd":
             return self.original_req(method, url, authMode, *args, **kwargs)
         else:
             return self.original_req(method, url, "token", *args, **kwargs)
 
-    def _runInstalledQuery(self, query_name, params, usePost=False):
+    def _runInstalledQuery(self, query_name, params, sizeLimit=None, usePost=False):
         start_time = time.time()
         metrics.tg_inprogress_requests.labels(query_name=query_name).inc()
         try:
             restppid = self._tg_connection.runInstalledQuery(
-                query_name, params, runAsync=True, usePost=usePost
+                query_name, params, runAsync=True, usePost=usePost, sizeLimit=sizeLimit
             )
             LogWriter.info(
                 f"request_id={req_id_cv.get()} query {query_name} started with RESTPP ID {restppid}"
@@ -54,9 +55,9 @@ class TigerGraphConnectionProxy:
             result = None
             while not result:
                 ret = self._tg_connection.checkQueryStatus(restppid)
-                LogWriter.info(f"Ret: {ret}")
+                #LogWriter.info(f"Ret: {ret}")
                 if not ret:
-                    time.sleep(0.1)
+                    time.sleep(1)
                     continue
                 if ret[0]["status"].lower() == "success":
                     LogWriter.info(
@@ -72,7 +73,7 @@ class TigerGraphConnectionProxy:
                             result = None
                             if i >= 9:
                                 raise e
-                            time.sleep(0.1)
+                            time.sleep(1)
                 elif ret[0]["status"].lower() == "aborted":
                     LogWriter.error(
                         f"request_id={req_id_cv.get()} query {query_name} with RESTPP ID {restppid} aborted"
@@ -87,6 +88,8 @@ class TigerGraphConnectionProxy:
                     raise Exception(
                         f"Query {query_name} with restppid {restppid} timed out"
                     )
+                else:
+                    time.sleep(1) # Still running, wait for 1 second
             success = True
         except Exception as e:
             LogWriter.error(f"Error running query {query_name}: {str(e)}")

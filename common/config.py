@@ -91,6 +91,13 @@ if embedding_config is None:
     raise Exception("embedding_service is not found in llm_config")
 embedding_dimension = embedding_config.get("dimensions", 1536)
 
+# Get context window size from llm_config
+# -1 means unlimited tokens (no truncation), otherwise use the specified limit
+token_limit = llm_config.get("token_limit", 1000000)    # 1000000 tokens is the default context window size for GPT-4
+
+# Get encoding name from llm_config
+encoding_name = llm_config.get("encoding_name", "cl100k_base")    # Default to GPT-4 encoding
+
 if graphrag_config is None:
     graphrag_config = {"reuse_embedding": True}
 if "chunker" not in graphrag_config:

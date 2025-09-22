@@ -144,7 +144,7 @@ async def upsert_chunk(conn: AsyncTigerGraphConnection, doc_id, chunk_id, chunk)
         conn,
         "DocumentChunk",
         chunk_id,
-        attributes={"epoch_added": date_added, "idx": int(chunk_id.split("_")[-1])},
+        attributes={"epoch_added": date_added, "epoch_processed": date_added, "idx": int(chunk_id.split("_")[-1])},
     )
     await util.upsert_vertex(
         conn,

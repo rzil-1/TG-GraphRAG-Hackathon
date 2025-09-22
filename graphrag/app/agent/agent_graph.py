@@ -31,6 +31,7 @@ from typing_extensions import TypedDict
 
 from common.logs.log import req_id_cv
 from common.py_schemas import GraphRAGResponse, MapQuestionToSchemaResponse
+from common.config import graphrag_config
 
 logger = logging.getLogger(__name__)
 
@@ -228,9 +229,9 @@ class TigerGraphAgentGraph:
         step = retriever.search(
             state["question"],
             indices=["Document", "DocumentChunk", "Entity", "Relationship"],
-            top_k=5,
-            num_seen_min=2,
-            num_hops=3,
+            top_k=graphrag_config.get("top_k", 5),
+            num_seen_min=graphrag_config.get("num_seen_min", 2),
+            num_hops=graphrag_config.get("num_hops", 2),
         )
 
         query_name = "GraphRAG_Hybrid_Search"
@@ -259,7 +260,7 @@ class TigerGraphAgentGraph:
         step = retriever.search(
             state["question"],
             index="DocumentChunk",
-            top_k=5
+            top_k=graphrag_config.get("top_k", 5)
         )
 
         query_name = "Content_Similarity_Search"
@@ -287,7 +288,7 @@ class TigerGraphAgentGraph:
         step = retriever.search(
             state["question"],
             index="DocumentChunk",
-            top_k=3
+            top_k=graphrag_config.get("top_k", 5)
         )
 
         query_name = "Chunk_Sibling_Search"
@@ -314,9 +315,9 @@ class TigerGraphAgentGraph:
         )
         step = retriever.search(
             state["question"],
-            community_level=2,
-            top_k=5,
-            with_chunk=True,
+            community_level=graphrag_config.get("community_level", 2),
+            top_k=graphrag_config.get("top_k", 5),
+            with_chunk=graphrag_config.get("with_chunk", True),
         )
 
         query_name = "GraphRAG_Community_Search"
@@ -372,7 +373,7 @@ class TigerGraphAgentGraph:
                 logger.error(f"Failed to serialize context to JSON: {e}")
                 raise ValueError("Invalid context data format. Unable to convert to JSON.")
 
-            answer = step.generate_answer(state["question"], context_data_str)
+            answer = step.generate_answer(state["question"], state["context"]["result"])
 
         elif state["lookup_source"] == "cypher":
             logger.debug_pii(

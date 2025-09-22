@@ -3,6 +3,8 @@ from common.embeddings.base_embedding_store import EmbeddingStore
 from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.llm_services.base_llm import LLM_Model
 from common.py_schemas import CandidateScore, CandidateGenerator
+from common.utils import TokenCalculator
+from common.config import completion_config
 
 from langchain_core.output_parsers import StrOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
@@ -27,6 +29,7 @@ class BaseRetriever:
         self.embedding_store = embedding_store
         self.embedding_store.set_graphname(connection.graphname)
         self.logger = logging.getLogger(__name__)
+        self.token_calculator = TokenCalculator(config=completion_config)
 
     def _install_query(self, query_name):
         with open(f"common/gsql/supportai/retrievers/{query_name}.gsql", "r") as f:
@@ -125,6 +128,18 @@ class BaseRetriever:
         return questions
 
     def _generate_response(self, question, retrieved, verbose):
+        # Truncate retrieved sources to fit within token limit
+        if not self.token_calculator.is_unlimited_tokens():
+            # Reserve tokens for question, query, and format instructions (approximately 1000 tokens)
+            max_context_tokens = self.token_calculator.get_max_context_tokens() - 1000
+
+            if len(retrieved) > max_context_tokens:
+                retrieved_tokens = self.token_calculator.count_tokens(retrieved)
+                if retrieved_tokens > max_context_tokens:
+                    retrieved = self.token_calculator.truncate_context_to_token_limit(retrieved)
+                    self.logger.info(f"Truncated context from {retrieved_tokens} to {self.token_calculator.count_tokens(retrieved)} tokens")
+
+        
         model = self.llm_service.llm
         prompt = self.llm_service.supportai_response_prompt
 
