@@ -119,7 +119,7 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
     return schema_res, index_res, query_res
 
 
-def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_secret_key):
+def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_secret_key, data_source_config={}):
     logger.info(f"Triggering Bedrock Data Automation {region}")
     s3 = boto3.client('s3', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     bda_client = boto3.client('bedrock-data-automation', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
@@ -129,6 +129,12 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
     sts_client = boto3.client('sts', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     account_id = sts_client.get_caller_identity()['Account']
 
+    # Set default configuration values
+    # Configure granularity options
+    granularity_types = data_source_config.get('granularity', ["DOCUMENT", "ELEMENT"])
+
+    # Configure text format options
+    text_format_types = data_source_config.get('text_format', ["MARKDOWN"])
 
     project_arn = None
     try:
@@ -153,12 +159,12 @@ def trigger_bedrock_bda(bucket_name, output_bucket, region, aws_access_key, aws_
             standardOutputConfiguration={
                 "document": {
                     "extraction": {
-                        "granularity": {"types": ["DOCUMENT", "PAGE", "ELEMENT", "LINE", "WORD"]},
+                        "granularity": {"types": granularity_types},
                         "boundingBox": {"state": "ENABLED"}
                     },
                     "generativeField": {"state": "ENABLED"},
                     "outputFormat": {
-                        "textFormat": {"types": ["PLAIN_TEXT", "MARKDOWN", "HTML", "CSV"]},
+                        "textFormat": {"types": text_format_types},
                         "additionalFileFormat": {"state": "ENABLED"}
                     }
                 }}
@@ -301,16 +307,16 @@ def create_ingest(
     res = {"data_source": ingest_config.data_source.lower()}
 
     if ingest_config.data_source.lower() == "s3":
-        data_conn = ingest_config.data_source_config
+        data_config = ingest_config.data_source_config
         if (
-            data_conn.get("aws_access_key") is None
-            or data_conn.get("aws_secret_key") is None
+            data_config.get("aws_access_key") is None
+            or data_config.get("aws_secret_key") is None
         ):
             raise Exception("AWS credentials not provided")
         connector = {
             "type": "s3",
-            "access.key": data_conn["aws_access_key"],
-            "secret.key": data_conn["aws_secret_key"],
+            "access.key": data_config["aws_access_key"],
+            "secret.key": data_config["aws_secret_key"],
         }
 
         data_stream_conn = data_stream_conn.replace(
@@ -319,15 +325,15 @@ def create_ingest(
 
         if ingest_config.file_format.lower() == "multi":
            
-            bucket_name = data_conn["bucket_name"]
-            output_bucket = data_conn["output_bucket"]
-            region_name = data_conn["region_name"]
-            aws_access_key = data_conn["aws_access_key"]
-            aws_secret_key = data_conn["aws_secret_key"]
+            bucket_name = data_config["bucket_name"]
+            output_bucket = data_config["output_bucket"]
+            region_name = data_config["region_name"]
+            aws_access_key = data_config["aws_access_key"]
+            aws_secret_key = data_config["aws_secret_key"]
           
             try:
                 bedrock_bda_result = trigger_bedrock_bda(
-                    bucket_name, output_bucket, region_name, aws_access_key, aws_secret_key)
+                    bucket_name, output_bucket, region_name, aws_access_key, aws_secret_key, data_config)
                 if bedrock_bda_result.get("statusCode") != 200:
                     raise Exception(f"Bedrock BDA failed: {bedrock_bda_result}")
                
@@ -342,7 +348,7 @@ def create_ingest(
                                 
                 
                 s3 = boto3.client('s3', region_name=region_name, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
-                output_bucket = data_conn["output_bucket"]
+                output_bucket = data_config["output_bucket"]
                 prefix = 'bda/output/'
              
                 TG_instance_payloads = []  
@@ -353,7 +359,7 @@ def create_ingest(
                 pages = paginator.paginate(Bucket=output_bucket, Prefix=prefix)
                 processed_files = []
                 
-                load_job_created = conn.gsql("USE GRAPH {}\n".format(data_conn["graphname"]) + ingest_template)
+                load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
                 load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
                 res["load_job_id"] = load_job_id
                 res["data_source_id"] = "DocumentContent"
