@@ -1,5 +1,6 @@
 import "react-chatbot-kit/build/main.css";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Chatbot from "react-chatbot-kit";
 import ActionProvider from "../actions/ActionProvider.js";
 import config from "../actions/config.js";
@@ -21,8 +22,9 @@ import {
 const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getConversationId?:any }) => {
   const [store, setStore] = useState<any>();
   const [currentDate, setCurrentDate] = useState('');
-  const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || 'pyTigerGraphRAG');
+  const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || 'TigerGraphRAG');
   const [ragPattern, setRagPattern] = useState(localStorage.getItem("ragPattern") || 'Hybrid Search');
+  const navigate = useNavigate();
 
   useEffect(() => {
     const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
@@ -37,13 +39,14 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
   const handleSelect = (value) => {
     setSelectedGraph(value);
     localStorage.setItem("selectedGraph", value);
-    window.location.reload();
+    navigate("/chat");
+    //window.location.reload();
   };
 
   const handleSelectRag = (value) => {
     setRagPattern(value);
     localStorage.setItem("ragPattern", value);
-    window.location.reload();
+    //window.location.reload();
   };
 
   return (

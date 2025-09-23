@@ -5,7 +5,9 @@
 > - **Limitations:** No official support is provided unless delivered through a Statement of Work (SOW) with the Solutions team. Customizations are customer-owned self-service to handle custom LLM service, prompt logic, UI integration, and pipeline orchestration. This project is provided "as is" without any warranties or guarantees.
 
 ## Releases
-* **6/18/2025: GraphRAG is available now officially v1.0 (v1.0.0). Please see [Release Notes](https://docs.tigergraph.com/tg-graphrag/current/release-notes/) for details.
+* **9/22/2025: GraphRAG is available now officially v1.1 (v1.1.0). AWS Bedrock support is completed with BDA integration for multimodal document ingestion.
+* **6/18/2025: GraphRAG is available now officially v1.0 (v1.0.0). TigerGraph database is the only graph and vector storagge supported.
+Please see [Release Notes](https://docs.tigergraph.com/tg-graphrag/current/release-notes/) for details.
 
 ## Overview
 
@@ -46,6 +48,24 @@ The quickest way to access TigerGraph GraphRAG is to deploy its docker image wit
 * TigerGraph DB 4.2+.
 * API key of your LLM provider. (An LLM provider refers to a company or organization that offers Large Language Models (LLMs) as a service. The API key verifies the identity of the requester, ensuring that the request is coming from a registered and authorized user or application.) Currently, GraphRAG supports the following LLM providers: OpenAI, Azure OpenAI, GCP, AWS Bedrock.
 
+#### Deploy with Kubernetes
+* Step 1: Get kubernetes deployment file
+  - Download the [graphrag-k8s.yml](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/graphrag-k8s.yml) file directly
+
+* Step 2: Set up configurations
+  Next, in the same directory as the Kubernetes deployment file is in, create a `configs` directory and download the following configuration files:
+  * [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/configs/server_config.json)
+
+  Update the TigerGraph database information, LLM API keys and other configs accordingly.
+
+* Step 3: Start all services
+  Replace `/path/to/graphrag/configs` with the absolute path of the `configs` folder inside `graphrag-k8s.yml`, and update the TigerGraph database information and other configs accordingly.
+
+  Now, simply run `kubectl apply -f graphrag-k8s.yml` and wait for all the services to start.
+
+> Note: Nginx Ingress should be installed using `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.2.1/deploy/static/provider/cloud/deploy.yaml`
+
+
 #### Deploy with Docker Compose
 * Step 1: Get docker-compose file
   - Download the [docker-compose.yml](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/docker-compose.yml) file directly
@@ -85,7 +105,7 @@ This line can be changed to support different logging levels.
 
 * Step 4: Start all services
 
-  Uncomment `tigergraph` section from `docker-compose.yaml` if it's commented out. Please follow the [instructions](https://github.com/tigergraph/ecosys/blob/master/tutorials/GSQL.md#set-up-environment) to download TigerGraph docker image.
+  Uncomment `tigergraph` section from `docker-compose.yml` if it's commented out. Please follow the [instructions](https://github.com/tigergraph/ecosys/blob/master/tutorials/GSQL.md#set-up-environment) to download TigerGraph docker image.
 
   Now, simply run `docker compose up -d` and wait for all the services to start.
 
@@ -258,14 +278,16 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
 {
     "llm_config": {
         "embedding_service": {
-            "embedding_model_service": "openai",
-            "model_name": "GPT-4o",
+            "embedding_model_service": "ollama",
+            "base_url": "http://ollama:11434",
+            "model_name": "nomic-embed-text",
+            "dimensions": 768,
             "authentication_configuration": {
-                "OPENAI_API_KEY": ""
             }
         },
         "completion_service": {
             "llm_service": "ollama",
+            "base_url": "http://ollama:11434",
             "llm_model": "calebfahlgren/natural-functions",
             "model_kwargs": {
                 "temperature": 0.0000001

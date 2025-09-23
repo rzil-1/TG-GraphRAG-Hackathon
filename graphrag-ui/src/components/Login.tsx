@@ -35,18 +35,19 @@ const WS_URL = "/ui/ui-login";
 
 export function Login() {
   const { i18n, t } = useTranslation();
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState("");
   const [token, setToken] = useState(localStorage.getItem("site") || "");
+  const [hint, setHint] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
-    setUser(parseStore);
+    setToken(parseStore);
   }, []);
 
   const loginAction = async (data: z.infer<typeof formSchema>) => {
     const creds = btoa(`${data.email}:${data.password}`);
-    localStorage.setItem("creds", creds);
+    const username = data.email;
 
     const res = await fetch("/ui/ui-login", {
         method: "POST",
@@ -57,18 +58,23 @@ export function Login() {
 
     if (res.ok) {
       const data = await res.json();
+      localStorage.setItem("creds", creds);
       localStorage.setItem("site", JSON.stringify(data));
-        navigate("/chat");
+      setUser(username);
+      localStorage.setItem("username", username);
+      navigate("/chat");
     } else {
       // setError("Invalid credentials"); // This line was removed from the new_code, so it's removed here.
+      setHint("Invalid credentials");
+      navigate("/");
     }
   };
 
   const logOut = () => {
-    setUser(null);
+    setUser("");
     setToken("");
     localStorage.removeItem("site");
-    navigate("/login");
+    navigate("/");
   };
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -145,12 +151,12 @@ export function Login() {
             {t("submit")}
           </Button>
 
-          {/* <div className="inline-flex items-center justify-center w-full">
+          { <div className="inline-flex items-center justify-center w-full">
             <hr className="w-full h-px my-8 border-0 bg-gray-200 dark:bg-gray-700" />
             <span className="absolute px-3 text-xs bg-background dark:border-[#3D3D3D] text-gray-900 -translate-x-1/2 left-1/2 dark:text-white">
-              {t("noAccount")}
+              {hint}
             </span>
-          </div> */}
+          </div> }
 
           {/* <a href="#" className="text-xs text-center block !text-tigerOrange">
             {t("signUp")}

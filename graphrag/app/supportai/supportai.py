@@ -124,7 +124,7 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
     s3 = boto3.client('s3', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     bda_client = boto3.client('bedrock-data-automation', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     bda_runtime_client = boto3.client('bedrock-data-automation-runtime', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
-    
+
     # Get AWS account ID from STS
     sts_client = boto3.client('sts', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     account_id = sts_client.get_caller_identity()['Account']
@@ -138,7 +138,7 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
 
     project_arn = None
     try:
-        # there is a bug in AWS bedrock, it does not delete projects properly, so here 
+        # there is a bug in AWS bedrock, it does not delete projects properly, so here
         # we generate random project name each time below
         # Delete existing project if it exists
         # existing_projects = bda_client.list_data_automation_projects()["projects"]
@@ -151,7 +151,7 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
         # Create BDA project
         logger.info(f"Creating BDA project")
         project_name = f"bda-preprocessing-{uuid.uuid4().hex[:6]}"
-        logger.info(f"Created before  BDA project {project_name}")   
+        logger.info(f"Created before  BDA project {project_name}")
         project_response = bda_client.create_data_automation_project(
             projectName=project_name,
             projectDescription='Preprocessing multi data formats using bedrock data automation',
@@ -169,7 +169,7 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
                     }
                 }}
         )
-        
+
         project_arn = project_response['projectArn']
         logger.info(f"Created after BDA project {project_name} with ARN {project_arn}")
         # Get file names from S3
@@ -218,7 +218,7 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
                         logger.info(f"ERROR: job not success for {job_arn} on file {file_key}with end status {status}")
                     else:
                         logger.info(f"BDA job {job_arn} on file {file_key} completed successfully.")
-                    break     
+                    break
                 time.sleep(1)
             if status != 'Success':
                 logger.error(f"BDA job {job_arn} failed with status: {status}")
@@ -227,7 +227,7 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
             job['status'] = status
 
         logger.info(f"Accomplished {len(job_results)} BDA jobs")
-        
+
         return {
             'statusCode': 200,
             'message': f'Processed {len(job_results)} BDA jobs',
@@ -239,7 +239,7 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
             'statusCode': 500,
             'error': str(e)
         }
-    
+
     finally:
         # Clean up: Delete the BDA project after all jobs are completed
         if project_arn:
@@ -322,35 +322,34 @@ def create_ingest(
         )
 
         if ingest_config.file_format.lower() == "multi":
-           
+
             input_bucket = data_config["input_bucket"]
             output_bucket = data_config["output_bucket"]
             region_name = data_config["region_name"]
             aws_access_key = data_config["aws_access_key"]
             aws_secret_key = data_config["aws_secret_key"]
-          
+
             try:
                 bedrock_bda_result = trigger_bedrock_bda(
                     input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_config)
                 if bedrock_bda_result.get("statusCode") != 200:
                     raise Exception(f"Bedrock BDA failed: {bedrock_bda_result}")
-               
-                
+
                 #status check of bda, start once completion
                 # --- Begin: S3 markdown extraction and TigerGraph loading ---
                 logger.info(
                     f"Starting S3 markdown extraction and TigerGraph loading...")
-                
+
                 job_uids = [job.get("jobId").split("/")[-1] for job in bedrock_bda_result.get("jobs")]
-                
+
                 s3 = boto3.client('s3', region_name=region_name, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
                 output_bucket = data_config["output_bucket"]
                 prefix = 'bda/output/'
-               
+
                 paginator = s3.get_paginator('list_objects_v2')
                 pages = paginator.paginate(Bucket=output_bucket, Prefix=prefix)
                 processed_files = []
-                
+
                 load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
                 load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
                 res["load_job_id"] = load_job_id
@@ -371,15 +370,15 @@ def create_ingest(
                                 response = s3.get_object(Bucket=output_bucket, Key=key)
                                 content = response['Body'].read().decode('utf-8')
                                 base_path = "/".join(path_parts[:-1]) + "/assets/"
-                                
+
                                 # Find and log image matches before replacement
                                 matches = re.findall(r'!\[([^\]]*)\]\(\./([^)]+)\)', content)
                                 content = re.sub(r'!\[([^\]]*)\]\(\./([^)]+)\)', lambda m: f'![{m.group(1)}](s3://{output_bucket}/{base_path}{m.group(2)})', content)
                                 doc_id = f"{file_name}"
                                 # Prepare API payload
                                 payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
-                                
-                                #CALL API 
+
+                                #CALL API
                                 conn.runLoadingJobWithData(payload, "DocumentContent", load_job_id)
                                 processed_files.append({
                                     'file_path': key,
@@ -395,7 +394,7 @@ def create_ingest(
                 logger.error(f"Error during Bedrock BDA preprocessing: {e}")
                 return {"error": str(e), "stage": "bedrock_bda_preprocessing"}
             return res
-                
+
     elif ingest_config.data_source.lower() == "azure":
         if ingest_config.data_source_config.get("account_key") is not None:
             connector = {
@@ -455,7 +454,6 @@ def create_ingest(
     if ingest_config.data_source.lower() == "local":
         res["data_source_id"] = "DocumentContent"
     else:
-        
         data_source_created = conn.gsql(
             "USE GRAPH {}\n".format(graphname) + data_stream_conn
         )

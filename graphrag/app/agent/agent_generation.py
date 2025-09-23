@@ -59,7 +59,6 @@ class TigerGraphAgentGenerator:
             format_instructions=answer_parser.get_format_instructions()
         )
 
-        logger.info(f"full_prompt is {full_prompt}")
         # Chain
         rag_chain = prompt | self.llm.model | answer_parser
 

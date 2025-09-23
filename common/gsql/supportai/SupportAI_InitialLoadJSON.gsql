@@ -5,6 +5,3 @@ CREATE LOADING JOB load_documents_content_json_@uuid@ {
 
     LOAD DocumentContent TO EDGE HAS_CONTENT VALUES(gsql_lower($"doc_id") Document, gsql_lower($"doc_id") Content) USING JSON_FILE="true";
 }
-
-
-

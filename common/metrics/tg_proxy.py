@@ -105,7 +105,6 @@ class TigerGraphConnectionProxy:
                 ).inc()
             else:
                 metrics.tg_query_success_total.labels(query_name=query_name).inc()
-        logger.info(f"Result is {result} for query {query_name} with RESTPP ID {restppid}")
         return result
 
     def __del__(self):

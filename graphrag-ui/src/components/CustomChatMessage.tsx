@@ -84,11 +84,11 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
 
   return (
     <>
-      {typeof message === "string" ? (console.log("message", message), (
+      {typeof message === "string" ? (
         <div className="text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
           <Markdown className="typewriter">{message}</Markdown>
         </div>
-      )) : message.key === null ? (
+      ) : message.key === null ? (
         message
       ) : (
         <div className="flex flex-col w-full relative">

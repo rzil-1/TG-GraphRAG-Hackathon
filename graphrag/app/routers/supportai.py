@@ -113,7 +113,6 @@ def ingest(
         raise Exception("Data source id not provided")
 
     try:
-       
         res = conn.gsql(
             'USE GRAPH {}\nRUN LOADING JOB -noprint {} USING {}="{}"'.format(
                 graphname,
@@ -122,7 +121,6 @@ def ingest(
                 "$" + loader_info.data_source_id + ":" + loader_info.file_path,
             )
         )
-        
     except Exception as e:
         if (
             "Running the following loading job in background with '-noprint' option:"
@@ -131,7 +129,7 @@ def ingest(
             res = str(e)
         else:
             raise e
-    
+
     log_section = res.split(
         "Running the following loading job in background with '-noprint' option:"
     )[1]

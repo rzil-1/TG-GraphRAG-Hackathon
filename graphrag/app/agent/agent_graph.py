@@ -370,7 +370,7 @@ class TigerGraphAgentGraph:
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
             try:
-                context_data_str = json.dumps(state["context"]["result"], indent=2)
+                context_data_str = json.dumps(state["context"]["result"])
             except (TypeError, ValueError) as e:
                 logger.error(f"Failed to serialize context to JSON: {e}")
                 raise ValueError("Invalid context data format. Unable to convert to JSON.")
@@ -417,15 +417,15 @@ class TigerGraphAgentGraph:
         """
         Recursively detects S3 URLs in content (string, list, or dict) 
         and replaces them with presigned URLs.
-        
+
         Args:
             content (Any): String, dict, or list containing potential S3 URLs.
             expires_in (int): Expiration time for the presigned URL in seconds.
-        
+
         Returns:
             Any: Content with S3 URLs replaced by presigned URLs (same type as input).
         """
-        
+
         s3_url_pattern = r's3://([\w\-.]+)/([\w\-\./]+)'
         s3 = boto3.client('s3')
 

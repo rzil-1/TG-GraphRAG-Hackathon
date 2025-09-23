@@ -24,6 +24,7 @@ from common.embeddings.embedding_services import (
     OpenAI_Embedding,
     VertexAI_PaLM_Embedding,
     GenAI_Embedding,
+    Ollama_Embedding,
 )
 from common.embeddings.tigergraph_embedding_store import TigerGraphEmbeddingStore
 from common.llm_services import (
@@ -119,6 +120,8 @@ elif llm_config["embedding_service"]["embedding_model_service"].lower() == "gena
     embedding_service = GenAI_Embedding(llm_config["embedding_service"])
 elif llm_config["embedding_service"]["embedding_model_service"].lower() == "bedrock":
     embedding_service = AWS_Bedrock_Embedding(llm_config["embedding_service"])
+elif llm_config["embedding_service"]["embedding_model_service"].lower() == "ollama":
+    embedding_service = Ollama_Embedding(llm_config["embedding_service"])
 else:
     raise Exception("Embedding service not implemented")
 

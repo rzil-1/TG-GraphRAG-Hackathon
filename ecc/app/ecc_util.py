@@ -33,7 +33,7 @@ def get_chunker(chunker_type: str = ""):
         )
     elif chunker_type == "markdown":
         chunker = markdown_chunker.MarkdownChunker(
-            chunk_size=chunker_config.get("chunk_size", 1024),
+            chunk_size=chunker_config.get("chunk_size", 0),
             chunk_overlap=chunker_config.get("overlap_size", 0),
         )
     elif chunker_type == "recursive":
