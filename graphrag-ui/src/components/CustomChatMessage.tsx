@@ -85,14 +85,14 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
   return (
     <>
       {typeof message === "string" ? (
-        <div className="text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
+        <div className="prose dark:prose-invert text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
           <Markdown className="typewriter">{message}</Markdown>
         </div>
       ) : message.key === null ? (
         message
       ) : (
         <div className="flex flex-col w-full relative">
-          <div className="text-sm w-full mt-7 mb-7">
+          <div className="prose dark:prose-invert text-sm w-full mt-7 mb-7">
             {message.response_type === "progress" ? (
               <p className="graphrag-thinking typewriter">{message.content}</p>
             ) : (
