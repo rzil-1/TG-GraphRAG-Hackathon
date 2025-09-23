@@ -305,16 +305,17 @@ def create_ingest(
     res = {"data_source": ingest_config.data_source.lower()}
 
     if ingest_config.data_source.lower() == "s3":
-        data_config = ingest_config.data_source_config
-        if (
-            data_config.get("aws_access_key") is None
-            or data_config.get("aws_secret_key") is None
-        ):
+        data_conf = ingest_config.data_source_config
+        aws_access_key = data_conf.get("aws_access_key", None)
+        aws_secret_key = data_conf.get("aws_secret_key", None)
+
+        if aws_access_key is None or aws_secret_key is None:
             raise Exception("AWS credentials not provided")
+
         connector = {
             "type": "s3",
-            "access.key": data_config["aws_access_key"],
-            "secret.key": data_config["aws_secret_key"],
+            "access.key": aws_access_key,
+            "secret.key": aws_secret_key,
         }
 
         data_stream_conn = data_stream_conn.replace(
@@ -322,28 +323,28 @@ def create_ingest(
         )
 
         if ingest_config.file_format.lower() == "multi":
+            input_bucket = data_conf.get("input_bucket", None)
+            output_bucket = data_conf.get("output_bucket", None)
+            region_name = data_conf.get("region_name", None)
 
-            input_bucket = data_config["input_bucket"]
-            output_bucket = data_config["output_bucket"]
-            region_name = data_config["region_name"]
-            aws_access_key = data_config["aws_access_key"]
-            aws_secret_key = data_config["aws_secret_key"]
+            if input_bucket is None or output_bucket is None or region_name is None:
+                raise Exception("Input bucket, output bucket, or region name not provided")
 
             try:
                 bedrock_bda_result = trigger_bedrock_bda(
-                    input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_config)
+                    input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_conf)
                 if bedrock_bda_result.get("statusCode") != 200:
                     raise Exception(f"Bedrock BDA failed: {bedrock_bda_result}")
 
                 #status check of bda, start once completion
                 # --- Begin: S3 markdown extraction and TigerGraph loading ---
+                # Possiblely we can download the files locally and then process them with next conn.runDocumentIngest() after it supports folder
                 logger.info(
                     f"Starting S3 markdown extraction and TigerGraph loading...")
 
                 job_uids = [job.get("jobId").split("/")[-1] for job in bedrock_bda_result.get("jobs")]
 
                 s3 = boto3.client('s3', region_name=region_name, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
-                output_bucket = data_config["output_bucket"]
                 prefix = 'bda/output/'
 
                 paginator = s3.get_paginator('list_objects_v2')
@@ -445,9 +446,7 @@ def create_ingest(
         raise Exception("Data source not implemented")
 
     load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
-    logger.info(f"load_job_created: {load_job_created}")
     res["load_job_id"] = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
-    logger.info(f"res: {res}")
     if ingest_config.data_source_config:
         res["data_path"] = ingest_config.data_source_config.get("data_path", "")
 

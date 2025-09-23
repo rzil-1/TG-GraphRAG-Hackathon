@@ -2,6 +2,7 @@ import logging
 import json
 import time
 from typing import Dict, List
+
 from agent.agent_graph import TigerGraphAgentGraph
 from agent.Q import Q
 from fastapi import WebSocket
@@ -100,7 +101,6 @@ class TigerGraphAgent:
 
         logger.debug(f"request_id={req_id_cv.get()} agent initialized")
 
-
     def question_for_agent(
         self, question: str, conversation: List[Dict[str, str]] = None
     ):
@@ -148,9 +148,7 @@ class TigerGraphAgent:
                     LogWriter.info(f"request_id={req_id_cv.get()} executed node {key}")
 
             LogWriter.info(f"request_id={req_id_cv.get()} EXIT question_for_agent")
-
             return value["answer"]
-
         except Exception as e:
             metrics.llm_query_error_total.labels(self.model_name).inc()
             LogWriter.error(f"request_id={req_id_cv.get()} FAILURE question_for_agent")
