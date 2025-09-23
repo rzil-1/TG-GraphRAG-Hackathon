@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 
 class TokenCalculator:
     """Utility class for token counting and text truncation operations."""
-    
+
     def __init__(self, config: dict = {}):
         """
         Initialize the token calculator.
-        
+
         Args:
             config: Configuration dictionary containing token_limit and model_name
                                Use <= 0 for unlimited tokens (no truncation).
@@ -70,31 +70,31 @@ class TokenCalculator:
     def truncate_context_to_token_limit(self, sources_dict: dict, max_tokens: Optional[int] = None) -> dict:
         """
         Truncate retrieved sources to fit within the token limit.
-        
+
         Args:
             sources_dict: Dictionary of retrieved source documents
             max_tokens: Maximum number of tokens allowed (defaults to self.max_context_tokens)
-            
+
         Returns:
             Dictionary of truncated sources that fit within the token limit
         """
         if max_tokens is None:
             max_tokens = self.max_context_tokens
-            
+
         if not sources_dict:
             return sources_dict
-        
+
         total_tokens = self.count_tokens(sources_dict)
 
         # If unlimited tokens is enabled, return all sources without truncation
         if self.is_unlimited_tokens() or max_tokens <= 0 or total_tokens <= max_tokens:
             logger.info(f"Unlimited tokens enabled - returning all {len(sources_dict)} sources without truncation")
             return sources_dict
-            
+
         # Calculate how much to truncate
         truncation_ratio = max_tokens / total_tokens
         logger.info(f"Truncating context from {total_tokens} to {max_tokens} tokens (ratio: {truncation_ratio:.2f})")
-        
+
         # Truncate each string value in the dictionary
         truncated_sources = {}
         for key, value in sources_dict.items():
@@ -126,21 +126,21 @@ class TokenCalculator:
             else:
                 # Keep non-string values as-is
                 truncated_sources[key] = value
-                
+
         # Verify the truncated result is within limits
         final_tokens = self.count_tokens(truncated_sources)
         logger.info(f"Final truncated context tokens: {final_tokens}")
-        
+
         return truncated_sources
 
     def truncate_text_to_token_limit(self, text: str, max_tokens: int) -> str:
         """
         Truncate text to fit within the specified token limit.
-        
+
         Args:
             text: Text to truncate
             max_tokens: Maximum number of tokens allowed
-            
+
         Returns:
             Truncated text
         """
@@ -148,15 +148,15 @@ class TokenCalculator:
             tokens = self.token_encoding.encode(text)
             if len(tokens) <= max_tokens:
                 return text
-                
+
             # Truncate to max_tokens and decode back to text
             truncated_tokens = tokens[:max_tokens]
             truncated_text = self.token_encoding.decode(truncated_tokens)
-            
+
             # Add ellipsis to indicate truncation
             if len(tokens) > max_tokens:
                 truncated_text += "..."
-                
+
             return truncated_text
         except Exception as e:
             logger.warning(f"Error truncating text: {e}, using character-based truncation")
@@ -169,11 +169,11 @@ class TokenCalculator:
     def truncate_to_tokens(self, text: str | dict, max_tokens: int) -> str:
         """
         Truncate text to fit within the specified token limit.
-        
+
         Args:
             text: Text to truncate
             max_tokens: Maximum number of tokens allowed
-            
+
         Returns:
             Truncated text
         """

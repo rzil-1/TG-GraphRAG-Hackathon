@@ -139,7 +139,6 @@ class BaseRetriever:
                     retrieved = self.token_calculator.truncate_context_to_token_limit(retrieved)
                     self.logger.info(f"Truncated context from {retrieved_tokens} to {self.token_calculator.count_tokens(retrieved)} tokens")
 
-        
         model = self.llm_service.llm
         prompt = self.llm_service.supportai_response_prompt
 

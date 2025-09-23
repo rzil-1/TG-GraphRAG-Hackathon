@@ -95,7 +95,7 @@ async def stream_chunks(
         chunk_ids = await stream_ids(conn, "DocumentChunk", i, ttl_batches)
         if chunk_ids["error"]:
             continue
-            
+
         for c in chunk_ids["ids"]:
             try:
                 async with tg_sem:
@@ -115,10 +115,10 @@ async def stream_chunks(
                 logger.error(f"Error retrieving chunk: {c} --> {e}\n{exc}")
                 continue  # try retrieving the next doc
 
-
     logger.info("stream_chunks done")
     logger.info("closing extract_chan")
     await extract_chan.put(None)
+
 
 async def chunk_docs(
     conn: AsyncTigerGraphConnection,
@@ -147,7 +147,7 @@ async def chunk_docs(
                 raise
 
     logger.info("Chunk Processing End")
-    
+
     logger.info("closing extract_chan")
     await extract_chan.put(None)
 
