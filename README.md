@@ -5,7 +5,9 @@
 > - **Limitations:** No official support is provided unless delivered through a Statement of Work (SOW) with the Solutions team. Customizations are customer-owned self-service to handle custom LLM service, prompt logic, UI integration, and pipeline orchestration. This project is provided "as is" without any warranties or guarantees.
 
 ## Releases
-* **6/18/2025: GraphRAG is available now officially v1.0 (v1.0.0). Please see [Release Notes](https://docs.tigergraph.com/tg-graphrag/current/release-notes/) for details.
+* **9/22/2025: GraphRAG is available now officially v1.1 (v1.1.0). AWS Bedrock support is completed with BDA integration for multimodal document ingestion.
+* **6/18/2025: GraphRAG is available now officially v1.0 (v1.0.0). TigerGraph database is the only graph and vector storagge supported.
+Please see [Release Notes](https://docs.tigergraph.com/tg-graphrag/current/release-notes/) for details.
 
 ## Overview
 
@@ -76,6 +78,15 @@ The quickest way to access TigerGraph GraphRAG is to deploy its docker image wit
   * [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/configs/server_config.json)
   * [configs/nginx.conf](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/configs/nginx.conf)
 
+  Here’s what the folder structure looks like:
+```
+    graphrag
+    ├── configs
+    │   ├── nginx.conf
+    │   └── server_config.json
+    └── docker-compose.yml
+```
+
 * Step 3 (Optional): Configure Logging Level in Dockerfile
 
 To configure the logging level of the service, edit the Docker Compose file.
@@ -109,9 +120,12 @@ This line can be changed to support different logging levels.
 
 > Note: `graphrag` container will be down if TigerGraph service is not ready. Log into the `tigergraph` container, bring up tigergraph services and rerun `docker compose up -d` should resolve the issue.
 
-#### Configurations
+## Data Ingestion
+For data ingestion, please follow the ![GraphRAG Demo Notebook](./docs/notebooks/GraphRAGDemo.ipynb)
 
-##### LLM provider configuration
+## Detailed Configurations
+
+### LLM provider configuration
 In the `llm_config` section of `configs/server_config.json` file, copy JSON config template from below for your LLM provider, and fill out the appropriate fields. Only one provider is needed.
 
 * OpenAI
@@ -246,7 +260,8 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
     "llm_config": {
         "embedding_service": {
             "embedding_model_service": "bedrock",
-            "model_name":"amazon.titan-embed-text-v1",
+            "model_name":"amazon.titan-embed-text-v2",
+            "region_name":"us-west-2",
             "authentication_configuration": {
                 "AWS_ACCESS_KEY_ID": "ACCESS_KEY",
                 "AWS_SECRET_ACCESS_KEY": "SECRET"
@@ -254,7 +269,8 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
         },
         "completion_service": {
             "llm_service": "bedrock",
-            "llm_model": "anthropic.claude-3-haiku-20240307-v1:0",
+            "llm_model": "anthropic.claude-3-5-haiku-20241022-v1:0",
+            "region_name":"us-west-2",
             "authentication_configuration": {
                 "AWS_ACCESS_KEY_ID": "ACCESS_KEY",
                 "AWS_SECRET_ACCESS_KEY": "SECRET"
@@ -378,7 +394,7 @@ Example configuration for a model on Hugging Face with a serverless endpoint is 
 }
 ```
 
-##### DB configuration
+### DB configuration
 Copy the below into `configs/server_config.json` and edit the `hostname` and `getToken` fields to match your database's configuration. If token authentication is enabled in TigerGraph, set `getToken` to `true`. Set the timeout, memory threshold, and thread limit parameters as desired to control how much of the database's resources are consumed when answering a question.
 
 ```json
@@ -395,7 +411,7 @@ Copy the below into `configs/server_config.json` and edit the `hostname` and `ge
 }
 ```
 
-##### GraphRAG configuration
+### GraphRAG configuration
 Copy the below code into `configs/server_config.json`. You shouldn’t need to change anything unless you change the port of the chat history service in the Docker Compose file.
 
 `reuse_embedding` to `true` will skip re-generating the embedding if it already exists.
@@ -411,7 +427,7 @@ Copy the below code into `configs/server_config.json`. You shouldn’t need to c
 }
 ```
 
-##### Chat configuration
+### Chat configuration
 Copy the below code into `configs/server_config.json`. You shouldn’t need to change anything unless you change the port of the chat history service in the Docker Compose file.
 
 ```json
@@ -426,7 +442,7 @@ Copy the below code into `configs/server_config.json`. You shouldn’t need to c
 }
 ```
 
-##### Enable openCypher Query Generation in InquiryAI
+### Enable openCypher Query Generation in InquiryAI
 If you would like to enable openCypher query generation in InquiryAI, you can set the `USE_CYPHER` environment variable to `"true"` in the GraphRAG service in the docker compose file. By default, this is set to `"false"`. **Note**: openCypher query generation is still in beta and may not work as expected, as well as increases the potential of hallucinated answers due to bad code generation. Use with caution, and only in non-production environments.
 
 ## Using TigerGraph GraphRAG

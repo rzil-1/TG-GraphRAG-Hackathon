@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import boto3
-from langchain_community.chat_models import BedrockChat
+from langchain_aws import ChatBedrock
 import logging
 from common.llm_services import LLM_Model
 from common.logs.log import req_id_cv
@@ -28,7 +29,7 @@ class AWSBedrock(LLM_Model):
         model_name = config["llm_model"]
         client = boto3.client(
             "bedrock-runtime",
-            region_name="us-east-1",
+            region_name=config.get("region_name", "us-east-1"),
             aws_access_key_id=config["authentication_configuration"][
                 "AWS_ACCESS_KEY_ID"
             ],
@@ -36,10 +37,11 @@ class AWSBedrock(LLM_Model):
                 "AWS_SECRET_ACCESS_KEY"
             ],
         )
-        self.llm = BedrockChat(
+        self.llm = ChatBedrock(
             client=client,
             model_id=model_name,
-            model_kwargs={"temperature": 0},
+            region_name=config.get("region_name", "us-east-1"),
+            model_kwargs=config.get("model_kwargs", {"temperature": 0}),
         )
 
         self.prompt_path = config["prompt_path"]
@@ -60,6 +62,38 @@ class AWSBedrock(LLM_Model):
         return self._read_prompt_file(
             self.prompt_path + "entity_relationship_extraction.txt"
         )
+
+    @property
+    def generate_cypher_prompt(self):
+        filepath = self.prompt_path + "generate_cypher.txt"
+        if os.path.exists(filepath):
+            return self._read_prompt_file(filepath)
+        else:
+            return super().generate_cypher_prompt
+
+    @property
+    def generate_gsql_prompt(self):
+        filepath = self.prompt_path + "generate_gsql.txt"
+        if os.path.exists(filepath):
+            return self._read_prompt_file(filepath)
+        else:
+            return super().generate_gsql_prompt
+
+    @property
+    def chatbot_response_prompt(self):
+        filepath = self.prompt_path + "chatbot_response.txt"
+        if os.path.exists(filepath):
+            return self._read_prompt_file(filepath)
+        else:
+            return super().chatbot_response_prompt
+
+    @property
+    def graphrag_scoring_prompt(self):
+        filepath = self.prompt_path + "graphrag_scoring.txt"
+        if os.path.exists(filepath):
+            return self._read_prompt_file(filepath)
+        else:
+            return super().graphrag_scoring_prompt
 
     @property
     def model(self):

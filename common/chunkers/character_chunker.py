@@ -2,7 +2,7 @@ from common.chunkers.base_chunker import BaseChunker
 
 
 class CharacterChunker(BaseChunker):
-    def __init__(self, chunk_size, overlap_size=0):
+    def __init__(self, chunk_size=1024, overlap_size=0):
         if chunk_size <= overlap_size:
             raise ValueError("Chunk size must be larger than overlap size")
         self.chunk_size = chunk_size

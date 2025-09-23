@@ -181,7 +181,7 @@ class AWS_Bedrock_Embedding(EmbeddingModel):
 
     def __init__(self, config):
         import boto3
-        from langchain_community.embeddings import BedrockEmbeddings
+        from langchain_aws import BedrockEmbeddings
 
         super().__init__(config=config, model_name=config["model_name"])
 
