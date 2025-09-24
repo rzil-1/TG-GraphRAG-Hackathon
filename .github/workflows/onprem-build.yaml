@@ -42,9 +42,9 @@ jobs:
         file: ./graphrag/Dockerfile
         push: true
         tags: |
-           tigergraph/graphrag:${{steps.get-image.outputs.IMAGE}}
-          tigergraph/graphrag-ui:${{steps.get-image.outputs.VERSION}}
-           tigergraph/graphrag:latest
+          tigergraph/graphrag:${{steps.get-image.outputs.IMAGE}}
+          igergraph/graphrag-ui:${{steps.get-image.outputs.VERSION}}
+          tigergraph/graphrag:latest
  
     - name: Build and push Docker image ECC
       uses: docker/build-push-action@v5
@@ -53,9 +53,9 @@ jobs:
         file: ./ecc/Dockerfile
         push: true
         tags: |
-           tigergraph/graphrag-ecc:${{steps.get-image.outputs.IMAGE}}
+          tigergraph/graphrag-ecc:${{steps.get-image.outputs.IMAGE}}
           tigergraph/graphrag-ui:${{steps.get-image.outputs.VERSION}}
-           tigergraph/graphrag-ecc:latest
+          tigergraph/graphrag-ecc:latest
 
     - name: Build and push Docker image chat-history
       uses: docker/build-push-action@v5
