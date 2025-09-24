@@ -22,13 +22,20 @@ import {
 const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getConversationId?:any }) => {
   const [store, setStore] = useState<any>();
   const [currentDate, setCurrentDate] = useState('');
-  const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || 'TigerGraphRAG');
+  const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || '');
   const [ragPattern, setRagPattern] = useState(localStorage.getItem("ragPattern") || 'Hybrid Search');
   const navigate = useNavigate();
 
   useEffect(() => {
     const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
     setStore(parseStore);
+
+    // Set default selectedGraph to first graph if no value in localStorage
+    if (!localStorage.getItem("selectedGraph") && parseStore?.graphs?.length > 0) {
+      const firstGraph = parseStore.graphs[0];
+      setSelectedGraph(firstGraph);
+      localStorage.setItem("selectedGraph", firstGraph);
+    }
 
     const date = new Date();
     const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
@@ -98,7 +105,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
               <DropdownMenuGroup>
                 {store?.graphs.map((f, i) => (
                   <DropdownMenuItem key={i} onSelect={() => handleSelect(f)}>
-                    <span>{f}</span>
+                    <span>{f.replace("BarClays", "Barclays")}</span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuGroup>
