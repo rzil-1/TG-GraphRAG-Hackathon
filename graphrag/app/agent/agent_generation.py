@@ -51,7 +51,7 @@ class TigerGraphAgentGenerator:
             # Reserve tokens for question, query, and format instructions (approximately 1000 tokens)
             max_context_tokens = self.token_calculator.get_max_context_tokens() - 1000
 
-            if len(str(context) > max_context_tokens:
+            if len(str(context)) > max_context_tokens:
                 context_tokens = self.token_calculator.count_tokens(context)
                 if context_tokens > max_context_tokens:
                     context = self.token_calculator.truncate_to_token_limit(context, max_context_tokens)
