@@ -92,7 +92,7 @@ if embedding_config is None:
 embedding_dimension = embedding_config.get("dimensions", 1536)
 
 # Get context window size from llm_config
-# -1 means unlimited tokens (no truncation), otherwise use the specified limit
+# <=0 means unlimited tokens (no truncation), otherwise use the specified limit
 token_limit = llm_config.get("token_limit", 1000000)    # 1000000 tokens is the default context window size for GPT-4
 
 # Get encoding name from llm_config

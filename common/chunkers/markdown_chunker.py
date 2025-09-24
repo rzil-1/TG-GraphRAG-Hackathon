@@ -14,12 +14,14 @@
 
 from common.chunkers.base_chunker import BaseChunker
 from langchain_text_splitters.markdown import ExperimentalMarkdownSyntaxTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 
 class MarkdownChunker(BaseChunker):
     
     def __init__(
         self,
-        chunk_size: int = 1024,
+        chunk_size: int = 0,
         chunk_overlap: int = 0
     ):
         self.chunk_size = chunk_size
@@ -28,9 +30,21 @@ class MarkdownChunker(BaseChunker):
     def chunk(self, input_string):
         md_splitter = ExperimentalMarkdownSyntaxTextSplitter()
 
-        md_chunks = md_splitter.split_text(input_string)
+        initial_chunks = [x.page_content for x in md_splitter.split_text(input_string)]
+        md_chunks = []
 
-        return [x.page_content for x in md_chunks]
+        if self.chunk_size > 0:
+            recursive_splitter = RecursiveCharacterTextSplitter(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
+
+            if any(len(chunk) > self.chunk_size for chunk in initial_chunks):
+                for chunk in initial_chunks:
+                    if len(chunk) > self.chunk_size:
+                        # Split oversized chunks further
+                        md_chunks.extend(recursive_splitter.split_text(chunk))
+                    else:
+                        md_chunks.append(chunk)
+
+        return md_chunks if md_chunks else initial_chunks
 
     def __call__(self, input_string):
         return self.chunk(input_string)

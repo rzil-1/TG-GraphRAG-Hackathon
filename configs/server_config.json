@@ -14,8 +14,7 @@
     "chat_history_api": "http://chat-history:8002"
   },
   "llm_config": {
-    "token_limit": -1,
-    "encoding_name": "cl100k_base",
+    "token_limit": 0,
     "embedding_service": {
       "model_name": "text-embedding-3-small",
       "embedding_model_service": "openai",
