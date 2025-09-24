@@ -43,7 +43,7 @@ jobs:
         push: true
         tags: |
           tigergraph/graphrag:${{steps.get-image.outputs.IMAGE}}
-          igergraph/graphrag-ui:${{steps.get-image.outputs.VERSION}}
+          tigergraph/graphrag-ui:${{steps.get-image.outputs.VERSION}}
           tigergraph/graphrag:latest
  
     - name: Build and push Docker image ECC
