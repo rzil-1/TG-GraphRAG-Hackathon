@@ -29,7 +29,7 @@ class BaseRetriever:
         self.embedding_store = embedding_store
         self.embedding_store.set_graphname(connection.graphname)
         self.logger = logging.getLogger(__name__)
-        self.token_calculator = TokenCalculator(config=completion_config)
+        self.token_calculator = TokenCalculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
 
     def _install_query(self, query_name):
         with open(f"common/gsql/supportai/retrievers/{query_name}.gsql", "r") as f:
@@ -136,8 +136,8 @@ class BaseRetriever:
             if len(retrieved) > max_context_tokens:
                 retrieved_tokens = self.token_calculator.count_tokens(retrieved)
                 if retrieved_tokens > max_context_tokens:
-                    retrieved = self.token_calculator.truncate_context_to_token_limit(retrieved)
-                    self.logger.info(f"Truncated context from {retrieved_tokens} to {self.token_calculator.count_tokens(retrieved)} tokens")
+                    retrieved = self.token_calculator.truncate_to_token_limit(retrieved, max_context_tokens)
+                    self.logger.info(f"Truncated retrieved text from {retrieved_tokens} to {max_context_tokens} tokens")
 
         model = self.llm_service.llm
         prompt = self.llm_service.supportai_response_prompt

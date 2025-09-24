@@ -27,13 +27,13 @@ from common.config import completion_config
 logger = logging.getLogger(__name__)
 
 class GraphRAGAnswerOutput(BaseModel):
-    generated_answer: str = Field(description="The generated answer to the question in markdown format. Make sure maintain a professional tone.")
+    generated_answer: str = Field(description="The generated answer to the question. Make sure maintain a professional tone.")
     citation: list[str] = Field(description="The citation for the answer. List the information used.")
 
 class TigerGraphAgentGenerator:
     def __init__(self, llm_model):
         self.llm = llm_model
-        self.token_calculator = TokenCalculator(config=completion_config)
+        self.token_calculator = TokenCalculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
 
     def generate_answer(self, question: str, context: str | dict, query: str = "") -> dict:
         """Generate an answer based on the question and context.
@@ -51,11 +51,11 @@ class TigerGraphAgentGenerator:
             # Reserve tokens for question, query, and format instructions (approximately 1000 tokens)
             max_context_tokens = self.token_calculator.get_max_context_tokens() - 1000
 
-            if len(str(context)) > max_context_tokens:
+            if len(str(context) > max_context_tokens:
                 context_tokens = self.token_calculator.count_tokens(context)
                 if context_tokens > max_context_tokens:
-                    context = self.token_calculator.truncate_to_tokens(context, max_context_tokens)
-                    logger.info(f"Truncated context from {context_tokens} to {self.token_calculator.count_tokens(context)} tokens")
+                    context = self.token_calculator.truncate_to_token_limit(context, max_context_tokens)
+                    logger.info(f"Truncated context from {context_tokens} to {max_context_tokens} tokens")
 
         answer_parser = PydanticOutputParser(pydantic_object=GraphRAGAnswerOutput)
 

@@ -93,10 +93,11 @@ embedding_dimension = embedding_config.get("dimensions", 1536)
 
 # Get context window size from llm_config
 # <=0 means unlimited tokens (no truncation), otherwise use the specified limit
-token_limit = llm_config.get("token_limit", 1000000)    # 1000000 tokens is the default context window size for GPT-4
-
-# Get encoding name from llm_config
-encoding_name = llm_config.get("encoding_name", "cl100k_base")    # Default to GPT-4 encoding
+if "token_limit" in llm_config:
+    if "token_limit" not in completion_config:
+        completion_config["token_limit"] = llm_config["token_limit"]
+    if "token_limit" not in embedding_config:
+        embedding_config["token_limit"] = llm_config["token_limit"]
 
 if graphrag_config is None:
     graphrag_config = {"reuse_embedding": True}

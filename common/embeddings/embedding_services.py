@@ -11,6 +11,7 @@ from langchain_ollama import OllamaEmbeddings
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
 from common.metrics.prometheus_metrics import metrics
+from common.utils import TokenCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class EmbeddingModel(Embeddings):
         self.embeddings = None
         self.model_name = model_name
         self.dimensions = config.get("dimensions", 1536)
+        self.token_calculator = TokenCalculator(token_limit=config.get("token_limit", 8192), model_name=model_name)
         LogWriter.info(
             f"request_id={req_id_cv.get()} instantiated AI model_name={model_name} with dimensions={self.dimensions}"
         )
@@ -51,6 +53,13 @@ class EmbeddingModel(Embeddings):
 
         try:
             LogWriter.info(f"request_id={req_id_cv.get()} ENTRY embed_documents()")
+
+            if not self.token_calculator.is_unlimited_tokens():
+                max_context_tokens = self.token_calculator.get_max_context_tokens()
+                if any(len(text) > max_context_tokens for text in texts):
+                    if any(self.token_calculator.count_tokens(text) > max_context_tokens for text in texts):
+                        texts = [self.token_calculator.truncate_to_token_limit(text, max_context_tokens) for text in texts]
+
             if isinstance(self.embeddings, GoogleGenerativeAIEmbeddings):
                 docs = self.embeddings.embed_documents(texts, output_dimensionality=self.dimensions)
             else:
@@ -85,6 +94,13 @@ class EmbeddingModel(Embeddings):
             logger.debug_pii(
                 f"request_id={req_id_cv.get()} embed_query() embedding question={question}"
             )
+
+            if not self.token_calculator.is_unlimited_tokens():
+                max_context_tokens = self.token_calculator.get_max_context_tokens()
+                if len(question) > max_context_tokens:
+                    if self.token_calculator.count_tokens(question) > max_context_tokens:
+                        question = self.token_calculator.truncate_to_token_limit(question, max_context_tokens)
+
             if isinstance(self.embeddings, GoogleGenerativeAIEmbeddings):
                 query_embedding = self.embeddings.embed_query(question, output_dimensionality=self.dimensions)
             else:
@@ -117,6 +133,12 @@ class EmbeddingModel(Embeddings):
         # try:
         LogWriter.info(f"request_id={req_id_cv.get()} ENTRY aembed_query()")
         logger.debug_pii(f"aembed_query() embedding question={question}")
+        if not self.token_calculator.is_unlimited_tokens():
+            max_context_tokens = self.token_calculator.get_max_context_tokens()
+            if len(question) > max_context_tokens:
+                if self.token_calculator.count_tokens(question) > max_context_tokens:
+                    question = self.token_calculator.truncate_to_token_limit(question, max_content_tokens)
+
         if isinstance(self.embeddings, GoogleGenerativeAIEmbeddings):
             query_embedding = await self.embeddings.aembed_query(question, output_dimensionality=self.dimensions)
         else:
@@ -140,10 +162,10 @@ class AzureOpenAI_Ada002(EmbeddingModel):
     """Azure OpenAI Ada-002 Embedding Model"""
 
     def __init__(self, config):
-        super().__init__(config, model_name=config.get("model_name", "OpenAI ada-002"))
+        super().__init__(config, model_name=config.get("model_name", "text-embedding-3-small"))
         from langchain.embeddings import AzureOpenAIEmbeddings
 
-        self.embeddings = AzureOpenAIEmbeddings(deployment=config["azure_deployment"])
+        self.embeddings = AzureOpenAIEmbeddings(model=self.model_name, deployment=config["azure_deployment"])
 
 
 class OpenAI_Embedding(EmbeddingModel):
@@ -183,7 +205,7 @@ class AWS_Bedrock_Embedding(EmbeddingModel):
         import boto3
         from langchain_aws import BedrockEmbeddings
 
-        super().__init__(config=config, model_name=config["model_name"])
+        super().__init__(config=config, model_name=config.get("model_name", "amazon.titan-embed-text-v1"))
 
         client = boto3.client(
             "bedrock-runtime",
@@ -195,7 +217,7 @@ class AWS_Bedrock_Embedding(EmbeddingModel):
                 "AWS_SECRET_ACCESS_KEY"
             ],
         )
-        self.embeddings = BedrockEmbeddings(client=client)
+        self.embeddings = BedrockEmbeddings(client=client, model_id=self.model_name)
 
 
 class Ollama_Embedding(EmbeddingModel):
@@ -204,13 +226,12 @@ class Ollama_Embedding(EmbeddingModel):
     def __init__(self, config):
         from langchain_ollama import OllamaEmbeddings
 
-        super().__init__(config=config, model_name=config.get("model_name", "llama2"))
+        super().__init__(config=config, model_name=config.get("model_name", "llama3"))
 
         # Get Ollama configuration from config
         base_url = config.get("base_url", "http://localhost:11434")
-        model_name = config.get("model_name", "llama3")
 
         self.embeddings = OllamaEmbeddings(
-            model=model_name,
+            model=self.model_name,
             base_url=base_url
         )
