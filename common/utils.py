@@ -121,7 +121,7 @@ class TokenCalculator:
                 logger.info(f"Truncating sub-dictionary: {key}")
                 partial_tokens = self.count_tokens(value)
                 partial_ratio = partial_tokens / total_tokens
-                truncated_sources[key] = self.truncate_context_to_token_limit(value, int(max_tokens * partial_ratio))
+                truncated_sources[key] = self.truncate_dict_to_token_limit(value, int(max_tokens * partial_ratio))
             else:
                 # Keep non-string values as-is
                 truncated_sources[key] = value
