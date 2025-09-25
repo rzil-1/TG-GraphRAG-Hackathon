@@ -32,10 +32,10 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
         "common/gsql/supportai/Selected_Set_Display.gsql",
         "common/gsql/supportai/retrievers/GraphRAG_Hybrid_Search_Display.gsql",
         "common/gsql/supportai/retrievers/GraphRAG_Community_Search_Display.gsql",
-        "common/gsql/supportai/retrievers/Chunk_Sibling_Search.gsql",
-        "common/gsql/supportai/retrievers/Content_Similarity_Search.gsql",
-        "common/gsql/supportai/retrievers/GraphRAG_Hybrid_Search.gsql",
-        "common/gsql/supportai/retrievers/GraphRAG_Community_Search.gsql",
+        #"common/gsql/supportai/retrievers/Chunk_Sibling_Search.gsql",
+        #"common/gsql/supportai/retrievers/Content_Similarity_Search.gsql",
+        #"common/gsql/supportai/retrievers/GraphRAG_Hybrid_Search.gsql",
+        #"common/gsql/supportai/retrievers/GraphRAG_Community_Search.gsql",
     ]
 
     if "- VERTEX ResolvedEntity" in current_schema:

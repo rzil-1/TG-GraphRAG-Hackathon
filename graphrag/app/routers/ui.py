@@ -338,13 +338,12 @@ async def load_conversation_history(conversation_id: str, usr_auth: str) -> list
             )
             res.raise_for_status()
             conversation_data = res.json()
-            
             # Convert conversation messages to the format expected by the agent
             history = []
-            for msg in conversation_data.get("messages", []):
+            for msg in conversation_data:
                 if msg.get("role") == "user":
                     # Find the corresponding system response
-                    for response_msg in conversation_data.get("messages", []):
+                    for response_msg in conversation_data:
                         if (response_msg.get("role") == "system" and 
                             response_msg.get("parent_id") == msg.get("message_id")):
                             history.append({

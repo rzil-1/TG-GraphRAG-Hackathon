@@ -32,6 +32,7 @@ class BaseRetriever:
         self.token_calculator = TokenCalculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
 
     def _install_query(self, query_name):
+        self.logger.info(f"Installing query {query_name}")
         with open(f"common/gsql/supportai/retrievers/{query_name}.gsql", "r") as f:
             query = f.read()
         res = self.conn.gsql(

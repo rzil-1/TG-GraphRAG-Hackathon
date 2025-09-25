@@ -69,14 +69,15 @@ class TokenCalculator:
 
     def truncate_dict_to_token_limit(self, sources_dict: dict, max_tokens: Optional[int] = None) -> dict:
         """
-        Truncate dictionary to fit within the token limit.
+        Truncate dictionary to fit within the token limit by keeping original values
+        until hitting the max_tokens limit, then ignoring remaining values.
 
         Args:
             sources_dict: Dictionary to truncate
             max_tokens: Maximum number of tokens allowed (defaults to self.max_context_tokens)
 
         Returns:
-            Dictionary of truncated sources that fit within the token limit
+            Dictionary of sources that fit within the token limit
         """
         if max_tokens is None:
             max_tokens = self.max_context_tokens
@@ -90,46 +91,83 @@ class TokenCalculator:
         if self.is_unlimited_tokens() or max_tokens <= 0 or total_tokens <= max_tokens:
             return sources_dict
 
-        # Calculate how much to truncate
-        truncation_ratio = max_tokens / total_tokens
-        logger.info(f"Truncating context from {total_tokens} to {max_tokens} tokens (ratio: {truncation_ratio:.2f})")
-
-        # Truncate each string value in the dictionary
+        # Convert dict to list of (key, value) pairs for processing
+        items = list(sources_dict.items())
         truncated_sources = {}
-        for key, value in sources_dict.items():
-            if isinstance(value, str):
-                # Calculate how many characters to keep based on token ratio
-                char_limit = int(len(value) * truncation_ratio)
-                truncated_value = value[:char_limit]
-                if len(value) > char_limit:
-                    truncated_value += "..."
-                truncated_sources[key] = truncated_value
-            elif isinstance(value, list):
-                # Handle list of strings
-                truncated_list = []
-                for item in value:
-                    if isinstance(item, str):
-                        char_limit = int(len(item) * truncation_ratio)
-                        truncated_item = item[:char_limit]
-                        if len(item) > char_limit:
-                            truncated_item += "..."
-                        truncated_list.append(truncated_item)
-                    else:
-                        truncated_list.append(item)
-                truncated_sources[key] = truncated_list
-            elif isinstance(value, dict):
-                logger.info(f"Truncating sub-dictionary: {key}")
-                partial_tokens = self.count_tokens(value)
-                partial_ratio = partial_tokens / total_tokens
-                truncated_sources[key] = self.truncate_dict_to_token_limit(value, int(max_tokens * partial_ratio))
-            else:
-                # Keep non-string values as-is
+        current_tokens = 0
+
+        for key, value in items:
+            # Calculate tokens for this key-value pair
+            item_tokens = self.count_tokens({key: value})
+
+            # Check if adding this item would exceed the limit
+            if current_tokens + item_tokens <= max_tokens:
+                # Add the complete item
                 truncated_sources[key] = value
+                current_tokens += item_tokens
+                logger.debug(f"Added complete item '{key}' ({item_tokens} tokens, total: {current_tokens})")
+            else:
+                # Check if we can add a partial version of this item
+                remaining_tokens = max_tokens - current_tokens
+                if remaining_tokens > 0:
+                    # Try to add a truncated version of this item
+                    if isinstance(value, str):
+                        # Truncate string to fit remaining tokens
+                        truncated_value = self.truncate_text_to_token_limit(value, remaining_tokens)
+                        if truncated_value:
+                            truncated_sources[key] = truncated_value
+                            current_tokens += self.count_tokens(truncated_value)
+                            logger.debug(f"Added truncated string '{key}' ({self.count_tokens(truncated_value)} tokens, total: {current_tokens})")
+                    elif isinstance(value, list):
+                        # Add as many list items as possible
+                        truncated_list = []
+                        for item in value:
+                            if isinstance(item, str):
+                                item_tokens = self.count_tokens(item)
+                                if current_tokens + item_tokens <= max_tokens:
+                                    truncated_list.append(item)
+                                    current_tokens += item_tokens
+                                else:
+                                    # Try to add a truncated version of this item
+                                    remaining = max_tokens - current_tokens
+                                    if remaining > 0:
+                                        truncated_item = self.truncate_text_to_token_limit(item, remaining)
+                                        if truncated_item:
+                                            truncated_list.append(truncated_item)
+                                            current_tokens += self.count_tokens(truncated_item)
+                                    break
+                            else:
+                                # For non-string items, add if there's space
+                                item_tokens = self.count_tokens(item)
+                                if current_tokens + item_tokens <= max_tokens:
+                                    truncated_list.append(item)
+                                    current_tokens += item_tokens
+                                else:
+                                    break
+                        if truncated_list:
+                            truncated_sources[key] = truncated_list
+                            logger.debug(f"Added truncated list '{key}' ({len(truncated_list)} items, total: {current_tokens})")
+                    elif isinstance(value, dict):
+                        # Recursively truncate sub-dictionary
+                        remaining = max_tokens - current_tokens
+                        if remaining > 0:
+                            truncated_subdict = self.truncate_dict_to_token_limit(value, remaining)
+                            if truncated_subdict:
+                                truncated_sources[key] = truncated_subdict
+                                current_tokens += self.count_tokens(truncated_subdict)
+                                logger.debug(f"Added truncated sub-dict '{key}' ({self.count_tokens(truncated_subdict)} tokens, total: {current_tokens})")
+                    else:
+                        # For other types, add if there's space
+                        if current_tokens + item_tokens <= max_tokens:
+                            truncated_sources[key] = value
+                            current_tokens += item_tokens
+                            logger.debug(f"Added complete non-string item '{key}' ({item_tokens} tokens, total: {current_tokens})")
+                else:
+                    # No more space, stop processing
+                    logger.debug(f"Stopping truncation - no more space for item '{key}'")
+                    break
 
-        # Verify the truncated result is within limits
-        final_tokens = self.count_tokens(truncated_sources)
-        logger.info(f"Final truncated context tokens: {final_tokens}")
-
+        logger.info(f"Final truncated context tokens: {current_tokens} (limit: {max_tokens})")
         return truncated_sources
 
     def truncate_text_to_token_limit(self, text: str, max_tokens: Optional[int] = None) -> str:
@@ -156,8 +194,8 @@ class TokenCalculator:
             truncated_text = self.token_encoding.decode(truncated_tokens)
 
             # Add ellipsis to indicate truncation
-            if len(tokens) > max_tokens:
-                truncated_text += "..."
+            #if len(tokens) > max_tokens:
+            #    truncated_text += "..."
 
             return truncated_text
         except Exception as e:
@@ -166,7 +204,7 @@ class TokenCalculator:
             max_chars = max_tokens * 4
             if len(text) <= max_chars:
                 return text
-            return text[:max_chars] + "..."
+            return text[:max_chars] #+ "..."
 
     def truncate_to_token_limit(self, text: str | dict, max_tokens: Optional[int] = None) -> str:
         """
