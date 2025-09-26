@@ -166,6 +166,9 @@ class TigerGraphAgent:
 
 
 def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retriever="hybridsearch") -> TigerGraphAgent:
+    if "chat_model" in llm_config["completion_service"]:
+        llm_config["completion_service"]["llm_model"] = llm_config["completion_service"]["chat_model"]
+
     if llm_config["completion_service"]["llm_service"].lower() == "openai":
         llm_service_name = "openai"
         llm_provider = OpenAI(llm_config["completion_service"])

@@ -3,8 +3,8 @@ Given the following context in JSON format, rephrase it to answer the question.
 Use only the provided information in context without adding any reasoning or additional logic.
 Make sure all information in the context are covered in the generated answer.
 Make sure to extract and include the image links in markdown syntax in the generated_answer if its summary is used.
-Use markdown syntax to geneate the answer, including title, bulleted or numbered list, images and tables if any, and keep it compact.
-Always only return a JSON contains the answer and other required fields. Assign an empty value to the field if you cannot determine it.
+Use compact markdown syntax to geneate the answer, including title, bulleted or numbered list, images and tables if any, and place images or tables below the related text section.
+Always make sure return a JSON contains the answer and other required fields after validation. Assign an empty value to the field if you cannot determine it.
 
 
 Question: {question}
