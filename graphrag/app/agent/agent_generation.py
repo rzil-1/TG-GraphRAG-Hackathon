@@ -17,6 +17,7 @@ import logging
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_community.callbacks.manager import get_openai_callback
+from typing import Optional
 from pydantic import BaseModel, Field
 from common.logs.logwriter import LogWriter
 from common.logs.log import req_id_cv
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 class GraphRAGAnswerOutput(BaseModel):
     generated_answer: str = Field(description="The generated answer to the question. Make sure maintain a professional tone.")
-    citation: list[str] = Field(description="The citation for the answer. List the information used.")
+    citation: Optional[list[str]] = Field(description="The citation for the answer. List the metadata of the parts of the context used.", default=None)
 
 class TigerGraphAgentGenerator:
     def __init__(self, llm_model):
