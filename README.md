@@ -48,24 +48,6 @@ The quickest way to access TigerGraph GraphRAG is to deploy its docker image wit
 * TigerGraph DB 4.2+.
 * API key of your LLM provider. (An LLM provider refers to a company or organization that offers Large Language Models (LLMs) as a service. The API key verifies the identity of the requester, ensuring that the request is coming from a registered and authorized user or application.) Currently, GraphRAG supports the following LLM providers: OpenAI, Azure OpenAI, GCP, AWS Bedrock.
 
-#### Deploy with Kubernetes
-* Step 1: Get kubernetes deployment file
-  - Download the [graphrag-k8s.yml](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/graphrag-k8s.yml) file directly
-
-* Step 2: Set up configurations
-  Next, in the same directory as the Kubernetes deployment file is in, create a `configs` directory and download the following configuration files:
-  * [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/configs/server_config.json)
-
-  Update the TigerGraph database information, LLM API keys and other configs accordingly.
-
-* Step 3: Start all services
-  Replace `/path/to/graphrag/configs` with the absolute path of the `configs` folder inside `graphrag-k8s.yml`, and update the TigerGraph database information and other configs accordingly.
-
-  Now, simply run `kubectl apply -f graphrag-k8s.yml` and wait for all the services to start.
-
-> Note: Nginx Ingress should be installed using `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.2.1/deploy/static/provider/cloud/deploy.yaml`
-
-
 #### Deploy with Docker Compose
 * Step 1: Get docker-compose file
   - Download the [docker-compose.yml](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/docker-compose.yml) file directly
@@ -87,7 +69,13 @@ The quickest way to access TigerGraph GraphRAG is to deploy its docker image wit
     └── docker-compose.yml
 ```
 
-* Step 3 (Optional): Configure Logging Level in Dockerfile
+* Step 3: Adjust configurations
+
+Edit `llm_config` section of `configs/server_config.json` and replace `<YOUR_OPENAI_API_KEY>` to your own OPENAI_API_KEY. 
+
+> If desired, you can also change the model to be used for the embedding service and completion service to your preferred models to adjust the output from the LLM service.
+
+* Step 4 (Optional): Configure Logging Level in Dockerfile
 
 To configure the logging level of the service, edit the Docker Compose file.
 
@@ -111,17 +99,72 @@ This line can be changed to support different logging levels.
 | `DEBUG_PII` | Finer-grained information that could potentially include `PII`, such as a user’s question, the complete function call (with parameters), and the LLM’s natural language response. |
 | NOTSET | All messages are processed. |
 
+* Step 5: Start all services
 
-* Step 4: Start all services
+Uncomment `tigergraph` section from `docker-compose.yml` if it's commented out. Please follow the [instructions](https://github.com/tigergraph/ecosys/blob/master/tutorials/GSQL.md#set-up-environment) to download TigerGraph docker image.
 
-  Uncomment `tigergraph` section from `docker-compose.yml` if it's commented out. Please follow the [instructions](https://github.com/tigergraph/ecosys/blob/master/tutorials/GSQL.md#set-up-environment) to download TigerGraph docker image.
-
-  Now, simply run `docker compose up -d` and wait for all the services to start.
+Now, simply run `docker compose up -d` and wait for all the services to start.
 
 > Note: `graphrag` container will be down if TigerGraph service is not ready. Log into the `tigergraph` container, bring up tigergraph services and rerun `docker compose up -d` should resolve the issue.
 
-## Data Ingestion
+* Step 6: Stop all services (when needed)
+Run command `docker compose down` and wait for all the service containers to stopped and removed.
+
+#### Use Standalone TigerGraph instance (Optional)
+
+> **_Note:_** Vector feature is available in both TigerGraph Community Edition 4.2.0+ and Enterprise Edition 4.2.0+.
+
+If you prefer to start a TigerGraph Community Edition instance without a license key, please make sure the container can be accessed from the GraphRAG containers by add `--network graphrag_default`:
+```
+docker run -d -p 14240:14240 --name tigergraph --ulimit nofile=1000000:1000000 --init --network graphrag_default -t tigergraph/community:4.2.1
+```
+
+> Use **tigergraph/tigergraph:4.2.1** if Enterprise Edition is preferred.
+> Setting up **DNS** or `/etc/hosts` properly is an alternative solution to ensure contains can connect to each other.
+> Or modify`hostname` in `db_config` section of `configs/server_config.json` and replace `http://tigergraph` to your tigergraph container IP address, e.g., `http://172.19.0.2`. 
+
+Check the service status with the following commands:
+```
+docker exec -it tigergraph /bin/bash
+gadmin status
+gadmin start all
+```
+
+After using the database, and you want to shutdown it, use the following shell commmand
+```
+gadmin stop all
+```
+
+#### Deploy with Kubernetes
+> Note: TigerGraph instance should be deployed separately in advance and accessible from the kubernetes env
+
+* Step 1: Get kubernetes deployment file
+  - Download the [graphrag-k8s.yml](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/graphrag-k8s.yml) file directly
+
+* Step 2: Set up configurations
+  Next, in the same directory as the Kubernetes deployment file is in, create a `configs` directory and download the following configuration files:
+  * [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/ecosys/refs/heads/master/tutorials/graphrag/configs/server_config.json)
+
+* Step 3: Update the TigerGraph database information, LLM API keys and other configs accordingly in `configs/server_config.json`.
+
+* Step 4: Start all services
+  Replace `/path/to/graphrag/configs` with the absolute path of the `configs` folder inside `graphrag-k8s.yml`, and update the TigerGraph database information and other configs accordingly.
+
+  Now, simply run `kubectl apply -f graphrag-k8s.yml` and wait for all the services in the deployment to be started.
+
+> Note: Nginx Ingress should be installed using `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.2.1/deploy/static/provider/cloud/deploy.yaml`
+
+* Step 5: Stop all services (when needed)
+  Run `kubectl delete -f graphrag-k8s.yml` and wait for all the services in the deployment to be deleted.
+
+> Note: Nginx Ingress should be deleted using `kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.2.1/deploy/static/provider/cloud/deploy.yaml` if port 80 needs to be released
+
+### Data Ingestion
 For data ingestion, please follow the ![GraphRAG Demo Notebook](./docs/notebooks/GraphRAGDemo.ipynb)
+
+### Access GraphRAG ChatBot from UI
+Open your browser to access `http://localhost` to access GraphRAG Chat. If you're accessing GraphRAG UI remotely, use the machine's hostname of IP address instead.
+
 
 ## Detailed Configurations
 
