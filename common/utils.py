@@ -92,7 +92,7 @@ class TokenCalculator:
             return sources_dict
 
         # Convert dict to list of (key, value) pairs for processing
-        items = sorted(source_dict.items(), key=lambda x: (".png" not in x, -len(v)))
+        items = sorted(sources_dict.items(), key=lambda x: (".png" not in x, -len(x)))
         truncated_sources = {}
         current_tokens = 0
 
