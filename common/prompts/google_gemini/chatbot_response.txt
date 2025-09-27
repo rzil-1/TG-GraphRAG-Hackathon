@@ -29,4 +29,5 @@ Make sure all the fields required by the format instructions are included, set a
 
 Question: {question}
 Context: {context}
+Query: {query}
 Format: {format_instructions}

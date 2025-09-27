@@ -563,12 +563,12 @@
 .typewriter {
   --lines: 500;
   --lineHeight: 1.5rem;
-  --timePerLine: 1s;
+  --timePerLine: 0.2s;
   --widthCh: 22;
   /* --width: calc(var(--widthCh) * 1ch);  */
   /* do not touch the time property!!! */
   --time: calc(var(--lines) * var(--timePerLine));
-  animation: grow var(--time) steps(var(--lines));
+  animation: grow var(--time) steps(var(--lines), end);
   animation-fill-mode: forwards;
   background: var(--bgColor);
   line-height: var(--lineHeight);
