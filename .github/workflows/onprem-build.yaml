@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{steps.get-image.outputs.IMAGE}}
+      version: ${{steps.get-image.outputs.VERSION}}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -30,8 +31,9 @@ jobs:
       id: get-image
       run: |
         IMAGE=${SHA::6}
-        echo "IMAGE=$IMAGE" >> $GITHUB_ENV
         echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
+        VERSION=$(cat VERSION)
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
  
     - name: Build and push Docker image GraphRAG
       uses: docker/build-push-action@v5
@@ -40,8 +42,9 @@ jobs:
         file: ./graphrag/Dockerfile
         push: true
         tags: |
-           tigergraph/graphrag:${{steps.get-image.outputs.IMAGE}}
-           tigergraph/graphrag:latest
+          tigergraph/graphrag:${{steps.get-image.outputs.IMAGE}}
+          tigergraph/graphrag:${{steps.get-image.outputs.VERSION}}
+          tigergraph/graphrag:latest
  
     - name: Build and push Docker image ECC
       uses: docker/build-push-action@v5
@@ -50,8 +53,9 @@ jobs:
         file: ./ecc/Dockerfile
         push: true
         tags: |
-           tigergraph/graphrag-ecc:${{steps.get-image.outputs.IMAGE}}
-           tigergraph/graphrag-ecc:latest
+          tigergraph/graphrag-ecc:${{steps.get-image.outputs.IMAGE}}
+          tigergraph/graphrag-ecc:${{steps.get-image.outputs.VERSION}}
+          tigergraph/graphrag-ecc:latest
 
     - name: Build and push Docker image chat-history
       uses: docker/build-push-action@v5
@@ -61,6 +65,7 @@ jobs:
         push: true
         tags: |
           tigergraph/chat-history:${{steps.get-image.outputs.IMAGE}}
+          tigergraph/chat-history:${{steps.get-image.outputs.VERSION}}
           tigergraph/chat-history:latest
      
     - name: Build and push Docker image graphrag-ui
@@ -71,6 +76,7 @@ jobs:
         push: true
         tags: |
           tigergraph/graphrag-ui:${{steps.get-image.outputs.IMAGE}}
+          tigergraph/graphrag-ui:${{steps.get-image.outputs.VERSION}}
           tigergraph/graphrag-ui:latest
 
 #    - name: Set SSH key
