@@ -83,6 +83,7 @@ async def init(
     requried_queries = [
         "common/gsql/graphrag/StreamIds",
         "common/gsql/graphrag/StreamDocContent",
+        "common/gsql/graphrag/StreamChunkContent",
         "common/gsql/graphrag/SetEpochProcessing",
         "common/gsql/graphrag/ResolveRelationships",
         "common/gsql/graphrag/get_community_children",

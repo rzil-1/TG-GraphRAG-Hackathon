@@ -80,6 +80,7 @@ async def init(
         "common/gsql/supportai/Check_Nonexistent_Vertices",
         "common/gsql/graphRAG/StreamIds",
         "common/gsql/graphRAG/StreamDocContent"
+        "common/gsql/graphRAG/StreamChunkContent"
     ]
     await install_queries(requried_queries, conn)
 
