@@ -415,6 +415,8 @@ class BatchIngestion(BaseIngestion):
             blob_store = AzureBlobStore(
                 doc_source.service_params["azure_connection_string"]
             )
+        elif doc_source.service == "local":
+            raise ValueError("Local service should use direct file processing, not blob store")
         else:
             raise ValueError(f"Service {doc_source.service} not supported")
 

@@ -7,8 +7,11 @@ import time
 import re
 import pyTigerGraph as tg
 from pyTigerGraph import TigerGraphConnection
+import mimetypes
+from pathlib import Path
 
-from common.config import embedding_dimension
+from common.config import embedding_dimension, graphrag_config
+from common.utils.text_extractors import TextExtractor
 from common.py_schemas.schemas import (
     # GraphRAGResponse,
     CreateIngestConfig,
@@ -252,15 +255,33 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
                 # Don't fail the entire operation if cleanup fails
 
 
+def process_local_folder(folder_path):
+    """Process local folder with multiple file formats and extract text content using TextExtractor class."""
+    
+    extractor = TextExtractor()
+    extractor.cleanup_tmp_folder()
+    return extractor.process_folder(folder_path)
+
+
+# Text extraction functions moved to text_extractors.py module
+
+
 def create_ingest(
     graphname: str,
     ingest_config: CreateIngestConfig,
     conn: TigerGraphConnection,
 ):
-    # Check for invalid combination of multi format and non-s3 data source
-    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() != "s3":
+    # Check for invalid combination of multi format and unsupported data source
+    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() not in ["s3", "local"]:
         raise Exception(
-            "AWS Bedrock BDA preprocessing with 'multi' file format is only supported for S3 data sources.")
+            "Multi-format file processing is only supported for S3 and local data sources.")
+    
+    # Set default loader_config if not provided or empty
+    if not ingest_config.loader_config:
+        ingest_config.loader_config = {
+            "doc_id_field": "doc_id",
+            "content_field": "content"
+        }
 
     if ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
         file_path = "common/gsql/supportai/SupportAI_InitialLoadJSON.gsql"
@@ -441,7 +462,52 @@ def create_ingest(
             "@source_config@", json.dumps(connector)
         )
     elif ingest_config.data_source.lower() == "local":
-        pass
+        # Handle multi-format processing for local files
+        if ingest_config.file_format.lower() == "multi":
+            folder_path = ingest_config.data_source_config.get("folder_path", None)
+            if folder_path is None:
+                raise Exception("Folder path not provided for local multi-format processing")
+            
+            try:
+                # Process local folder and extract text from all supported files
+                local_processing_result = process_local_folder(folder_path)
+                if local_processing_result.get("statusCode") != 200:
+                    raise Exception(f"Local folder processing failed: {local_processing_result}")
+                
+                logger.info(f"Starting local folder text extraction and TigerGraph loading...")
+                
+                processed_files = local_processing_result.get("files", [])
+                successful_files = [f for f in processed_files if f.get('status') == 'success']
+                
+                # Get the JSONL file that was already created during processing
+                jsonl_filepath = local_processing_result.get("jsonl_file_path")
+                if not jsonl_filepath:
+                    raise Exception("JSONL file was not created during local folder processing")
+                
+                # Create loading job - ingest_template should already be set above
+                load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
+                load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
+                res["load_job_id"] = load_job_id
+                res["data_source_id"] = "DocumentContent"
+                
+                # Set the file path for runDocumentIngest (use the existing JSONL file)
+                res["jsonl_file_path"] = jsonl_filepath
+                res["num_documents"] = len(successful_files)
+                res["processed_files"] = processed_files
+                res["total_files_found"] = len(processed_files)
+                res["successful_files"] = len(successful_files)
+                
+                # Store cleanup info for later cleanup (similar to S3 BDA)
+                res["cleanup_files"] = [jsonl_filepath]
+                
+                logger.info(
+                    f"Processed {len(successful_files)} files from local folder and prepared {len(successful_files)} documents for runDocumentIngest.")
+                
+            except Exception as e:
+                logger.error(f"Error during local folder processing: {e}")
+                return {"error": str(e), "stage": "local_folder_processing"}
+            
+            return res
     else:
         raise Exception("Data source not implemented")
 
