@@ -95,7 +95,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
                   className="!h-[48px] !outline-b !outline-gray-300 dark:!outline-[#3D3D3D] h-[70px] flex justify-end items-center bg-white dark:bg-background z-50 rounded-tr-lg"
                 >
                   <img src="/graph-icon.svg" alt="" className="mr-2" />
-                  {selectedGraph.replace("BarClays", "Barclays")} <MdKeyboardArrowDown className="text-2xl" />
+                  {selectedGraph} <MdKeyboardArrowDown className="text-2xl" />
                 </Button>
               </DropdownMenuTrigger>
 
@@ -105,7 +105,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
               <DropdownMenuGroup>
                 {store?.graphs.map((f, i) => (
                   <DropdownMenuItem key={i} onSelect={() => handleSelect(f)}>
-                    <span>{f.replace("BarClays", "Barclays")}</span>
+                    <span>{f}</span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuGroup>

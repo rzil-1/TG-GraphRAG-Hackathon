@@ -84,9 +84,9 @@ class TigerGraphAgentGraph:
         self.supportai_enabled = True
         self.supportai_retriever = supportai_retriever.lower().replace(" ", "")
         try:
-            self.db_connection.getQueryMetadata("GraphRAG_Hybrid_Search")
+            self.db_connection.getQueryMetadata("StreamDocContent")
         except TigerGraphException as e:
-            logger.info(f"GraphRAG_Hybrid_Search not found in the graph {self.db_connection.graphname}. Disabling supportai.")
+            logger.info(f"StreamDocContent not found in the graph {self.db_connection.graphname}. Disabling supportai.")
             self.supportai_enabled = False
 
     def emit_progress(self, msg):
@@ -237,7 +237,7 @@ class TigerGraphAgentGraph:
             num_hops=graphrag_config.get("num_hops", 2),
         )
 
-        query_name = "GraphRAG_Hybrid_Search"
+        query_name = "GraphRAG_Hybrid_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
@@ -266,7 +266,7 @@ class TigerGraphAgentGraph:
             top_k=graphrag_config.get("top_k", 5)
         )
 
-        query_name = "Content_Similarity_Search"
+        query_name = "Content_Similarity_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
@@ -294,7 +294,7 @@ class TigerGraphAgentGraph:
             top_k=graphrag_config.get("top_k", 5)
         )
 
-        query_name = "Chunk_Sibling_Search"
+        query_name = "Chunk_Sibling_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
@@ -323,7 +323,7 @@ class TigerGraphAgentGraph:
             with_chunk=graphrag_config.get("with_chunk", True),
         )
 
-        query_name = "GraphRAG_Community_Search"
+        query_name = "GraphRAG_Community_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
