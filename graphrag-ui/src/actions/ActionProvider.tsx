@@ -84,10 +84,12 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
   const [messageHistory, setMessageHistory] = useState<MessageEvent<Message>[]>(
     [],
   );
-  const { sendMessage, lastMessage, readyState } = useWebSocket(WS_URL, {
+  const { sendMessage, lastMessage, readyState, getWebSocket } = useWebSocket(WS_URL, {
     onOpen: () => {
       // Send authentication credentials
-      queryGraphragWs2(localStorage.getItem("creds")!);
+      const creds = localStorage.getItem("creds");
+      console.log("Sending credentials, length:", creds ? creds.length : 0);
+      queryGraphragWs2(creds!);
       
       // Send RAG pattern
       sendMessage(localStorage.getItem("ragPattern") || "Hybrid Search");
@@ -97,6 +99,17 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
       const conversationIdToSend = conversationId || "new";
       console.log("WebSocket connection " + conversationIdToSend + " established to " + WS_URL);
       sendMessage(conversationIdToSend);
+    },
+    onError: (error) => {
+      console.error("WebSocket error:", error);
+    },
+    onClose: (event) => {
+      console.error("WebSocket closed:", event.code, event.reason);
+      console.log("WebSocket state:", getWebSocket()?.readyState);
+    },
+    shouldReconnect: (closeEvent) => {
+      console.log("WebSocket should reconnect:", closeEvent.code !== 1000);
+      return closeEvent.code !== 1000; // Don't reconnect on normal closure
     },
   });
 

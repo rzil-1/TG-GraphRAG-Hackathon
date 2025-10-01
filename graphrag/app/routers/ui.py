@@ -476,10 +476,21 @@ async def chat(
     
     await websocket.accept()
 
-    # AUTH
-    # this will error if auth does not pass. FastAPI will correctly respond depending on error
-    usr_auth = await websocket.receive_text()
-    _, conn = ws_basic_auth(usr_auth, graphname)
+    # AUTH with proper error handling and timeout
+    try:
+        logger.info(f"WebSocket connected, waiting for authentication for graph: {graphname}")
+        usr_auth = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+        logger.info(f"Received authentication data, length: {len(usr_auth)}")
+        _, conn = ws_basic_auth(usr_auth, graphname)
+        logger.info("Authentication successful")
+    except asyncio.TimeoutError:
+        logger.error("WebSocket authentication timeout - no credentials received")
+        await websocket.close(code=1008, reason="Authentication timeout")
+        return
+    except Exception as e:
+        logger.error(f"Authentication failed: {e}")
+        await websocket.close(code=1008, reason=f"Authentication failed")
+        return
 
     # Get RAG pattern
     rag_pattern = await websocket.receive_text()
