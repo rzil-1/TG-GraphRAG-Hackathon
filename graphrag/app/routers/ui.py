@@ -384,6 +384,7 @@ async def graph_query(
     graphname: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     q: str | None = None,
+    rag_pattern: str | None = None,
     conversation_id: str | None = None,
 ):
     creds = creds[1]
@@ -403,7 +404,7 @@ async def graph_query(
 
         # create agent
         # get retrieval pattern to use
-        rag_pattern = "hybridsearch"
+        rag_pattern = rag_pattern or "hybridsearch"
         agent = make_agent(graphname, conn, use_cypher, supportai_retriever=rag_pattern)
 
         prev_id = None
@@ -457,7 +458,8 @@ async def graph_query(
 @router.websocket(route_prefix + "/{graphname}/chat")
 async def chat(
     graphname: str,
-    websocket: WebSocket
+    websocket: WebSocket,
+    rag_pattern: str | None = None,
 ):
     """
     WebSocket endpoint for chat functionality with conversation history support.
@@ -493,7 +495,7 @@ async def chat(
         return
 
     # Get RAG pattern
-    rag_pattern = await websocket.receive_text()
+    rag_pattern = rag_pattern or "hybridsearch"
     
     # Get conversation ID
     conversation_id = await websocket.receive_text()

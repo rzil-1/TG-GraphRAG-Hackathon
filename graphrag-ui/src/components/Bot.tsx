@@ -6,7 +6,7 @@ import ActionProvider from "../actions/ActionProvider.js";
 import config from "../actions/config.js";
 import MessageParser from "../actions/MessageParser.js";
 import { MdKeyboardArrowDown } from "react-icons/md";
-import { SelectedGraphContext } from './Contexts.js';
+import { SelectedGraphContext, RagPatternContext } from './Contexts.js';
 
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
   const [store, setStore] = useState<any>();
   const [currentDate, setCurrentDate] = useState('');
   const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || '');
-  const [ragPattern, setRagPattern] = useState(localStorage.getItem("ragPattern") || 'Hybrid Search');
+  const [ragPattern, setRagPattern] = useState(localStorage.getItem("ragPattern") || '');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -35,6 +35,12 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
       const firstGraph = parseStore.graphs[0];
       setSelectedGraph(firstGraph);
       localStorage.setItem("selectedGraph", firstGraph);
+    }
+
+    // Set default ragPattern if no value in localStorage
+    if (!localStorage.getItem("ragPattern")) {
+      setRagPattern("Hybrid Search");
+      localStorage.setItem("ragPattern", "Hybrid Search");
     }
 
     const date = new Date();
@@ -53,6 +59,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
   const handleSelectRag = (value) => {
     setRagPattern(value);
     localStorage.setItem("ragPattern", value);
+    navigate("/chat");
     //window.location.reload();
   };
 
@@ -115,15 +122,17 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
         </div>
       
       <SelectedGraphContext.Provider value={selectedGraph}>
-        <Chatbot
-          // eslint-disable-next-line
-          // @ts-ignore
-          config={config}
-          fullPage={layout}
-          getConversationId={getConversationId}
-          messageParser={MessageParser}
-          actionProvider={ActionProvider}
-        />
+        <RagPatternContext.Provider value={ragPattern}>
+          <Chatbot
+            // eslint-disable-next-line
+            // @ts-ignore
+            config={config}
+            fullPage={layout}
+            getConversationId={getConversationId}
+            messageParser={MessageParser}
+            actionProvider={ActionProvider}
+          />
+        </RagPatternContext.Provider>
       </SelectedGraphContext.Provider>
     </div>
   );

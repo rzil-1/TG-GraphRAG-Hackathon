@@ -235,6 +235,8 @@ class TigerGraphAgentGraph:
             top_k=graphrag_config.get("top_k", 5),
             num_seen_min=graphrag_config.get("num_seen_min", 2),
             num_hops=graphrag_config.get("num_hops", 2),
+            chunk_only=graphrag_config.get("chunk_only", True),
+            doc_only=graphrag_config.get("doc_only", False),
         )
 
         query_name = "GraphRAG_Hybrid_Vector_Search"

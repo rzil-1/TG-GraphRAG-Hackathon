@@ -73,7 +73,7 @@ class TigerGraphConnectionProxy:
                             result = None
                             if i >= 9:
                                 raise e
-                            time.sleep(1)
+                        time.sleep(1)
                 elif ret[0]["status"].lower() == "aborted":
                     LogWriter.error(
                         f"request_id={req_id_cv.get()} query {query_name} with RESTPP ID {restppid} aborted"
