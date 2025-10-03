@@ -229,13 +229,14 @@ class TigerGraphAgentGraph:
             self.llm_provider.model,
             self.db_connection,
         )
+        chunk_only=graphrag_config.get("chunk_only", True)
         step = retriever.search(
             state["question"],
-            indices=["Document", "DocumentChunk", "Entity", "Relationship"],
+            indices=(["DocumentChunk"] if chunk_only else ["Document", "DocumentChunk", "Entity"]),
             top_k=graphrag_config.get("top_k", 5),
             num_seen_min=graphrag_config.get("num_seen_min", 2),
             num_hops=graphrag_config.get("num_hops", 2),
-            chunk_only=graphrag_config.get("chunk_only", True),
+            chunk_only=chunk_only,
             doc_only=graphrag_config.get("doc_only", False),
         )
 
@@ -366,7 +367,7 @@ class TigerGraphAgentGraph:
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
             answer = step.generate_answer(
-                state["question"], state["context"]["result"]
+                state["question"], state["context"]["result"]["final_retrieval"]
             )
         elif state["lookup_source"] == "inquiryai":
             logger.debug_pii(
