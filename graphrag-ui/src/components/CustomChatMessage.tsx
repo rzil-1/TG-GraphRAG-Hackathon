@@ -111,8 +111,8 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
               {/* {message.query_sources?.result ? <pre>{JSON.stringify(message.query_sources?.result, null, 2)}</pre> : null} */}
               {/* <pre>{JSON.stringify(message, null, 2)}</pre> */}
               <div className="relative w-full h-[550px] my-10 border border-solid border-[#000]">
-                {message.query_sources?.result ? (
-                  <KnowledgeGraphPro data={message.query_sources?.result.edges || {}} />
+                {message.query_sources?.result.edges ? (
+                  <KnowledgeGraphPro data={message.query_sources?.result.edges} />
                 ) : (
                   <div className="flex items-center justify-center h-full text-gray-500">
                     No graph data available

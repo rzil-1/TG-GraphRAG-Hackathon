@@ -6,15 +6,16 @@ export const KnowledgeGraphPro = ({ data }) => {
   const [theme, setTheme] = useState(localStorage.getItem("vite-ui-theme"));
   const ref = useRef<any | null>(null);
   // const [sdata, setsdata] = useState(JSON.parse(data));
-  const [edges, setEdges] = useState([]);
+  const [edges, setEdges] = useState<any[]>([]);
+  const [nodes, setNodes] = useState<any[]>([]);
   const [dataArray, setdataArray] = useState<any>();
   const [vId, setvId] = useState<any>();
 
   useEffect(() => {
 
+    let parsedData: any[] = [];
     if (typeof data === 'string') {
-      const parseData = JSON.parse(data);
-      setEdges(parseData);
+      parsedData = JSON.parse(data);
       // do i need to parse for question 'show me 5 transacitons with details'
 
     //   {
@@ -41,17 +42,31 @@ export const KnowledgeGraphPro = ({ data }) => {
       // } else null
     } else if (Array.isArray(data)) {
       // YES THERE ARE 5 from question 'show me 5 transacitons with details'
-        const setresults = data[1]["@@edges"];
+      //  const setresults = data[1]["@@edges"];
+      parsedData = data;
       // ^ this is valid for question 'what cards have more than 800 transactions between april 1 2021 to august 1 2021'
-      setEdges(setresults);
-      } else {
+    } else {
       // Handle object data directly
-      setEdges(data);
+      parsedData = data.edges;
     }
+
+    let edgesList: any[] = [];
+    let nodesSet = new Set<string>();
+
+    parsedData.forEach((e, i) => {
+      if (e.v && e.t) {
+        edgesList.push({ id: `e${i}`, source: e.v, target: e.t });
+        nodesSet.add(e.v);
+        nodesSet.add(e.t);
+      }
+    });
+
+    setEdges(edgesList);
+    setNodes(Array.from(nodesSet).map(id => ({ id, label: id })));
   }, [data]);
 
   useEffect(() => {
-    console.log('\n\n\n\n\n\n\n\n\n\n PARSED edges', edges);
+    console.log('PARSED edges', edges);
   },[])
 
   // const getNodes = edges.map((d:any) => (
@@ -78,23 +93,23 @@ export const KnowledgeGraphPro = ({ data }) => {
   // ]
 
  return (
-  <>{edges ? JSON.stringify(edges) : 'no data'}
+  <>{/* edges ? JSON.stringify(edges) : 'no data' */}
     {/* {edges} */}
     {/* {edges && <pre>{edges}</pre>} */}
-    {/* {typeof sdata !== 'number' && typeof sdata !== 'string' && dataArray?.edgez && dataArray?.nodes ? (
+    { edges && nodes ? (
       <GraphCanvas
         ref={ref} 
-        nodes={dataArray?.nodes} 
-        edges={dataArray?.edgez}
+        nodes={nodes} 
+        edges={edges}
         labelType="all"
         theme={darkTheme}
         sizingType="centrality"
         draggable
       />
     ) : <div className='m-10'>Sorry no graph or table available</div> }
-    {typeof sdata !== 'number' && typeof sdata !== 'string' ? (<div className='absolute top-[10px] right-[10px] w-[170px]'>
+    {edges && nodes ? (<div className='absolute top-[10px] right-[10px] w-[170px]'>
       <button className='block w-full text-right text-sm' onClick={() => ref.current?.centerGraph()}>Home</button>
-    </div>) : null} */}
+    </div>) : null}
   </>
  )
 }
