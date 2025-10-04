@@ -54,9 +54,9 @@ export const KnowledgeGraphPro = ({ data }) => {
     let nodesSet = new Set<string>();
 
     parsedData.forEach((e, i) => {
-      if (e.v && e.t) {
-        edgesList.push({ id: `e${i}`, source: e.v, target: e.t });
-        nodesSet.add(e.v);
+      if (e.s && e.t) {
+        edgesList.push({ id: `e${i}`, source: e.s, target: e.t });
+        nodesSet.add(e.s);
         nodesSet.add(e.t);
       }
     });
@@ -96,7 +96,7 @@ export const KnowledgeGraphPro = ({ data }) => {
   <>{/* edges ? JSON.stringify(edges) : 'no data' */}
     {/* {edges} */}
     {/* {edges && <pre>{edges}</pre>} */}
-    { edges && nodes ? (
+    { edges && nodes && nodes.length > 0 && edges.length > 0 ? (
       <GraphCanvas
         ref={ref} 
         nodes={nodes} 

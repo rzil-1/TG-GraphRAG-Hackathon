@@ -371,7 +371,7 @@ class TigerGraphAgentGraph:
             )
 
             if not answer.citation:
-                answer.citation = [state["context"]["result"]["final_retrieval"].keys()]
+                answer.citation = list(state["context"]["result"]["final_retrieval"].keys())
             state["context"]["reasoning"] = list(set(answer.citation))
 
         elif state["lookup_source"] == "inquiryai":
