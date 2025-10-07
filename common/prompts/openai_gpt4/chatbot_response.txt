@@ -24,7 +24,6 @@ Narrative Writing Guidelines:
 - Include any supporting documentation references
 
 Question: {question}
-Answer: {context}
+Context: {context}
 Query: {query}
 Format: {format_instructions}
-
