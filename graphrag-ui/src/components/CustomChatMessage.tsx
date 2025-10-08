@@ -1,5 +1,6 @@
 import { FC, useState } from "react";
-import Markdown from 'react-markdown'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   Dialog,
   DialogContent,
@@ -86,7 +87,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
     <>
       {typeof message === "string" ? (
         <div className="prose dark:prose-invert text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
-          <Markdown className="typewriter">{message}</Markdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} className="typewriter">{message}</ReactMarkdown>
         </div>
       ) : message.key === null ? (
         message
@@ -96,7 +97,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
             {message.response_type === "progress" ? (
               <p className="graphrag-thinking typewriter">{message.content}</p>
             ) : (
-              <Markdown className="typewriter">{message.content}</Markdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} className="typewriter">{message.content}</ReactMarkdown>
             )}
             <Interactions
               message={message} 
