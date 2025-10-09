@@ -449,8 +449,6 @@ If you would like to enable openCypher query generation in InquiryAI, you can se
 
 GraphRAG is friendly to both technical and non-technical users. There is a graphical chat interface as well as API access to GraphRAG. Function-wise, GraphRAG can answer your questions by calling existing queries in the database (InquiryAI), build a knowledge graph from your documents (SupportAI), and answer knowledge questions based on your documents (SupportAI).
 
-Please refer to our [official documentation](https://docs.tigergraph.com/tg-graphrag/current/using-graphrag/) on how to use GraphRAG.
-
 ## Customization and Extensibility
 TigerGraph GraphRAG is designed to be easily extensible. The service can be configured to use different LLM providers, different graph schemas, and different LangChain tools. The service can also be extended to use different embedding services, different LLM generation services, and different LangChain tools. For more information on how to extend the service, see the [Developer Guide](./docs/DeveloperGuide.md).
 
