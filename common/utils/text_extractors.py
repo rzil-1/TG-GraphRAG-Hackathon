@@ -354,32 +354,6 @@ def extract_text_from_file(file_path):
             except Exception as docx_error:
                 logger.error(f"Error processing DOCX {file_path}: {docx_error}")
                 raise Exception(f"DOCX processing failed: {docx_error}")
-        
-        # Excel files
-        elif extension in ['.xlsx', '.xls']:
-            try:
-                import pandas as pd
-                # Read all sheets from the Excel file
-                excel_data = pd.read_excel(file_path, sheet_name=None)
-                text_content = ""
-                
-                for sheet_name, df in excel_data.items():
-                    text_content += f"=== Sheet: {sheet_name} ===\n"
-                    # Convert DataFrame to tab-separated text
-                    sheet_text = df.to_string(index=False, na_rep='')
-                    text_content += sheet_text + "\n\n"
-                
-                content = text_content.strip()
-                logger.debug(f"Extracted {len(content)} characters from Excel file ({len(excel_data)} sheets)")
-                return content
-                
-            except ImportError:
-                logger.warning("pandas not available for Excel processing")
-                return "[Excel processing requires pandas library]"
-            except Exception as excel_error:
-                logger.error(f"Error processing Excel {file_path}: {excel_error}")
-                raise Exception(f"Excel processing failed: {excel_error}")
-        
         # XML files
         elif extension == '.xml':
             try:
@@ -411,7 +385,7 @@ def extract_text_from_file(file_path):
                 raise Exception(f"XML processing failed: {xml_error}")
         
         # Image files (JPEG, JPG)
-        elif extension in ['.jpeg', '.jpg']:
+        elif extension in ['.jpeg', '.jpg','png','.gif']:
             try:
                 from common.utils.image_data_extractor import describe_image_with_llm
                 from PIL import Image
@@ -492,7 +466,7 @@ def get_supported_extensions():
     Returns:
         set: Set of supported file extensions (with dots)
     """
-    return {'.txt', '.md', '.html', '.htm', '.csv', '.json', '.pdf', '.docx', '.xlsx', '.xls', '.xml', '.jpeg', '.jpg'}
+    return {'.txt', '.md', '.html', '.htm', '.csv', '.json', '.pdf', '.docx', '.xml', '.jpeg', '.jpg','png','.gif'}
 
 def is_supported_file(file_path):
     """
