@@ -280,7 +280,8 @@ def create_ingest(
     if not ingest_config.loader_config:
         ingest_config.loader_config = {
             "doc_id_field": "doc_id",
-            "content_field": "content"
+            "content_field": "content",
+            "doc_type": "doc_type"
         }
 
     if ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":

@@ -237,13 +237,7 @@ def extract_text_from_file(file_path):
         elif extension in ['.html', '.htm']:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                # Simple HTML tag removal
-                import re
-                clean_content = re.sub(r'<[^>]+>', '', content)
-                # Clean up extra whitespace
-                clean_content = re.sub(r'\s+', ' ', clean_content).strip()
-                logger.debug(f"Extracted {len(clean_content)} characters from HTML file")
-                return clean_content
+                return content
         
         # CSV files
         elif extension == '.csv':
@@ -284,9 +278,35 @@ def extract_text_from_file(file_path):
                                 text = block[4].strip()
                                 if text:
                                     page_content.append(text)
-                            # Image Block
+                            # Image Block (rare case where image is a separate block)
                             elif block_type == 1:
-                                page_content.append("[Image: content skipped]")
+                                page_content.append("[Image detected in block]")
+                        
+                        # Extract and describe all images on the page
+                        # (Many PDFs embed images without creating image blocks)
+                        image_list = page.get_images(full=True)
+                        if image_list:
+                            logger.debug(f"Found {len(image_list)} embedded image(s) on page {page_num}")
+                            for img_index, img_info in enumerate(image_list):
+                                try:
+                                    xref = img_info[0]
+                                    base_image = doc.extract_image(xref)
+                                    image_bytes = base_image["image"]
+                                    
+                                    # Convert to PIL Image
+                                    from PIL import Image
+                                    import io
+                                    pil_image = Image.open(io.BytesIO(image_bytes))
+                                    
+                                    # Describe image using LLM
+                                    from common.utils.image_data_extractor import describe_image_with_llm
+                                    description = describe_image_with_llm(pil_image)
+                                    page_content.append(f"[Embedded Image {img_index + 1}: {description}]")
+                                    logger.debug(f"Described embedded image {img_index + 1} on page {page_num}")
+                                    
+                                except Exception as img_error:
+                                    logger.warning(f"Failed to describe embedded image {img_index + 1} on page {page_num}: {img_error}")
+                                    page_content.append(f"[Embedded Image {img_index + 1}: description failed]")
                         
                         # Optional Table Extraction
                         try:
@@ -435,37 +455,35 @@ def extract_text_from_file(file_path):
 
 def get_doc_type_from_extension(extension):
     """
-    Map file extension to a standardized document type.
+    Map file extension to a chunker-compatible document type.
+    Returns chunker types that match the available chunkers in ECC:
+    - 'html' for HTML files -> HTMLChunker
+    - 'markdown' for Markdown files -> MarkdownChunker
+    - 'image' for image files -> No chunking (bypass)
+    - 'semantic' for all other files -> SemanticChunker (default)
     
     Args:
         extension (str): File extension (with or without dot)
         
     Returns:
-        str: Standardized document type
+        str: Chunker-compatible document type
     """
     if not extension.startswith('.'):
         extension = '.' + extension
     
     extension = extension.lower()
     
-    type_mapping = {
-        '.txt': 'text',
-        '.md': 'markdown',
-        '.html': 'html', 
-        '.htm': 'html',
-        '.csv': 'csv',
-        '.json': 'json',
-        '.pdf': 'pdf',
-        '.docx': 'docx',
-        '.doc': 'doc',
-        '.xlsx': 'excel',
-        '.xls': 'excel',
-        '.xml': 'xml',
-        '.jpeg': 'image',
-        '.jpg': 'image'
-    }
-    
-    return type_mapping.get(extension, 'unknown')
+    # Map extensions to chunker types
+    if extension in ['.html', '.htm']:
+        return 'html'
+    elif extension == '.md':
+        return 'markdown'
+    elif extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
+        # Images should not be chunked - treat as single content
+        return 'image'
+    else:
+        # All other types (pdf, text, docx, csv, etc.) use semantic chunker
+        return 'semantic'
 
 def get_supported_extensions():
     """
