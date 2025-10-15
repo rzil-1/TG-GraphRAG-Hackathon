@@ -393,10 +393,7 @@ class TigerGraphAgentGraph:
             citations = [re.sub(r"_chunk_\d+", "", x) for x in answer.citation]
             state["context"]["reasoning"] = list(set(citations))
 
-        try:
-            # Log the context to see if image markdown is present
-            logger.info(f"state['context'] BEFORE REPLACEMENT: {state['context']}")
-            
+        try:         
             # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)
             if isinstance(self.llm_provider, AWSBedrock):
                 answer.generated_answer = self.replace_s3_urls_with_presigned(answer.generated_answer)
@@ -406,9 +403,7 @@ class TigerGraphAgentGraph:
             # This applies to all LLM providers when processing local files
             answer.generated_answer = self.replace_local_image_urls(answer.generated_answer)
             state["context"] = self.replace_local_image_urls(state["context"])
-            
-            # Log after replacement
-            logger.info(f"state['context'] AFTER REPLACEMENT: {state['context']}")
+    
             
             resp = GraphRAGResponse(
                 natural_language_response=answer.generated_answer,
