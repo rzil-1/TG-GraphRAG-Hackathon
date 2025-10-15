@@ -15,7 +15,7 @@ from common.utils.text_extractors import TextExtractor
 from common.py_schemas.schemas import (
     # GraphRAGResponse,
     CreateIngestConfig,
-    # LoadingInfo,
+    LoadingInfo,
     # SupportAIInitConfig,
     # SupportAIMethod,
     # SupportAIQuestion,
@@ -122,7 +122,7 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
     return schema_res, index_res, query_res
 
 
-def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws_secret_key, data_source_config={}):
+def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secret_key, data_source_config={}):
     logger.info(f"Triggering Bedrock Data Automation {region}")
     s3 = boto3.client('s3', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     bda_client = boto3.client('bedrock-data-automation', region_name=region, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
@@ -154,7 +154,6 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
         # Create BDA project
         logger.info(f"Creating BDA project")
         project_name = f"bda-preprocessing-{uuid.uuid4().hex[:6]}"
-        logger.info(f"Created before  BDA project {project_name}")
         project_response = bda_client.create_data_automation_project(
             projectName=project_name,
             projectDescription='Preprocessing multi data formats using bedrock data automation',
@@ -174,19 +173,37 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
         )
 
         project_arn = project_response['projectArn']
-        logger.info(f"Created after BDA project {project_name} with ARN {project_arn}")
+        logger.info(f"Created BDA project {project_name} with ARN {project_arn}")
         # Get file names from S3
-        response = s3.list_objects_v2(Bucket=input_bucket)
+        s3_pattern = re.compile(r'^s3://[a-z0-9\.-]{3,63}/.+$')
+        if s3_pattern.match(input_uri):
+            input_bucket = input_uri[5:].split("/")[0]
+            input_prefix = "/".join(input_uri[5:].split("/")[1:])
+        elif "//" in input_uri or input_uri.startswith("/") or input_uri.startswith("."):
+            raise Exception("Input URI is not in the format of s3://<bucket_name>/<prefix>")
+        else:
+            input_bucket = input_uri.split("/")[0]
+            input_prefix = "/".join(input_uri.split("/")[1:])
+            input_uri = "s3://" + input_uri
+
+        if not s3_pattern.match(output_uri):
+            if "//" in output_uri or output_uri.startswith("/") or output_uri.startswith("."):
+                raise Exception("Output URI is not in the format of s3://<bucket_name>/<prefix>")
+            else:
+                output_uri = "s3://" + output_uri
+
+        response = s3.list_objects_v2(Bucket=input_bucket, Prefix=input_prefix)
         objects = response.get('Contents', [])
-        logger.info(f"Found {len(objects)} objects in S3 bucket {input_bucket}")
+        logger.info(f"Found {len(objects)} objects in S3 bucket {input_uri}")
         job_results = []
 
         # Launch all BDA jobs first and collect job_arns
+        # TODO: Handle quota limit
         for obj in objects:
             time.sleep(2)
-            file_key = obj['Key']
-            input_s3_uri = f's3://{input_bucket}/{file_key}'
-            output_s3_uri = f's3://{output_bucket}/bda/output/{file_key}'
+            file_key = obj['Key'].removeprefix(input_prefix)
+            input_s3_uri = f'{input_uri}/{file_key}'
+            output_s3_uri = f'{output_uri}/{file_key}'
 
             bda_response = bda_runtime_client.invoke_data_automation_async(
                 inputConfiguration={
@@ -210,10 +227,14 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
             })
 
         # Poll all jobs' statuses
-        for job in job_results:
-            job_arn = job['jobId']
-            file_key = job['file']
-            while True:
+        logger.info(f"Waiting for {len(job_results)} BDA jobs to complete")
+        max_timeout = 3600 # 1 hour max timeout
+        while max_timeout > 0:
+            for job in job_results:
+                if job['status'] is not None:
+                    continue
+                job_arn = job['jobId']
+                file_key = job['file']
                 status_response = bda_runtime_client.get_data_automation_status(invocationArn=job_arn)
                 status = status_response.get('status')
                 if status in ['Success', 'FAILED', 'STOPPED']:
@@ -221,14 +242,17 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
                         logger.info(f"ERROR: job not success for {job_arn} on file {file_key}with end status {status}")
                     else:
                         logger.info(f"BDA job {job_arn} on file {file_key} completed successfully.")
-                    break
+                    job['status'] = status
                 time.sleep(1)
-            if status != 'Success':
-                logger.error(f"BDA job {job_arn} failed with status: {status}")
-            else:
-                logger.info(f"BDA job {job_arn} completed successfully.")
-            job['status'] = status
-
+                max_timeout -= 1
+            if all(job['status'] for job in job_results):
+                break
+        if max_timeout <= 0:
+            logger.error(f"Timeout: {len(job_results)} BDA jobs not completed within 1 hour")
+            return {
+                'statusCode': 300,
+                'error': f"Timeout: {len(job_results)} BDA jobs not completed within 1 hour, need manual check"
+            }
         logger.info(f"Accomplished {len(job_results)} BDA jobs")
 
         return {
@@ -236,7 +260,6 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
             'message': f'Processed {len(job_results)} BDA jobs',
             'jobs': job_results
         }
-
     except Exception as e:
         return {
             'statusCode': 500,
@@ -292,12 +315,15 @@ def create_ingest(
         ingest_template = ingest_template.replace("@uuid@", str(uuid.uuid4().hex))
         doc_id = ingest_config.loader_config.get("doc_id_field", "doc_id")
         doc_text = ingest_config.loader_config.get("content_field", "content")
-        doc_type = ingest_config.loader_config.get("doc_type", "")
+        doc_type = ingest_config.loader_config.get("doc_type_field", "doc_type")
+        doc_type_value = ingest_config.loader_config.get("doc_type", "")
         ingest_template = ingest_template.replace('"doc_id"', '"{}"'.format(doc_id))
         ingest_template = ingest_template.replace('"content"', '"{}"'.format(doc_text))
-        ingest_template = ingest_template.replace('"doc_type"', '"{}"'.format(doc_type))
-
-    if ingest_config.file_format.lower() == "csv":
+        if doc_type_value:
+            ingest_template = ingest_template.replace('$"doc_type"', '"{}"'.format(doc_type_value))
+        else:
+            ingest_template = ingest_template.replace('"doc_type"', '"{}"'.format(doc_type))
+    elif ingest_config.file_format.lower() == "csv":
         file_path = "common/gsql/supportai/SupportAI_InitialLoadCSV.gsql"
 
         with open(file_path) as f:
@@ -311,20 +337,22 @@ def create_ingest(
         ingest_template = ingest_template.replace('"true"', '"{}"'.format(header))
         ingest_template = ingest_template.replace('"\\n"', '"{}"'.format(eol))
         ingest_template = ingest_template.replace('"double"', '"{}"'.format(quote))
+    else:
+        raise Exception("File format not implemented")
 
+    # check the data source and create the appropriate connection
     file_path = "common/gsql/supportai/SupportAI_DataSourceCreation.gsql"
-
     with open(file_path) as f:
         data_stream_conn = f.read()
 
     # assign unique identifier to the data stream connection
-
     data_stream_conn = data_stream_conn.replace(
         "@source_name@", "SupportAI_" + graphname + "_" + str(uuid.uuid4().hex)
     )
 
-    # check the data source and create the appropriate connection
-    res = {"data_source": ingest_config.data_source.lower()}
+    res_ingest_config = {"data_source": ingest_config.data_source.lower()}
+    res_ingest_config["file_format"] = ingest_config.file_format.lower()
+    res_ingest_config["loader_config"] = ingest_config.loader_config
 
     if ingest_config.data_source.lower() == "s3":
         data_conf = ingest_config.data_source_config
@@ -334,15 +362,8 @@ def create_ingest(
         if aws_access_key is None or aws_secret_key is None:
             raise Exception("AWS credentials not provided")
 
-        connector = {
-            "type": "s3",
-            "access.key": aws_access_key,
-            "secret.key": aws_secret_key,
-        }
-
-        data_stream_conn = data_stream_conn.replace(
-            "@source_config@", json.dumps(connector)
-        )
+        res_ingest_config["aws_access_key"] = aws_access_key
+        res_ingest_config["aws_secret_key"] = aws_secret_key
 
         if ingest_config.file_format.lower() == "multi":
             input_bucket = data_conf.get("input_bucket", None)
@@ -352,72 +373,25 @@ def create_ingest(
             if input_bucket is None or output_bucket is None or region_name is None:
                 raise Exception("Input bucket, output bucket, or region name not provided")
 
+            res_ingest_config["region_name"] = region_name
+
             try:
                 bedrock_bda_result = trigger_bedrock_bda(
                     input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_conf)
-                if bedrock_bda_result.get("statusCode") != 200:
+                if bedrock_bda_result.get("statusCode") != 200 and bedrock_bda_result.get("statusCode") != 300:
                     raise Exception(f"Bedrock BDA failed: {bedrock_bda_result}")
-
-                #status check of bda, start once completion
-                # --- Begin: S3 markdown extraction and TigerGraph loading ---
-                # Possiblely we can download the files locally and then process them with next conn.runDocumentIngest() after it supports folder
-                logger.info(
-                    f"Starting S3 markdown extraction and TigerGraph loading...")
-
-                job_uids = [job.get("jobId").split("/")[-1] for job in bedrock_bda_result.get("jobs")]
-
-                s3 = boto3.client('s3', region_name=region_name, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
-                prefix = 'bda/output/'
-
-                paginator = s3.get_paginator('list_objects_v2')
-                pages = paginator.paginate(Bucket=output_bucket, Prefix=prefix)
-                processed_files = []
-
-                load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
-                load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
-                res["load_job_id"] = load_job_id
-                res["data_source_id"] = "DocumentContent"
-                for page in pages:
-                    if 'Contents' not in page:
-                        continue
-                    for obj in page['Contents']:
-                        key = obj['Key']
-                        if key.endswith('/0/standard_output/0/result.md'):
-                            path_parts = key.split('/')
-                            if len(path_parts) >= 7:
-                                file_name = path_parts[-6]
-                                file_uuid = path_parts[-5]
-                                if file_uuid not in job_uids:
-                                    continue
-
-                                response = s3.get_object(Bucket=output_bucket, Key=key)
-                                content = response['Body'].read().decode('utf-8')
-                                base_path = "/".join(path_parts[:-1]) + "/assets/"
-
-                                # Find and log image matches before replacement
-                                matches = re.findall(r'!\[([^\]]*)\]\(\./([^)]+)\)', content)
-                                content = re.sub(r'!\[([^\]]*)\]\(\./([^)]+)\)', lambda m: f'![{m.group(1)}](s3://{output_bucket}/{base_path}{m.group(2)})', content)
-                                doc_id = f"{file_name}"
-                                # Prepare API payload
-                                payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
-
-                                #CALL API
-                                conn.runLoadingJobWithData(payload, "DocumentContent", load_job_id)
-                                processed_files.append({
-                                    'file_path': key,
-                                    'doc_id': doc_id,
-                                })
-                                # Loading into TigerGraph is now handled elsewhere.
-                                logger.info(f"Data uploading done for file: {key} with doc_id: {doc_id}")
-                res["processed_files"] = processed_files
-                logger.info(
-                    f"Processed {len(processed_files)} markdown files from S3 and loaded into TigerGraph.")
-                # --- End: S3 markdown extraction and TigerGraph loading ---
+                res_ingest_config["bda_jobs"] = bedrock_bda_result.get("jobs")
             except Exception as e:
-                logger.error(f"Error during Bedrock BDA preprocessing: {e}")
-                return {"error": str(e), "stage": "bedrock_bda_preprocessing"}
-            return res
-
+                raise Exception(f"Error during Bedrock BDA preprocessing: {e}")
+        else:
+            connector = {
+                "type": "s3",
+                "access.key": aws_access_key,
+                "secret.key": aws_secret_key,
+            }
+            data_stream_conn = data_stream_conn.replace(
+                "@source_config@", json.dumps(connector)
+            )
     elif ingest_config.data_source.lower() == "azure":
         if ingest_config.data_source_config.get("account_key") is not None:
             connector = {
@@ -512,12 +486,18 @@ def create_ingest(
     else:
         raise Exception("Data source not implemented")
 
-    load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
-    res["load_job_id"] = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
-    if ingest_config.data_source_config:
+    load_job_created = conn.gsql(f"USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
+    res = {"load_job_id": load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")}
+
+    if "data_path" not in res and ingest_config.data_source_config:
         res["data_path"] = ingest_config.data_source_config.get("data_path", "")
 
-    if ingest_config.data_source.lower() == "local":
+    if ingest_config.data_source.lower() == "s3" and ingest_config.file_format.lower() == "multi":
+        res_ingest_config["data_source_id"] = "DocumentContent"
+        res["data_path"] = ingest_config.data_source_config.get("output_bucket", "")
+        # key name to be changed
+        res["data_source_id"] = res_ingest_config
+    elif ingest_config.data_source.lower() == "local":
         res["data_source_id"] = "DocumentContent"
     else:
         data_source_created = conn.gsql(
@@ -526,3 +506,140 @@ def create_ingest(
         res["data_source_id"] = data_source_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
 
     return res
+
+
+def ingest(
+    graphname: str,
+    loader_info: LoadingInfo,
+    conn: TigerGraphConnection,
+):
+    """
+    Execute the data ingestion process by running a loading job.
+
+    Args:
+        graphname: Name of the graph
+        loader_info: Loading configuration containing job_id, data_source_id, and file_path
+        conn: TigerGraph connection instance
+
+    Returns:
+        dict: Contains job_name, job_id, and log_location
+    """
+    if loader_info.file_path is None:
+        raise Exception("File path not provided")
+    if loader_info.load_job_id is None:
+        raise Exception("Load job id not provided")
+    if loader_info.data_source_id is None:
+        raise Exception("Data source id not provided")
+
+    if isinstance(loader_info.data_source_id, str):
+        try:
+            res = conn.gsql(
+                'USE GRAPH {}\nRUN LOADING JOB -noprint {} USING {}="{}"'.format(
+                    graphname,
+                    loader_info.load_job_id,
+                    "DocumentContent",
+                    "$" + loader_info.data_source_id + ":" + loader_info.file_path,
+                )
+            )
+        except Exception as e:
+            if (
+                "Running the following loading job in background with '-noprint' option:"
+                in str(e)
+            ):
+                res = str(e)
+            else:
+                raise e
+
+        log_section = res.split(
+            "Running the following loading job in background with '-noprint' option:"
+        )[1]
+        # Try to extract 'Job name' or 'Log directory'
+        if "Job name: " in log_section:
+            log_location = log_section.split("Job name: ")[1].split("\n")[0]
+        else:
+            log_location = log_section.split("Log directory: ")[1].split("\n")[0]
+        return {
+            "job_name": loader_info.load_job_id,
+            "job_id": log_section.split("Jobid: ")[1].split("\n")[0],
+            "log_location": log_location,
+        }
+    else:
+        ingest_config = loader_info.data_source_id
+        loader_config = ingest_config.get("loader_config", {})
+        if ingest_config.get("data_source") == "s3" and ingest_config.get("file_format") == "multi":
+            aws_access_key = ingest_config.get("aws_access_key", None)
+            aws_secret_key = ingest_config.get("aws_secret_key", None)
+            region_name = ingest_config.get("region_name", None)
+
+            if aws_access_key is None or aws_secret_key is None or region_name is None:
+                raise Exception("AWS credentials, secret key, or region name not provided")
+
+            # data_path is in the format of s3://<bucket_name>/<prefix>
+            s3_pattern = re.compile(r'^s3://[a-z0-9\.-]{3,63}/.+$')
+            if s3_pattern.match(loader_info.file_path):
+                s3_bucket = loader_info.file_path[5:].split("/")[0]
+                s3_prefix = "/".join(loader_info.file_path[5:].split("/")[1:])
+            elif "//" in loader_info.file_path or loader_info.file_path.startswith("/") or loader_info.file_path.startswith("."):
+                raise Exception("File path is not in the format of s3://<bucket_name>/<prefix>")
+            else:
+                s3_bucket = loader_info.file_path.split("/")[0]
+                s3_prefix = "/".join(loader_info.file_path.split("/")[1:])
+
+            # --- Begin: S3 markdown extraction and TigerGraph loading ---
+            # Possiblely we can download the files locally and then process them with next conn.runDocumentIngest() after it supports folder
+            logger.info(f"Starting S3 markdown extraction and TigerGraph loading...")
+
+            try:
+                data_source_id = ingest_config.get("data_source_id", "DocumentContent")
+                if ingest_config.get("bda_jobs"):
+                    job_uids = [job.get("jobId").split("/")[-1] for job in ingest_config.get("bda_jobs")]
+                else:
+                    job_uids = []
+
+                s3 = boto3.client('s3', region_name=region_name, aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
+                paginator = s3.get_paginator('list_objects_v2')
+                pages = paginator.paginate(Bucket=s3_bucket, Prefix=s3_prefix)
+                processed_files = []
+
+                for page in pages:
+                    if 'Contents' not in page:
+                        continue
+                    for obj in page['Contents']:
+                        key = obj['Key']
+                        if key.endswith('/0/standard_output/0/result.md'):
+                            path_parts = key.split('/')
+                            if len(path_parts) >= 7:
+                                file_name = path_parts[-6]
+                                file_uuid = path_parts[-5]
+                                if job_uids and file_uuid not in job_uids:
+                                    continue
+
+                                response = s3.get_object(Bucket=s3_bucket, Key=key)
+                                content = response['Body'].read().decode('utf-8')
+                                base_path = "/".join(path_parts[:-1]) + "/assets"
+
+                                # Find and log image matches before replacement
+                                content = re.sub(r'!\[([^\]]*)\]\(\./([^)]+)\)', lambda m: f'![{m.group(1)}](s3://{s3_bucket}/{base_path}/{m.group(2)})', content)
+                                doc_id = f"{file_name}"
+                                # Prepare API payload
+                                payload = json.dumps({loader_config.get("doc_id_field", "doc_id"): doc_id, loader_config.get("doc_type_field", "doc_type"): "markdown", loader_config.get("content_field", "content"): content})
+
+                                #CALL API
+                                conn.runLoadingJobWithData(payload, data_source_id, loader_info.load_job_id)
+                                processed_files.append({
+                                    'file_path': key,
+                                    'doc_id': doc_id,
+                                })
+                                # Loading into TigerGraph is now handled elsewhere.
+                                logger.info(f"Data uploading done for file: {key} with doc_id: {doc_id}")
+                logger.info(f"Processed {len(processed_files)} markdown files from S3 and loaded into TigerGraph.")
+                # --- End: S3 markdown extraction and TigerGraph loading ---
+            except Exception as e:
+                raise Exception(f"Error during S3 markdown extraction and TigerGraph loading: {e}")
+
+            return {
+                "job_name": loader_info.load_job_id,
+                "summary": processed_files
+            }
+        else:
+            raise Exception("Data source and file format combination not implemented")
