@@ -125,7 +125,7 @@ class CreateIngestConfig(BaseModel):
 
 class LoadingInfo(BaseModel):
     load_job_id: str
-    data_source_id: str
+    data_source_id: Union[str, Dict]
     file_path: str
 
 
