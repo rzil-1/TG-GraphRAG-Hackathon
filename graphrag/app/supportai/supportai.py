@@ -442,47 +442,30 @@ def create_ingest(
             folder_path = ingest_config.data_source_config.get("folder_path", None)
             if folder_path is None:
                 raise Exception("Folder path not provided for local multi-format processing")
-            
+
             try:
                 # Process local folder and extract text from all supported files
                 local_processing_result = process_local_folder(folder_path, graphname=graphname)
                 if local_processing_result.get("statusCode") != 200:
                     raise Exception(f"Local folder processing failed: {local_processing_result}")
-                
+
                 logger.info(f"Starting local folder text extraction and TigerGraph loading...")
-                
+
                 processed_files = local_processing_result.get("files", [])
                 successful_files = [f for f in processed_files if f.get('status') == 'success']
-                
+
                 # Get the JSONL file that was already created during processing
                 jsonl_filepath = local_processing_result.get("jsonl_file_path")
                 if not jsonl_filepath:
                     raise Exception("JSONL file was not created during local folder processing")
-                
-                # Create loading job - ingest_template should already be set above
-                load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
-                load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
-                res["load_job_id"] = load_job_id
-                res["data_source_id"] = "DocumentContent"
-                
-                # Set the file path for runDocumentIngest (use the existing JSONL file)
-                res["jsonl_file_path"] = jsonl_filepath
-                res["num_documents"] = len(successful_files)
-                res["processed_files"] = processed_files
-                res["total_files_found"] = len(processed_files)
-                res["successful_files"] = len(successful_files)
-                
-                # Store cleanup info for later cleanup (similar to S3 BDA)
-                res["cleanup_files"] = [jsonl_filepath]
-                
+
+                # Store the processed files to response
+                res_ingest_config["json_filepath"] = jsonl_filepath
+
                 logger.info(
-                    f"Processed {len(successful_files)} files from local folder and prepared {len(successful_files)} documents for runDocumentIngest.")
-                
+                    f"Processed {len(processed_files)} files from local folder and prepared {len(successful_files)} documents for runDocumentIngest.")
             except Exception as e:
-                logger.error(f"Error during local folder processing: {e}")
-                return {"error": str(e), "stage": "local_folder_processing"}
-            
-            return res
+                raise Exception(f"Error during local folder processing: {e}")
     else:
         raise Exception("Data source not implemented")
 
@@ -498,7 +481,12 @@ def create_ingest(
         # key name to be changed
         res["data_source_id"] = res_ingest_config
     elif ingest_config.data_source.lower() == "local":
-        res["data_source_id"] = "DocumentContent"
+        if ingest_config.file_format.lower() == "multi":
+            res_ingest_config["data_source_id"] = "DocumentContent"
+            res["data_path"] = ingest_config.get("json_filepath", res["data_path"])
+            res["data_source_id"] = res_ingest_config
+        else:
+            res["data_source_id"] = "DocumentContent"
     else:
         data_source_created = conn.gsql(
             "USE GRAPH {}\n".format(graphname) + data_stream_conn
@@ -566,6 +554,8 @@ def ingest(
     else:
         ingest_config = loader_info.data_source_id
         loader_config = ingest_config.get("loader_config", {})
+        data_source_id = ingest_config.get("data_source_id", "DocumentContent")
+
         if ingest_config.get("data_source") == "s3" and ingest_config.get("file_format") == "multi":
             aws_access_key = ingest_config.get("aws_access_key", None)
             aws_secret_key = ingest_config.get("aws_secret_key", None)
@@ -590,7 +580,6 @@ def ingest(
             logger.info(f"Starting S3 markdown extraction and TigerGraph loading...")
 
             try:
-                data_source_id = ingest_config.get("data_source_id", "DocumentContent")
                 if ingest_config.get("bda_jobs"):
                     job_uids = [job.get("jobId").split("/")[-1] for job in ingest_config.get("bda_jobs")]
                 else:
@@ -641,5 +630,23 @@ def ingest(
                 "job_name": loader_info.load_job_id,
                 "summary": processed_files
             }
+        elif ingest_config.get("data_source") == "local" and ingest_config.get("file_format") == "multi":
+            if loader_info.file_path:
+                conn.runLoadingJobWithFile(loader_info.file_path, data_source_id, loader_info.load_job_id)
+                return {
+                    "job_name": loader_info.load_job_id,
+                    "summary": f"Local file {loader_info.file_path} processing done"
+                }
+            elif ingest_config.get("json_filepath"):
+                conn.runLoadingJobWithFile(ingest_config.get("json_filepath"), data_source_id, loader_info.load_job_id)
+                return {
+                    "job_name": loader_info.load_job_id,
+                    "summary": f"Local folder {ingest_config.get('json_filepath')} processing done"
+                }
+            else:
+                return {
+                    "job_name": loader_info.load_job_id,
+                    "summary": "No data file path provided"
+                }
         else:
             raise Exception("Data source and file format combination not implemented")
