@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import boto3
+import os
 import re
 import json
 import logging
@@ -393,8 +394,16 @@ class TigerGraphAgentGraph:
             state["context"]["reasoning"] = list(set(citations))
 
         try:
+            # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)
             if isinstance(self.llm_provider, AWSBedrock):
                 answer.generated_answer = self.replace_s3_urls_with_presigned(answer.generated_answer)
+                state["context"] = self.replace_s3_urls_with_presigned(state["context"])
+            
+            # Replace local image URLs (img://) with API endpoint URLs (for local folder processing)
+            # This applies to all LLM providers when processing local files
+            answer.generated_answer = self.replace_local_image_urls(answer.generated_answer)
+            state["context"] = self.replace_local_image_urls(state["context"])
+            
             resp = GraphRAGResponse(
                 natural_language_response=answer.generated_answer,
                 answered_question=True,
@@ -452,6 +461,65 @@ class TigerGraphAgentGraph:
             else:
                 return value
 
+        return process(content)
+
+
+    def replace_local_image_urls(self, content):
+        """
+        Recursively detects local image URLs (img://) in content and replaces them 
+        with actual API endpoint URLs for local folder image serving.
+        
+        This is used for local folder processing where images are saved locally
+        and need to be served through the API endpoint.
+        
+        Supports both formats:
+        - img://graphname/image_id.jpg (organized by graph)
+        - img://image_id.jpg (legacy format)
+        
+        Args:
+            content (Any): String, dict, or list containing potential img:// URLs.
+        
+        Returns:
+            Any: Content with img:// URLs replaced by actual API URLs (same type as input).
+        """
+        # Pattern to match img://graphname/image_id or img://image_id format
+        # Captures: group(1) = full path (graphname/image_id or image_id)
+        img_url_pattern = r'img://([a-zA-Z0-9_\-\./]+)'
+        
+        # Get the base URL from environment or use relative path
+        # Using relative path works when UI and API are on same origin
+        base_url = os.getenv("GRAPHRAG_API_BASE_URL", "")
+        
+        # Get PATH_PREFIX from environment
+        path_prefix = os.getenv("PATH_PREFIX", "")
+        if path_prefix and not path_prefix.startswith("/"):
+            path_prefix = f"/{path_prefix}"
+        if path_prefix.endswith("/"):
+            path_prefix = path_prefix[:-1]
+        
+        def replace_with_api_url(match):
+            image_path = match.group(1)  # Can be "graphname/image_id.jpg" or just "image_id.jpg"
+            try:
+                # Construct the full URL to the image serving endpoint
+                # Format: /ui/images/graphname/image_id or /ui/images/image_id
+                # The /ui prefix is required because the endpoint is registered under /ui route_prefix
+                api_url = f"{base_url}{path_prefix}/ui/images/{image_path}"
+                logger.debug(f"Replaced img://{image_path} with {api_url}")
+                return api_url
+            except Exception as e:
+                logger.error(f"Failed to replace local image URL for img://{image_path}: {e}")
+                return match.group(0)  # Return original if replacement fails
+        
+        def process(value):
+            if isinstance(value, str):
+                return re.sub(img_url_pattern, replace_with_api_url, value)
+            elif isinstance(value, list):
+                return [process(v) for v in value]
+            elif isinstance(value, dict):
+                return {k: process(v) for k, v in value.items()}
+            else:
+                return value
+        
         return process(content)
 
 

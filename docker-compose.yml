@@ -18,7 +18,8 @@ services:
       USE_CYPHER: "true"
     volumes:
       - ./configs/:/code/configs
-      - YOUR_DATA_PATH_HERE:/data
+      - YOUR_OPENAI_API_KEY_HERE:/data
+      - ./static:/code/static
 
   graphrag-ecc:
     image: tigergraph/graphrag-ecc:latest

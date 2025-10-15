@@ -255,12 +255,12 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
                 # Don't fail the entire operation if cleanup fails
 
 
-def process_local_folder(folder_path):
+def process_local_folder(folder_path, graphname=None):
     """Process local folder with multiple file formats and extract text content using TextExtractor class."""
-    
+
     extractor = TextExtractor()
     extractor.cleanup_tmp_folder()
-    return extractor.process_folder(folder_path)
+    return extractor.process_folder(folder_path, graphname=graphname)
 
 
 # Text extraction functions moved to text_extractors.py module
@@ -471,7 +471,7 @@ def create_ingest(
             
             try:
                 # Process local folder and extract text from all supported files
-                local_processing_result = process_local_folder(folder_path)
+                local_processing_result = process_local_folder(folder_path, graphname=graphname)
                 if local_processing_result.get("statusCode") != 200:
                     raise Exception(f"Local folder processing failed: {local_processing_result}")
                 

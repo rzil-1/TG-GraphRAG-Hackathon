@@ -63,9 +63,9 @@ class TextExtractor:
         # Ensure the folder exists (create if needed)
         os.makedirs(tmp_path, exist_ok=True)
     
-    def process_folder(self, folder_path):
+    def process_folder(self, folder_path, graphname=None):
         """Process local folder with multiple file formats and extract text content."""
-        logger.info(f"Processing local folder: {folder_path}")
+        logger.info(f"Processing local folder: {folder_path} for graph: {graphname}")
         
         # Check if folder exists
         if not os.path.exists(folder_path):
@@ -123,7 +123,7 @@ class TextExtractor:
                                 logger.debug(f"Skipping system file detected during processing: {file_path.name}")
                                 continue
                                 
-                            content = extract_text_from_file(file_path)
+                            content = extract_text_from_file(file_path, graphname=graphname)
                             if content.strip():  # Only process files with content
                                 # Use relative path from the base folder as doc_id
                                 relative_path = file_path.relative_to(folder_path_obj)
@@ -207,12 +207,13 @@ class TextExtractor:
         logger.info(f"Created JSONL file: {jsonl_filepath} with {len(documents)} documents")
         return jsonl_filepath
 
-def extract_text_from_file(file_path):
+def extract_text_from_file(file_path, graphname=None):
     """
     Extract text content from a file based on its extension.
     
     Args:
         file_path (str or Path): Path to the file to extract text from
+        graphname (str): Graph name for organizing images by graph
         
     Returns:
         str: Extracted text content
@@ -223,7 +224,7 @@ def extract_text_from_file(file_path):
     file_path = Path(file_path)
     extension = file_path.suffix.lower()
     
-    logger.debug(f"Extracting text from {file_path} (type: {extension})")
+    logger.debug(f"Extracting text from {file_path} (type: {extension}) for graph: {graphname}")
     
     try:
         # Plain text files
@@ -298,15 +299,24 @@ def extract_text_from_file(file_path):
                                     import io
                                     pil_image = Image.open(io.BytesIO(image_bytes))
                                     
-                                    # Describe image using LLM
-                                    from common.utils.image_data_extractor import describe_image_with_llm
-                                    description = describe_image_with_llm(pil_image)
-                                    page_content.append(f"[Embedded Image {img_index + 1}: {description}]")
-                                    logger.debug(f"Described embedded image {img_index + 1} on page {page_num}")
+                                    # Save image and get markdown reference (for local folder processing)
+                                    # The function will return None if it's a logo/icon (detected by LLM)
+                                    from common.utils.image_data_extractor import save_image_and_get_markdown
+                                    context_info = f"PDF embedded image {img_index + 1} from page {page_num} of {file_path.name}"
+                                    result = save_image_and_get_markdown(pil_image, context_info=context_info, graphname=graphname)
+                                    
+                                    # Skip if logo/icon was detected
+                                    if result is None:
+                                        logger.debug(f"Skipped logo/icon image {img_index + 1} on page {page_num}")
+                                        continue
+                                    
+                                    # Append markdown reference to page content
+                                    page_content.append(result['markdown'])
+                                    logger.debug(f"Saved embedded image {img_index + 1} on page {page_num} as {result.get('image_id', 'unknown')}")
                                     
                                 except Exception as img_error:
-                                    logger.warning(f"Failed to describe embedded image {img_index + 1} on page {page_num}: {img_error}")
-                                    page_content.append(f"[Embedded Image {img_index + 1}: description failed]")
+                                    logger.warning(f"Failed to process embedded image {img_index + 1} on page {page_num}: {img_error}")
+                                    page_content.append(f"[Embedded Image {img_index + 1}: processing failed]")
                         
                         # Optional Table Extraction
                         try:
@@ -384,20 +394,27 @@ def extract_text_from_file(file_path):
                 logger.error(f"Error processing XML {file_path}: {xml_error}")
                 raise Exception(f"XML processing failed: {xml_error}")
         
-        # Image files (JPEG, JPG)
+        # Image files (JPEG, JPG, PNG, GIF)
         elif extension in ['.jpeg', '.jpg','png','.gif']:
             try:
-                from common.utils.image_data_extractor import describe_image_with_llm
+                from common.utils.image_data_extractor import save_image_and_get_markdown
                 from PIL import Image
                 
                 # Open image with PIL
                 pil_image = Image.open(file_path)
                 
-                # Use LLM to describe the image
-                content = describe_image_with_llm(pil_image)
-                content = content.strip()
+                # Save image and get markdown reference (for local folder processing)
+                # The function will return None if it's a logo/icon (detected by LLM)
+                result = save_image_and_get_markdown(pil_image, context_info=f"Standalone image: {file_path.name}", graphname=graphname)
                 
-                logger.debug(f"Extracted {len(content)} characters from image file using LLM vision")
+                # Skip if logo/icon was detected
+                if result is None:
+                    logger.debug(f"Skipped logo/icon standalone image: {file_path.name}")
+                    return f"[Skipped logo/icon image: {file_path.name}]"
+                
+                content = result['markdown']
+                
+                logger.debug(f"Created markdown reference for standalone image: {result.get('image_id', 'unknown')}")
                 return content
                 
             except ImportError:

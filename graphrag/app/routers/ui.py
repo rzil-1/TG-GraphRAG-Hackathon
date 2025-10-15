@@ -36,6 +36,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pyTigerGraph import TigerGraphConnection
 from tools.validation_utils import MapQuestionToSchemaException
@@ -207,6 +208,78 @@ async def get_conversation_feedback(
         raise HTTPException(status_code=500, detail="Internal server error")
 
     return res.json()
+
+
+@router.get(route_prefix + "/images/{image_path:path}")
+async def serve_local_image(image_path: str):
+    """
+    Serve locally stored images from the static/images directory.
+    This endpoint is used for displaying images extracted from local folder processing
+    (both standalone images and PDF-embedded images).
+    
+    Supports both URL formats:
+    - /images/graphname/image_id.jpg (organized by graph)
+    - /images/image_id.jpg (legacy format)
+    
+    Args:
+        image_path: The path to the image (e.g., "graphname/abc123.jpg" or "abc123.jpg")
+    
+    Returns:
+        FileResponse with the image file
+    
+    Raises:
+        HTTPException: If image not found or invalid image_path
+    """
+    try:
+        # Validate image_path format (prevent directory traversal attacks)
+        if not image_path or '..' in image_path or '\\' in image_path:
+            raise HTTPException(status_code=400, detail="Invalid image path")
+        
+        # Additional security: ensure path doesn't try to escape the images directory
+        # Normalize path to prevent traversal
+        normalized_path = os.path.normpath(image_path)
+        if normalized_path.startswith('..') or normalized_path.startswith('/') or normalized_path.startswith('\\'):
+            raise HTTPException(status_code=400, detail="Invalid image path")
+        
+        # Get the project root and construct image path
+        # __file__ = /code/routers/ui.py, so we need to go up 2 levels to get /code
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        images_dir = os.path.join(project_root, "static", "images")
+        
+        # Construct full path - supports graphname/image_id or just image_id
+        full_image_path = os.path.join(images_dir, normalized_path)
+        
+        # Security check: ensure the resolved path is still within images directory
+        real_images_dir = os.path.realpath(images_dir)
+        real_image_path = os.path.realpath(full_image_path)
+        if not real_image_path.startswith(real_images_dir):
+            logger.warning(f"Attempted path traversal: {image_path}")
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Check if image exists
+        if not os.path.exists(full_image_path) or not os.path.isfile(full_image_path):
+            logger.warning(f"Image not found: {image_path}")
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Determine media type based on extension
+        ext = os.path.splitext(normalized_path)[1].lower()
+        media_type_map = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp'
+        }
+        media_type = media_type_map.get(ext, 'image/jpeg')
+        
+        logger.debug(f"Serving image: {image_path}")
+        return FileResponse(full_image_path, media_type=media_type)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving image {image_path}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete(route_prefix + "/conversation/{conversation_id}")
