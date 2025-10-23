@@ -1,4 +1,4 @@
-from common.chunkers import character_chunker, regex_chunker, semantic_chunker, markdown_chunker, recursive_chunker, html_chunker
+from common.chunkers import character_chunker, regex_chunker, semantic_chunker, markdown_chunker, recursive_chunker, html_chunker, single_chunker
 from common.config import graphrag_config, embedding_service, llm_config
 from common.llm_services import (
     AWS_SageMaker_Endpoint,
@@ -45,6 +45,10 @@ def get_chunker(chunker_type: str = ""):
             chunk_size=chunker_config.get("chunk_size", 1024),
             overlap_size=chunker_config.get("overlap_size", 0),
         )
+    elif chunker_type == "single" or chunker_type == "image":
+        # Single chunker: NEVER splits, always returns 1 chunk
+        # Used for images to preserve [IMAGE_REF:] markers
+        chunker = single_chunker.SingleChunker()
     else:
         raise ValueError(f"Invalid chunker type: {chunker_type}")
 

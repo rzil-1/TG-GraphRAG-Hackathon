@@ -53,6 +53,20 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
             )
         )
 
+    # Add Image vertex schema (for storing images from documents)
+    if "- VERTEX Image" in current_schema:
+        schema_res += " Image schema already exists, skipped"
+    else:
+        file_path = "common/gsql/supportai/SupportAI_Schema_Images.gsql"
+        with open(file_path, "r") as f:
+            image_schema = f.read()
+        schema_res += " "
+        schema_res += conn.gsql(
+            """USE GRAPH {}\n{}\nRUN SCHEMA_CHANGE JOB add_image_support_schema""".format(
+                graphname, image_schema
+            )
+        )
+
     if "- embedding(Dimension=" in current_schema:
         schema_res+=" Embeddding schema already exists, skipped"
     else:
@@ -255,12 +269,21 @@ def trigger_bedrock_bda(input_bucket, output_bucket, region, aws_access_key, aws
                 # Don't fail the entire operation if cleanup fails
 
 
-def process_local_folder(folder_path, graphname=None):
-    """Process local folder with multiple file formats and extract text content using TextExtractor class."""
-
+def process_local_folder(folder_path, graphname=None, use_direct_loading=True):
+    """
+    Process local folder with multiple file formats and extract text content using TextExtractor class.
+    Like Bedrock BDA: Automatically uses direct loading (no flags needed from user).
+    
+    Args:
+        folder_path: Path to folder to process
+        graphname: Graph name
+        use_direct_loading: Internal flag (always True for new approach, like Bedrock)
+    
+    Returns:
+        dict with documents list for direct async loading
+    """
     extractor = TextExtractor()
-    extractor.cleanup_tmp_folder()
-    return extractor.process_folder(folder_path, graphname=graphname)
+    return extractor.process_folder(folder_path, graphname=graphname, use_direct_loading=use_direct_loading)
 
 
 # Text extraction functions moved to text_extractors.py module
@@ -471,38 +494,95 @@ def create_ingest(
             
             try:
                 # Process local folder and extract text from all supported files
-                local_processing_result = process_local_folder(folder_path, graphname=graphname)
+                # Like Bedrock BDA: Automatically uses direct loading (no flags needed)
+                local_processing_result = process_local_folder(
+                    folder_path, 
+                    graphname=graphname, 
+                    use_direct_loading=True  # Always use NEW direct loading (like Bedrock)
+                )
                 if local_processing_result.get("statusCode") != 200:
                     raise Exception(f"Local folder processing failed: {local_processing_result}")
                 
-                logger.info(f"Starting local folder text extraction and TigerGraph loading...")
+                logger.info(f"Starting local folder direct loading (like Bedrock BDA)...")
                 
-                processed_files = local_processing_result.get("files", [])
-                successful_files = [f for f in processed_files if f.get('status') == 'success']
+                # Create loading job with image support (like Bedrock)
+                from pathlib import Path
+                image_load_template_path = "common/gsql/supportai/SupportAI_InitialLoadJSON_WithImages.gsql"
+                with open(image_load_template_path) as f:
+                    ingest_template = f.read()
                 
-                # Get the JSONL file that was already created during processing
-                jsonl_filepath = local_processing_result.get("jsonl_file_path")
-                if not jsonl_filepath:
-                    raise Exception("JSONL file was not created during local folder processing")
+                ingest_template = ingest_template.replace("@uuid@", str(uuid.uuid4().hex))
                 
-                # Create loading job - ingest_template should already be set above
+                # Set document field names
+                doc_id = ingest_config.loader_config.get("doc_id_field", "doc_id")
+                doc_text = ingest_config.loader_config.get("content_field", "content")
+                doc_type = ingest_config.loader_config.get("doc_type", "")
+                ingest_template = ingest_template.replace('"doc_id"', '"{}"'.format(doc_id))
+                ingest_template = ingest_template.replace('"content"', '"{}"'.format(doc_text))
+                ingest_template = ingest_template.replace('"doc_type"', '"{}"'.format(doc_type))
+                
                 load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
                 load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
                 res["load_job_id"] = load_job_id
                 res["data_source_id"] = "DocumentContent"
                 
-                # Set the file path for runDocumentIngest (use the existing JSONL file)
-                res["jsonl_file_path"] = jsonl_filepath
-                res["num_documents"] = len(successful_files)
-                res["processed_files"] = processed_files
-                res["total_files_found"] = len(processed_files)
-                res["successful_files"] = len(successful_files)
+                # Load documents directly (like Bedrock - no JSONL file)
+                documents = local_processing_result.get("documents", [])
+                if not documents:
+                    raise Exception("No documents extracted from local folder")
                 
-                # Store cleanup info for later cleanup (similar to S3 BDA)
-                res["cleanup_files"] = [jsonl_filepath]
+                logger.info(f"Loading {len(documents)} documents directly (like Bedrock)...")
+                
+                # Simple synchronous loop like Bedrock BDA
+                success_count = 0
+                failed_count = 0
+                
+                for doc_data in documents:
+                    try:
+                        # Check if this is image storage entry (has image_data field)
+                        if doc_data.get("image_data"):
+                            # Image STORAGE entry (for Image vertex)
+                            payload = {
+                                "doc_id": doc_data["doc_id"],
+                                "doc_type": "image",
+                                "image_description": doc_data.get("image_description", ""),
+                                "image_data": doc_data.get("image_data", ""),
+                                "image_format": doc_data.get("image_format", "jpg"),
+                                "parent_doc": doc_data.get("parent_doc", ""),
+                                "page_number": doc_data.get("page_number", 0),
+                                "width": doc_data.get("width", 0),
+                                "height": doc_data.get("height", 0),
+                                "position": doc_data.get("position", 0),
+                                "content": ""  # Empty content - this is just for Image vertex
+                            }
+                        else:
+                            # Document entry (markdown/text - has content field)
+                            payload = {
+                                "doc_id": doc_data["doc_id"],
+                                "doc_type": doc_data["doc_type"],
+                                "content": doc_data["content"]
+                            }
+                        
+                        payload_json = json.dumps(payload)
+                        
+                        # Load document (like Bedrock: simple API call)
+                        conn.runLoadingJobWithData(payload_json, "DocumentContent", load_job_id)
+                        success_count += 1
+                        
+                        logger.debug(f"Loaded document: {doc_data['doc_id']} (type: {doc_data['doc_type']})")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to load document {doc_data.get('doc_id', 'unknown')}: {e}")
+                        failed_count += 1
+                
+                logger.info(f"Direct loading completed: {success_count} success, {failed_count} failed")
+                
+                res["num_documents"] = len(documents)
+                res["loading_result"] = {"success": success_count, "failed": failed_count}
+                res["processed_files"] = local_processing_result.get("files", [])
                 
                 logger.info(
-                    f"Processed {len(successful_files)} files from local folder and prepared {len(successful_files)} documents for runDocumentIngest.")
+                    f"Processed {len(res['processed_files'])} files from local folder and loaded {res['num_documents']} documents directly (like Bedrock).")
                 
             except Exception as e:
                 logger.error(f"Error during local folder processing: {e}")

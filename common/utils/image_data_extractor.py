@@ -34,16 +34,17 @@ def describe_image_with_llm(image_input):
         # Build messages (system + human)
         messages = [
         SystemMessage(
-            content="You are a helpful assistant that describes images in detail for document analysis."
+            content="You are a helpful assistant that describes images concisely for document analysis."
         ),
         HumanMessage(
             content=[
                 {
                     "type": "text",
                     "text": (
-                        "Please describe what you see in this image and "
+                         "Please describe what you see in this image and "
                         "if the image has scanned text then extract all the text. "
                         "Focus on any text, diagrams, charts, or other visual elements."
+                        "If this is a logo, icon, or branding element, start your response with 'LOGO:' or 'ICON:'."
                     ),
                 },
                  {
@@ -68,8 +69,13 @@ def describe_image_with_llm(image_input):
 
 def save_image_and_get_markdown(image_input, context_info="", graphname=None):
     """
-    Save image locally and return markdown reference with description.
-    This is used for local folder processing to enable image display in UI.
+    Save image locally to static/images/ folder and return markdown reference with description.
+    
+    LEGACY/OLD APPROACH: Used for backward compatibility with JSONL-based loading.
+    Images are saved as files and served via /ui/images/ endpoint with img:// protocol.
+    
+    For NEW direct loading approach, images are stored in Image vertex as base64
+    and served via /ui/image_vertex/ endpoint with image:// protocol.
     
     Args:
         image_input: PIL Image object
@@ -78,9 +84,9 @@ def save_image_and_get_markdown(image_input, context_info="", graphname=None):
     
     Returns:
         dict with:
-            - 'markdown': Markdown string with image reference
+            - 'markdown': Markdown string with img:// reference
             - 'image_id': Unique identifier for the saved image
-            - 'image_path': Path where image was saved
+            - 'image_path': Path where image was saved to static/images/
     """
     try:
         # FIRST: Get description from LLM to check if it's a logo

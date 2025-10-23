@@ -19,7 +19,6 @@ services:
     volumes:
       - ./configs/:/code/configs
       - YOUR_DATA_PATH_HERE:/data
-      - ./static:/code/static
 
   graphrag-ecc:
     image: tigergraph/graphrag-ecc:latest

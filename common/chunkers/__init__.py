@@ -5,3 +5,4 @@ from .markdown_chunker import MarkdownChunker
 from .regex_chunker import RegexChunker
 from .semantic_chunker import SemanticChunker
 from .recursive_chunker import RecursiveChunker
+from .single_chunker import SingleChunker

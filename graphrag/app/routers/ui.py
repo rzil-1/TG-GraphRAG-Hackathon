@@ -32,12 +32,14 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security.http import HTTPBase
 from pyTigerGraph import TigerGraphConnection
 from tools.validation_utils import MapQuestionToSchemaException
 
@@ -137,6 +139,75 @@ def add_feedback(
     return {"message": "feedback saved", "message_id": message.message_id}
 
 
+@router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
+async def serve_image_from_vertex(
+    graphname: str,
+    image_id: str,
+    auth: str = None,
+):
+    """
+    Serve an image directly from the TigerGraph Image vertex.
+    
+    This endpoint accepts authentication credentials via the 'auth' query parameter.
+    The auth parameter should be a base64-encoded string of "username:password".
+    
+    This endpoint fetches the base64 encoded image data from the Image vertex
+    and returns it as an image response with the appropriate content type.
+    
+    Example URL: /ui/image_vertex/{graphname}/{image_id}?auth={base64_creds}
+    """
+    from fastapi.responses import Response
+    
+    try:
+        # Extract credentials from auth query parameter
+        if auth:
+            # Decode base64 auth string to get username:password
+            try:
+                decoded_auth = base64.b64decode(auth.encode()).decode()
+                username, password = decoded_auth.split(":", 1)
+            except Exception as e:
+                logger.error(f"Failed to decode auth parameter: {e}")
+                raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+        
+        # Connect to the graph using the extracted credentials
+        conn = get_db_connection_pwd_manual(graphname, username, password)
+        
+        # Fetch the Image vertex by ID
+        image_vertices = conn.getVerticesById('Image', [image_id.lower()])
+        
+        if not image_vertices:
+            raise HTTPException(status_code=404, detail=f"Image not found: {image_id}")
+        
+        image_vertex = image_vertices[0]
+        image_data_b64 = image_vertex['attributes'].get('image_data', '')
+        image_format = image_vertex['attributes'].get('image_format', 'jpg')
+        
+        if not image_data_b64:
+            raise HTTPException(status_code=404, detail=f"No image data for: {image_id}")
+        
+        # Decode base64 to bytes
+        image_bytes = base64.b64decode(image_data_b64)
+        
+        # Determine content type
+        content_type_map = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'webp': 'image/webp'
+        }
+        content_type = content_type_map.get(image_format.lower(), 'image/jpeg')
+        
+        # Return image as Response
+        return Response(content=image_bytes, media_type=content_type)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving image {image_id} from graph {graphname}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error serving image: {str(e)}")
+
+
 @router.get(route_prefix + "/user/{user_id}")
 async def get_user_conversations(
     user_id: str,
@@ -208,78 +279,6 @@ async def get_conversation_feedback(
         raise HTTPException(status_code=500, detail="Internal server error")
 
     return res.json()
-
-
-@router.get(route_prefix + "/images/{image_path:path}")
-async def serve_local_image(image_path: str):
-    """
-    Serve locally stored images from the static/images directory.
-    This endpoint is used for displaying images extracted from local folder processing
-    (both standalone images and PDF-embedded images).
-    
-    Supports both URL formats:
-    - /images/graphname/image_id.jpg (organized by graph)
-    - /images/image_id.jpg (legacy format)
-    
-    Args:
-        image_path: The path to the image (e.g., "graphname/abc123.jpg" or "abc123.jpg")
-    
-    Returns:
-        FileResponse with the image file
-    
-    Raises:
-        HTTPException: If image not found or invalid image_path
-    """
-    try:
-        # Validate image_path format (prevent directory traversal attacks)
-        if not image_path or '..' in image_path or '\\' in image_path:
-            raise HTTPException(status_code=400, detail="Invalid image path")
-        
-        # Additional security: ensure path doesn't try to escape the images directory
-        # Normalize path to prevent traversal
-        normalized_path = os.path.normpath(image_path)
-        if normalized_path.startswith('..') or normalized_path.startswith('/') or normalized_path.startswith('\\'):
-            raise HTTPException(status_code=400, detail="Invalid image path")
-        
-        # Get the project root and construct image path
-        # __file__ = /code/routers/ui.py, so we need to go up 2 levels to get /code
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        images_dir = os.path.join(project_root, "static", "images")
-        
-        # Construct full path - supports graphname/image_id or just image_id
-        full_image_path = os.path.join(images_dir, normalized_path)
-        
-        # Security check: ensure the resolved path is still within images directory
-        real_images_dir = os.path.realpath(images_dir)
-        real_image_path = os.path.realpath(full_image_path)
-        if not real_image_path.startswith(real_images_dir):
-            logger.warning(f"Attempted path traversal: {image_path}")
-            raise HTTPException(status_code=403, detail="Access denied")
-        
-        # Check if image exists
-        if not os.path.exists(full_image_path) or not os.path.isfile(full_image_path):
-            logger.warning(f"Image not found: {image_path}")
-            raise HTTPException(status_code=404, detail="Image not found")
-        
-        # Determine media type based on extension
-        ext = os.path.splitext(normalized_path)[1].lower()
-        media_type_map = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp'
-        }
-        media_type = media_type_map.get(ext, 'image/jpeg')
-        
-        logger.debug(f"Serving image: {image_path}")
-        return FileResponse(full_image_path, media_type=media_type)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error serving image {image_path}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete(route_prefix + "/conversation/{conversation_id}")
@@ -475,10 +474,10 @@ async def graph_query(
             convo_id = conversation_id
             LogWriter.info(f"Continuing conversation with ID: {convo_id}")
 
-        # create agent
+        # create agent with user authentication credentials for image URL generation
         # get retrieval pattern to use
         rag_pattern = "hybridsearch"
-        agent = make_agent(graphname, conn, use_cypher, supportai_retriever=rag_pattern)
+        agent = make_agent(graphname, conn, use_cypher, supportai_retriever=rag_pattern, user_auth=auth)
 
         prev_id = None
         data = q
@@ -575,8 +574,8 @@ async def chat(
     # Send conversation ID to frontend
     await websocket.send_text(json.dumps({"conversation_id": convo_id}))
 
-    # create agent
-    agent = make_agent(graphname, conn, use_cypher, ws=websocket, supportai_retriever=rag_pattern)
+    # create agent with user authentication credentials for image URL generation
+    agent = make_agent(graphname, conn, use_cypher, ws=websocket, supportai_retriever=rag_pattern, user_auth=usr_auth)
 
     prev_id = None
     try:

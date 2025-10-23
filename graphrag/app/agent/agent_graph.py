@@ -69,6 +69,7 @@ class TigerGraphAgentGraph:
         enable_human_in_loop=False,
         q: Q = None,
         supportai_retriever="hybridsearch",
+        user_auth: str = None,
     ):
         self.workflow = StateGraph(GraphState)
         self.llm_provider = llm_provider
@@ -80,6 +81,7 @@ class TigerGraphAgentGraph:
         self.cypher_gen = cypher_gen_tool
         self.enable_human_in_loop = enable_human_in_loop
         self.q = q
+        self.user_auth = user_auth
 
         self.supportai_enabled = True
         self.supportai_retriever = supportai_retriever.lower().replace(" ", "")
@@ -393,17 +395,15 @@ class TigerGraphAgentGraph:
             citations = [re.sub(r"_chunk_\d+", "", x) for x in answer.citation]
             state["context"]["reasoning"] = list(set(citations))
 
-        try:         
+        try:
             # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)
             if isinstance(self.llm_provider, AWSBedrock):
                 answer.generated_answer = self.replace_s3_urls_with_presigned(answer.generated_answer)
-                state["context"] = self.replace_s3_urls_with_presigned(state["context"])
             
-            # Replace local image URLs (img://) with API endpoint URLs (for local folder processing)
-            # This applies to all LLM providers when processing local files
-            answer.generated_answer = self.replace_local_image_urls(answer.generated_answer)
-            state["context"] = self.replace_local_image_urls(state["context"])
-    
+            # Convert [IMAGE_REF:image_id] to markdown images for React UI
+            # This converts internal image references to URLs that the UI can display
+            answer.generated_answer = self.convert_image_refs_to_markdown(answer.generated_answer)
+            logger.info(f"[IMAGE_DEBUG] After conversion: {answer.generated_answer}")
             
             resp = GraphRAGResponse(
                 natural_language_response=answer.generated_answer,
@@ -463,32 +463,33 @@ class TigerGraphAgentGraph:
                 return value
 
         return process(content)
+    
 
-
-    def replace_local_image_urls(self, content):
+    def convert_image_refs_to_markdown(self, text):
         """
-        Recursively detects local image URLs (img://) in content and replaces them 
-        with actual API endpoint URLs for local folder image serving.
+        Convert [IMAGE_REF:image_id] markers to markdown image syntax with authenticated API endpoint URLs.
         
-        This is used for local folder processing where images are saved locally
-        and need to be served through the API endpoint.
+        Similar to Bedrock's approach with presigned S3 URLs, this creates URLs pointing to
+        the /ui/image_vertex/ endpoint which serves images from TigerGraph.
         
-        Supports both formats:
-        - img://graphname/image_id.jpg (organized by graph)
-        - img://image_id.jpg (legacy format)
+        Format: [IMAGE_REF:image_id] → ![Image](/ui/image_vertex/{graphname}/{image_id}?auth={user_auth})
         
         Args:
-            content (Any): String, dict, or list containing potential img:// URLs.
-        
+            text (str): The text containing [IMAGE_REF:] markers.
+            
         Returns:
-            Any: Content with img:// URLs replaced by actual API URLs (same type as input).
+            str: The text with [IMAGE_REF:] markers converted to markdown with authenticated endpoint URLs.
         """
-        # Pattern to match img://graphname/image_id or img://image_id format
-        # Captures: group(1) = full path (graphname/image_id or image_id)
-        img_url_pattern = r'img://([a-zA-Z0-9_\-\./]+)'
+        if not isinstance(text, str):
+            return text
+            
+        if "[IMAGE_REF:" not in text:
+            return text
+        
+        import re
+        import urllib.parse
         
         # Get the base URL from environment or use relative path
-        # Using relative path works when UI and API are on same origin
         base_url = os.getenv("GRAPHRAG_API_BASE_URL", "")
         
         # Get PATH_PREFIX from environment
@@ -498,30 +499,25 @@ class TigerGraphAgentGraph:
         if path_prefix.endswith("/"):
             path_prefix = path_prefix[:-1]
         
-        def replace_with_api_url(match):
-            image_path = match.group(1)  # Can be "graphname/image_id.jpg" or just "image_id.jpg"
-            try:
-                # Construct the full URL to the image serving endpoint
-                # Format: /ui/images/graphname/image_id or /ui/images/image_id
-                # The /ui prefix is required because the endpoint is registered under /ui route_prefix
-                api_url = f"{base_url}{path_prefix}/ui/images/{image_path}"
-                logger.debug(f"Replaced img://{image_path} with {api_url}")
-                return api_url
-            except Exception as e:
-                logger.error(f"Failed to replace local image URL for img://{image_path}: {e}")
-                return match.group(0)  # Return original if replacement fails
+        # Get graphname from connection
+        graphname = self.db_connection.graphname
         
-        def process(value):
-            if isinstance(value, str):
-                return re.sub(img_url_pattern, replace_with_api_url, value)
-            elif isinstance(value, list):
-                return [process(v) for v in value]
-            elif isinstance(value, dict):
-                return {k: process(v) for k, v in value.items()}
-            else:
-                return value
+        # Build the auth query parameter if user_auth is available
+        auth_param = ""
+        if self.user_auth:
+            # URL encode the auth credentials for safe transmission
+            auth_param = f"?auth={urllib.parse.quote(self.user_auth)}"
         
-        return process(content)
+        # Replace [IMAGE_REF:image_id] with markdown image syntax pointing to the authenticated endpoint
+        # The endpoint /ui/image_vertex/{graphname}/{image_id}?auth={credentials} serves images from TigerGraph
+        converted = re.sub(
+            r'\[IMAGE_REF:([^\]]+)\]',
+            rf'![Image]({base_url}{path_prefix}/ui/image_vertex/{graphname}/\1{auth_param})',
+            text
+        )
+        
+        logger.info(f"Converted {text.count('[IMAGE_REF:')} image reference(s) to authenticated endpoint URLs")
+        return converted
 
 
     def rewrite_question(self, state):
