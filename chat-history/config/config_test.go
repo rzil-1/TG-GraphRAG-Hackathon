@@ -10,7 +10,7 @@ func TestLoadConfig(t *testing.T) {
 	tgConfigPath := setup(t)
 
 	cfg, err := LoadConfig(map[string]string{
-		"tgconfig":   tgConfigPath,
+		"tgconfig": tgConfigPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-func setup(t *testing.T) (string, string) {
+func setup(t *testing.T) string {
 	tmp := t.TempDir()
 
 	tgConfigPath := fmt.Sprintf("%s/%s", tmp, "server_config.json")

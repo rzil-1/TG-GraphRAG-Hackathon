@@ -131,7 +131,7 @@ class TigerGraphAgentGraph:
         """
         self.emit_progress(DONE)
         state["answer"] = GraphRAGResponse(
-            natural_language_response="I'm sorry, I don't know the answer to that question. Please try rephrasing your question.",
+            natural_language_response="I'm sorry, there isn't enough context to answer your question. Please try rephrasing it.",
             answered_question=False,
             response_type="error",
             query_sources={"error": True, "error_history": state["error_history"]},
@@ -366,8 +366,13 @@ class TigerGraphAgentGraph:
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
             answer = step.generate_answer(
-                state["question"], state["context"]["result"]
+                state["question"], state["context"]["result"]["final_retrieval"]
             )
+
+            if not answer.citation:
+                answer.citation = list(state["context"]["result"]["final_retrieval"].keys())
+            state["context"]["reasoning"] = list(set(answer.citation))
+
         elif state["lookup_source"] == "inquiryai":
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
@@ -388,12 +393,6 @@ class TigerGraphAgentGraph:
         logger.debug_pii(
             f"request_id={req_id_cv.get()} Generated answer: {answer.generated_answer}"
         )
-
-        if state["lookup_source"] == "supportai":
-            import re
-
-            citations = [re.sub(r"_chunk_\d+", "", x) for x in answer.citation]
-            state["context"]["reasoning"] = list(set(citations))
 
         try:
             # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)
@@ -436,7 +435,7 @@ class TigerGraphAgentGraph:
             Any: Content with S3 URLs replaced by presigned URLs (same type as input).
         """
 
-        s3_url_pattern = r's3://([\w\-.]+)/([\w\-\./]+)'
+        s3_url_pattern = r'\(s3://([^/]+)/([^\)]+)\)'
         s3 = boto3.client('s3')
 
         def presign(match):
@@ -447,7 +446,7 @@ class TigerGraphAgentGraph:
                     Params={'Bucket': bucket, 'Key': key},
                     ExpiresIn=expires_in
                 )
-                return url
+                return f"({url})"
             except Exception as e:
                 logger.error(f"Failed to presign S3 url for s3://{bucket}/{key}: {e}")
                 return match.group(0)
