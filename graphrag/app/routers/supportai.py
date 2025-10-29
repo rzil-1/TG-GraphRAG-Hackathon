@@ -16,7 +16,7 @@ import json
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.security.http import HTTPBase
 from supportai import supportai
 from supportai.concept_management.create_concepts import (
@@ -105,44 +105,8 @@ def ingest(
     credentials: Annotated[HTTPBase, Depends(security)],
 ):
     conn = conn.state.conn
-    if loader_info.file_path is None:
-        raise Exception("File path not provided")
-    if loader_info.load_job_id is None:
-        raise Exception("Load job id not provided")
-    if loader_info.data_source_id is None:
-        raise Exception("Data source id not provided")
 
-    try:
-        res = conn.gsql(
-            'USE GRAPH {}\nRUN LOADING JOB -noprint {} USING {}="{}"'.format(
-                graphname,
-                loader_info.load_job_id,
-                "DocumentContent",
-                "$" + loader_info.data_source_id + ":" + loader_info.file_path,
-            )
-        )
-    except Exception as e:
-        if (
-            "Running the following loading job in background with '-noprint' option:"
-            in str(e)
-        ):
-            res = str(e)
-        else:
-            raise e
-
-    log_section = res.split(
-        "Running the following loading job in background with '-noprint' option:"
-    )[1]
-    # Try to extract 'Job name' or 'Log directory'
-    if "Job name: " in log_section:
-        log_location = log_section.split("Job name: ")[1].split("\n")[0]
-    else:
-        log_location = log_section.split("Log directory: ")[1].split("\n")[0]
-    return {
-        "job_name": loader_info.load_job_id,
-        "job_id": log_section.split("Jobid: ")[1].split("\n")[0],
-        "log_location": log_location,
-    }
+    return supportai.ingest(graphname, loader_info, conn)
 
 
 @router.post("/{graphname}/graphrag/search")

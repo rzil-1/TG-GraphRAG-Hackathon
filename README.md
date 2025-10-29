@@ -160,7 +160,7 @@ gadmin stop all
 > Note: Nginx Ingress should be deleted using `kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.2.1/deploy/static/provider/cloud/deploy.yaml` if port 80 needs to be released
 
 ### Data Ingestion
-For data ingestion, please follow the ![GraphRAG Demo Notebook](./docs/notebooks/GraphRAGDemo.ipynb)
+For data ingestion, please follow the [GraphRAG Demo Notebook](./docs/notebooks/GraphRAGDemo.ipynb)
 
 ### Access GraphRAG ChatBot from UI
 Open your browser to access `http://localhost` to access GraphRAG Chat. If you're accessing GraphRAG UI remotely, use the machine's hostname of IP address instead.
@@ -492,15 +492,15 @@ If you would like to enable openCypher query generation in InquiryAI, you can se
 
 GraphRAG is friendly to both technical and non-technical users. There is a graphical chat interface as well as API access to GraphRAG. Function-wise, GraphRAG can answer your questions by calling existing queries in the database (InquiryAI), build a knowledge graph from your documents (SupportAI), and answer knowledge questions based on your documents (SupportAI).
 
-Please refer to our [official documentation](https://docs.tigergraph.com/tg-graphrag/current/using-graphrag/) on how to use GraphRAG.
+Please visit [GraphRAG Tutorial](https://github.com/tigergraph/ecosys/blob/master/tutorials/GraphRAG.md) for a detailed demo.
 
 ## Customization and Extensibility
 TigerGraph GraphRAG is designed to be easily extensible. The service can be configured to use different LLM providers, different graph schemas, and different LangChain tools. The service can also be extended to use different embedding services, different LLM generation services, and different LangChain tools. For more information on how to extend the service, see the [Developer Guide](./docs/DeveloperGuide.md).
 
-## Testing
+### Test Code Changes
 A family of tests are included under the `tests` directory. If you would like to add more tests please refer to the [guide here](./docs/DeveloperGuide.md#adding-a-new-test-suite). A shell script `run_tests.sh` is also included in the folder which is the driver for running the tests. The easiest way to use this script is to execute it in the Docker Container for testing.
 
-### Testing with Pytest
+#### Testing with Pytest
 You can run testing for each service by going to the top level of the service's directory and running `python -m pytest`
 
 e.g. (from the top level)
@@ -510,7 +510,7 @@ python -m pytest
 cd ..
 ```
 
-### Test in Docker Container
+#### Test in Docker Container
 
 First, make sure that all your LLM service provider configuration files are working properly. The configs will be mounted for the container to access. Also make sure that all the dependencies such as database are ready. If not, you can run the included docker compose file to create those services.
 ```sh

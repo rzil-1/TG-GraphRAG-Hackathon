@@ -163,7 +163,7 @@ class AzureOpenAI_Ada002(EmbeddingModel):
 
     def __init__(self, config):
         super().__init__(config, model_name=config.get("model_name", "text-embedding-3-small"))
-        from langchain.embeddings import AzureOpenAIEmbeddings
+        from langchain_openai import AzureOpenAIEmbeddings
 
         self.embeddings = AzureOpenAIEmbeddings(model=self.model_name, dimensions=self.dimensions, deployment=config["azure_deployment"])
 
@@ -209,7 +209,7 @@ class AWS_Bedrock_Embedding(EmbeddingModel):
 
         boto3_config = config.get("boto3_config", {})
         client_config = botocore.config.Config(
-            max_pool_connections=boto3_config.get("max_pool_connections", 50),
+            max_pool_connections=boto3_config.get("max_pool_connections", 20),
             read_timeout=boto3_config.get("read_timeout", 300),
             retries={"max_attempts": boto3_config.get("retries", 5)},
         )
