@@ -143,13 +143,17 @@ def add_feedback(
 async def serve_image_from_vertex(
     graphname: str,
     image_id: str,
-    auth: str = None,
+    auth: str,
 ):
     """
     Serve an image directly from the TigerGraph Image vertex.
     
     This endpoint accepts authentication credentials via the 'auth' query parameter.
     The auth parameter should be a base64-encoded string of "username:password".
+    This allows the endpoint to reuse the existing user's connection credentials.
+    
+    Similar to Bedrock's approach with presigned S3 URLs - the URL includes auth but 
+    you need both the image_id and valid credentials to access it.
     
     This endpoint fetches the base64 encoded image data from the Image vertex
     and returns it as an image response with the appropriate content type.
@@ -159,17 +163,16 @@ async def serve_image_from_vertex(
     from fastapi.responses import Response
     
     try:
-        # Extract credentials from auth query parameter
-        if auth:
-            # Decode base64 auth string to get username:password
-            try:
-                decoded_auth = base64.b64decode(auth.encode()).decode()
-                username, password = decoded_auth.split(":", 1)
-            except Exception as e:
-                logger.error(f"Failed to decode auth parameter: {e}")
-                raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+        # Decode auth parameter to extract username and password (same pattern as ui.py line 455-456)
+        try:
+            decoded_auth = base64.b64decode(auth.encode()).decode()
+            username, password = decoded_auth.split(":", 1)
+        except Exception as e:
+            logger.error(f"Failed to decode auth parameter: {e}")
+            raise HTTPException(status_code=401, detail="Invalid authentication credentials")
         
-        # Connect to the graph using the extracted credentials
+        # Connect to the graph using the SAME credentials as the user's existing connection
+        # This reuses the user's auth - no new/default connection needed!
         conn = get_db_connection_pwd_manual(graphname, username, password)
         
         # Fetch the Image vertex by ID
@@ -474,10 +477,10 @@ async def graph_query(
             convo_id = conversation_id
             LogWriter.info(f"Continuing conversation with ID: {convo_id}")
 
-        # create agent with user authentication credentials for image URL generation
+        # create agent
         # get retrieval pattern to use
         rag_pattern = "hybridsearch"
-        agent = make_agent(graphname, conn, use_cypher, supportai_retriever=rag_pattern, user_auth=auth)
+        agent = make_agent(graphname, conn, use_cypher, supportai_retriever=rag_pattern)
 
         prev_id = None
         data = q
@@ -574,8 +577,8 @@ async def chat(
     # Send conversation ID to frontend
     await websocket.send_text(json.dumps({"conversation_id": convo_id}))
 
-    # create agent with user authentication credentials for image URL generation
-    agent = make_agent(graphname, conn, use_cypher, ws=websocket, supportai_retriever=rag_pattern, user_auth=usr_auth)
+    # create agent
+    agent = make_agent(graphname, conn, use_cypher, ws=websocket, supportai_retriever=rag_pattern)
 
     prev_id = None
     try:

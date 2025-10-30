@@ -11,8 +11,7 @@
   "graphrag_config": {
     "reuse_embedding": false,
     "ecc": "http://graphrag-ecc:8001",
-    "chat_history_api": "http://chat-history:8002",
-    "data_path": "YOUR_DATA_PATH_HERE"
+    "chat_history_api": "http://chat-history:8002"
   },
   "llm_config": {
     "authentication_configuration": {

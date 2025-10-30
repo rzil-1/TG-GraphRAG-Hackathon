@@ -7,11 +7,8 @@ import time
 import re
 import pyTigerGraph as tg
 from pyTigerGraph import TigerGraphConnection
-import mimetypes
-from pathlib import Path
 
-from common.config import embedding_dimension, graphrag_config
-from common.utils.text_extractors import TextExtractor
+from common.config import embedding_dimension
 from common.py_schemas.schemas import (
     # GraphRAGResponse,
     CreateIngestConfig,
@@ -20,7 +17,7 @@ from common.py_schemas.schemas import (
     # SupportAIMethod,
     # SupportAIQuestion,
 )
-
+from common.utils.text_extractors import TextExtractor
 logger = logging.getLogger(__name__)
 
 def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, dict]:
@@ -52,7 +49,7 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
                 graphname, schema
             )
         )
-
+    
     # Add Image vertex schema (for storing images from documents)
     if "- VERTEX Image" in current_schema:
         schema_res += " Image schema already exists, skipped"
@@ -292,47 +289,27 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
                 # Don't fail the entire operation if cleanup fails
 
 
-def process_local_folder(folder_path, graphname=None, use_direct_loading=True):
-    """
-    Process local folder with multiple file formats and extract text content using TextExtractor class.
-    Like Bedrock BDA: Automatically uses direct loading (no flags needed from user).
-    
-    Args:
-        folder_path: Path to folder to process
-        graphname: Graph name
-        use_direct_loading: Internal flag (always True for new approach, like Bedrock)
-    
-    Returns:
-        dict with documents list for direct async loading
-    """
-    extractor = TextExtractor()
-    return extractor.process_folder(folder_path, graphname=graphname, use_direct_loading=use_direct_loading)
-
-
-# Text extraction functions moved to text_extractors.py module
-
-
 def create_ingest(
     graphname: str,
     ingest_config: CreateIngestConfig,
     conn: TigerGraphConnection,
 ):
-    # Check for invalid combination of multi format and unsupported data source
-    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() not in ["s3", "local"]:
+    # Check for invalid combination of multi format and non-s3 data source
+    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() not in ["s3", "server"]:
         raise Exception(
-            "Multi-format file processing is only supported for S3 and local data sources.")
-    
-    # Set default loader_config if not provided or empty
-    if not ingest_config.loader_config:
-        ingest_config.loader_config = {
-            "doc_id_field": "doc_id",
-            "content_field": "content",
-            "doc_type": "doc_type"
-        }
+            "Multi-format file processing is only supported for S3 and server data sources.")
 
-    if ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
+    # Choose loading job template based on source/format
+    if (
+        ingest_config.file_format.lower() == "multi"
+        and ingest_config.data_source.lower() == "server"
+    ):
+        # Server multi can include images; use the WithImages loading job
+        file_path = "common/gsql/supportai/SupportAI_InitialLoadJSON_WithImages.gsql"
+    elif ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
         file_path = "common/gsql/supportai/SupportAI_InitialLoadJSON.gsql"
 
+    if ingest_config.file_format.lower() in ["json", "multi"]:
         with open(file_path) as f:
             ingest_template = f.read()
         ingest_template = ingest_template.replace("@uuid@", str(uuid.uuid4().hex))
@@ -459,107 +436,21 @@ def create_ingest(
         data_stream_conn = data_stream_conn.replace(
             "@source_config@", json.dumps(connector)
         )
-    elif ingest_config.data_source.lower() == "local":
-        # Handle multi-format processing for local files
+    elif ingest_config.data_source.lower() == "server":
+        folder_path = ingest_config.data_source_config.get("folder_path", None)
+        if folder_path is None:
+            raise Exception("Folder path not provided for server processing")
         if ingest_config.file_format.lower() == "multi":
-            folder_path = ingest_config.data_source_config.get("folder_path", None)
-            if folder_path is None:
-                raise Exception("Folder path not provided for local multi-format processing")
-
-            try:
-                # Process local folder and extract text from all supported files
-                # Like Bedrock BDA: Automatically uses direct loading (no flags needed)
-                local_processing_result = process_local_folder(
-                    folder_path, 
-                    graphname=graphname, 
-                    use_direct_loading=True  # Always use NEW direct loading (like Bedrock)
-                )
-                if local_processing_result.get("statusCode") != 200:
-                    raise Exception(f"Local folder processing failed: {local_processing_result}")
-                
-                logger.info(f"Starting local folder direct loading (like Bedrock BDA)...")
-                
-                # Create loading job with image support (like Bedrock)
-                from pathlib import Path
-                image_load_template_path = "common/gsql/supportai/SupportAI_InitialLoadJSON_WithImages.gsql"
-                with open(image_load_template_path) as f:
-                    ingest_template = f.read()
-                
-                ingest_template = ingest_template.replace("@uuid@", str(uuid.uuid4().hex))
-                
-                # Set document field names
-                doc_id = ingest_config.loader_config.get("doc_id_field", "doc_id")
-                doc_text = ingest_config.loader_config.get("content_field", "content")
-                doc_type = ingest_config.loader_config.get("doc_type", "")
-                ingest_template = ingest_template.replace('"doc_id"', '"{}"'.format(doc_id))
-                ingest_template = ingest_template.replace('"content"', '"{}"'.format(doc_text))
-                ingest_template = ingest_template.replace('"doc_type"', '"{}"'.format(doc_type))
-                
-                load_job_created = conn.gsql("USE GRAPH {}\n".format(graphname) + ingest_template)
-                load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
-                res["load_job_id"] = load_job_id
-                res["data_source_id"] = "DocumentContent"
-                
-                # Load documents directly (like Bedrock - no JSONL file)
-                documents = local_processing_result.get("documents", [])
-                if not documents:
-                    raise Exception("No documents extracted from local folder")
-                
-                logger.info(f"Loading {len(documents)} documents directly (like Bedrock)...")
-                
-                # Simple synchronous loop like Bedrock BDA
-                success_count = 0
-                failed_count = 0
-                
-                for doc_data in documents:
-                    try:
-                        # Check if this is image storage entry (has image_data field)
-                        if doc_data.get("image_data"):
-                            # Image STORAGE entry (for Image vertex)
-                            payload = {
-                                "doc_id": doc_data["doc_id"],
-                                "doc_type": "image",
-                                "image_description": doc_data.get("image_description", ""),
-                                "image_data": doc_data.get("image_data", ""),
-                                "image_format": doc_data.get("image_format", "jpg"),
-                                "parent_doc": doc_data.get("parent_doc", ""),
-                                "page_number": doc_data.get("page_number", 0),
-                                "width": doc_data.get("width", 0),
-                                "height": doc_data.get("height", 0),
-                                "position": doc_data.get("position", 0),
-                                "content": ""  # Empty content - this is just for Image vertex
-                            }
-                        else:
-                            # Document entry (markdown/text - has content field)
-                            payload = {
-                                "doc_id": doc_data["doc_id"],
-                                "doc_type": doc_data["doc_type"],
-                                "content": doc_data["content"]
-                            }
-                        
-                        payload_json = json.dumps(payload)
-                        
-                        # Load document (like Bedrock: simple API call)
-                        conn.runLoadingJobWithData(payload_json, "DocumentContent", load_job_id)
-                        success_count += 1
-                        
-                        logger.debug(f"Loaded document: {doc_data['doc_id']} (type: {doc_data['doc_type']})")
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to load document {doc_data.get('doc_id', 'unknown')}: {e}")
-                        failed_count += 1
-                
-                logger.info(f"Direct loading completed: {success_count} success, {failed_count} failed")
-                
-                res["num_documents"] = len(documents)
-                res["loading_result"] = {"success": success_count, "failed": failed_count}
-                res["processed_files"] = local_processing_result.get("files", [])
-                
-                logger.info(
-                    f"Processed {len(res['processed_files'])} files from local folder and loaded {res['num_documents']} documents directly (like Bedrock).")
-                
-            except Exception as e:
-                raise Exception(f"Error during local folder processing: {e}")
+            extractor = TextExtractor()
+            server_processing_result = extractor.process_folder(folder_path, graphname=graphname)
+            if server_processing_result.get("statusCode") != 200:
+                raise Exception(f"Server folder processing failed: {server_processing_result}")
+            documents = server_processing_result.get("documents", [])
+            res_ingest_config["server_jobs"] = documents
+        else:
+            raise Exception("Server data source supports only 'multi' file_format")
+    elif ingest_config.data_source.lower() == "remote":
+        pass
     else:
         raise Exception("Data source not implemented")
 
@@ -574,13 +465,13 @@ def create_ingest(
         res["data_path"] = ingest_config.data_source_config.get("output_bucket", "")
         # key name to be changed
         res["data_source_id"] = res_ingest_config
-    elif ingest_config.data_source.lower() == "local":
-        if ingest_config.file_format.lower() == "multi":
-            res_ingest_config["data_source_id"] = "DocumentContent"
-            res["data_path"] = ingest_config.get("json_filepath", res["data_path"])
-            res["data_source_id"] = res_ingest_config
-        else:
-            res["data_source_id"] = "DocumentContent"
+    elif ingest_config.data_source.lower() == "server" and ingest_config.file_format.lower() == "multi":
+        # Mirror S3 behavior: attach full ingest config (including server_jobs) to response
+        res_ingest_config["data_source_id"] = "DocumentContent"
+        # Use a placeholder path that doesn't start with "/" to avoid pyTigerGraph treating it as a file
+        # The actual folder path is stored in server_jobs, this is just for the API call
+        res["data_path"] = "server_multi"
+        res["data_source_id"] = res_ingest_config
     else:
         data_source_created = conn.gsql(
             "USE GRAPH {}\n".format(graphname) + data_stream_conn
@@ -648,8 +539,6 @@ def ingest(
     else:
         ingest_config = loader_info.data_source_id
         loader_config = ingest_config.get("loader_config", {})
-        data_source_id = ingest_config.get("data_source_id", "DocumentContent")
-
         if ingest_config.get("data_source") == "s3" and ingest_config.get("file_format") == "multi":
             aws_access_key = ingest_config.get("aws_access_key", None)
             aws_secret_key = ingest_config.get("aws_secret_key", None)
@@ -674,6 +563,7 @@ def ingest(
             logger.info(f"Starting S3 markdown extraction and TigerGraph loading...")
 
             try:
+                data_source_id = ingest_config.get("data_source_id", "DocumentContent")
                 if ingest_config.get("bda_jobs"):
                     job_uids = [job.get("jobId").split("/")[-1] for job in ingest_config.get("bda_jobs")]
                 else:
@@ -724,23 +614,42 @@ def ingest(
                 "job_name": loader_info.load_job_id,
                 "summary": processed_files
             }
-        elif ingest_config.get("data_source") == "local" and ingest_config.get("file_format") == "multi":
-            if loader_info.file_path:
-                conn.runLoadingJobWithFile(loader_info.file_path, data_source_id, loader_info.load_job_id)
-                return {
-                    "job_name": loader_info.load_job_id,
-                    "summary": f"Local file {loader_info.file_path} processing done"
-                }
-            elif ingest_config.get("json_filepath"):
-                conn.runLoadingJobWithFile(ingest_config.get("json_filepath"), data_source_id, loader_info.load_job_id)
-                return {
-                    "job_name": loader_info.load_job_id,
-                    "summary": f"Local folder {ingest_config.get('json_filepath')} processing done"
-                }
-            else:
-                return {
-                    "job_name": loader_info.load_job_id,
-                    "summary": "No data file path provided"
-                }
+        elif ingest_config.get("data_source") == "server" and ingest_config.get("file_format") == "multi":
+            try:
+                processed_files = []
+                data_source_id = ingest_config.get("data_source_id", "DocumentContent")
+                if ingest_config.get("server_jobs"):
+                    for doc_data in ingest_config.get("server_jobs"):
+                        if doc_data.get("image_data"):
+                            payload = {
+                                "doc_id": doc_data.get("doc_id", ""),
+                                "doc_type": "image",
+                                "image_data": doc_data.get("image_data", ""),
+                                "image_format": doc_data.get("image_format", "jpg"),
+                                "parent_doc": doc_data.get("parent_doc", ""),
+                                "page_number": doc_data.get("page_number", 0),
+                                "position": doc_data.get("position", 0),
+                                "content": ""
+                            }
+                        else:
+                            payload = {
+                                "doc_id": doc_data.get("doc_id", ""),
+                                "doc_type": doc_data.get("doc_type", "markdown"),
+                                "content": doc_data.get("content", "")
+                            }
+                        payload_json = json.dumps(payload)
+                        conn.runLoadingJobWithData(payload_json, data_source_id, loader_info.load_job_id)
+                        processed_files.append({
+                            'file_path': doc_data.get("doc_id", ""),
+                            'parent_doc': doc_data.get("parent_doc", ""),
+                        })
+                        logger.info(f"Data uploading done for doc_id: {doc_data.get('doc_id', 'unknown')}")
+            except Exception as e:
+                raise Exception(f"Error during server markdown extraction and TigerGraph loading: {e}")
+            return {
+                "job_name": loader_info.load_job_id,
+                "summary": processed_files
+            }
+
         else:
             raise Exception("Data source and file format combination not implemented")

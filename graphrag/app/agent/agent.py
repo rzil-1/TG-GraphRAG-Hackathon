@@ -56,8 +56,7 @@ class TigerGraphAgent:
         embedding_store: EmbeddingStore,
         use_cypher: bool = False,
         ws=None,
-        supportai_retriever="hybridsearch",
-        user_auth: str = None
+        supportai_retriever="hybridsearch"
     ):
         self.conn = db_connection
 
@@ -97,8 +96,7 @@ class TigerGraphAgent:
             self.gen_func,
             cypher_gen_tool=self.cypher_tool,
             q=self.q,
-            supportai_retriever=supportai_retriever,
-            user_auth=user_auth
+            supportai_retriever=supportai_retriever
         ).create_graph()
 
         logger.debug(f"request_id={req_id_cv.get()} agent initialized")
@@ -167,7 +165,7 @@ class TigerGraphAgent:
             )
 
 
-def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retriever="hybridsearch", user_auth: str = None) -> TigerGraphAgent:
+def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retriever="hybridsearch") -> TigerGraphAgent:
     if llm_config["completion_service"]["llm_service"].lower() == "openai":
         llm_service_name = "openai"
         llm_provider = OpenAI(llm_config["completion_service"])
@@ -215,7 +213,6 @@ def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retr
         embedding_store,
         use_cypher=use_cypher,
         ws=ws,
-        supportai_retriever=supportai_retriever,
-        user_auth=user_auth
+        supportai_retriever=supportai_retriever
     )
     return agent

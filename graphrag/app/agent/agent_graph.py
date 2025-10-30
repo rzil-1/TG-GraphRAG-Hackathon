@@ -69,7 +69,6 @@ class TigerGraphAgentGraph:
         enable_human_in_loop=False,
         q: Q = None,
         supportai_retriever="hybridsearch",
-        user_auth: str = None,
     ):
         self.workflow = StateGraph(GraphState)
         self.llm_provider = llm_provider
@@ -81,7 +80,6 @@ class TigerGraphAgentGraph:
         self.cypher_gen = cypher_gen_tool
         self.enable_human_in_loop = enable_human_in_loop
         self.q = q
-        self.user_auth = user_auth
 
         self.supportai_enabled = True
         self.supportai_retriever = supportai_retriever.lower().replace(" ", "")
@@ -131,7 +129,7 @@ class TigerGraphAgentGraph:
         """
         self.emit_progress(DONE)
         state["answer"] = GraphRAGResponse(
-            natural_language_response="I'm sorry, there isn't enough context to answer your question. Please try rephrasing it.",
+            natural_language_response="I'm sorry, I don't know the answer to that question. Please try rephrasing your question.",
             answered_question=False,
             response_type="error",
             query_sources={"error": True, "error_history": state["error_history"]},
@@ -366,13 +364,8 @@ class TigerGraphAgentGraph:
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
             answer = step.generate_answer(
-                state["question"], state["context"]["result"]["final_retrieval"]
+                state["question"], state["context"]["result"]
             )
-
-            if not answer.citation:
-                answer.citation = list(state["context"]["result"]["final_retrieval"].keys())
-            state["context"]["reasoning"] = list(set(answer.citation))
-
         elif state["lookup_source"] == "inquiryai":
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
@@ -394,10 +387,22 @@ class TigerGraphAgentGraph:
             f"request_id={req_id_cv.get()} Generated answer: {answer.generated_answer}"
         )
 
+        if state["lookup_source"] == "supportai":
+            import re
+
+            citations = [re.sub(r"_chunk_\d+", "", x) for x in answer.citation]
+            state["context"]["reasoning"] = list(set(citations))
+
         try:
             # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)
             if isinstance(self.llm_provider, AWSBedrock):
                 answer.generated_answer = self.replace_s3_urls_with_presigned(answer.generated_answer)
+            
+            # LOG: Check what LLM generated
+            logger.info(f"[IMAGE_DEBUG] ========== CHECKING LLM OUTPUT ==========")
+            logger.info(f"[IMAGE_DEBUG] answer.generated_answer: {answer.generated_answer}")
+            logger.info(f"[IMAGE_DEBUG] state['context']: {state['context']}")
+            logger.info(f"[IMAGE_DEBUG] ==========================================")
             
             # Convert [IMAGE_REF:image_id] to markdown images for React UI
             # This converts internal image references to URLs that the UI can display
@@ -435,7 +440,7 @@ class TigerGraphAgentGraph:
             Any: Content with S3 URLs replaced by presigned URLs (same type as input).
         """
 
-        s3_url_pattern = r'\(s3://([^/]+)/([^\)]+)\)'
+        s3_url_pattern = r's3://([\w\-.]+)/([\w\-\./]+)'
         s3 = boto3.client('s3')
 
         def presign(match):
@@ -446,7 +451,7 @@ class TigerGraphAgentGraph:
                     Params={'Bucket': bucket, 'Key': key},
                     ExpiresIn=expires_in
                 )
-                return f"({url})"
+                return url
             except Exception as e:
                 logger.error(f"Failed to presign S3 url for s3://{bucket}/{key}: {e}")
                 return match.group(0)
@@ -466,18 +471,20 @@ class TigerGraphAgentGraph:
 
     def convert_image_refs_to_markdown(self, text):
         """
-        Convert [IMAGE_REF:image_id] markers to markdown image syntax with authenticated API endpoint URLs.
+        Convert [IMAGE_REF:image_id] markers to markdown image syntax with API endpoint URLs.
         
         Similar to Bedrock's approach with presigned S3 URLs, this creates URLs pointing to
         the /ui/image_vertex/ endpoint which serves images from TigerGraph.
         
-        Format: [IMAGE_REF:image_id] → ![Image](/ui/image_vertex/{graphname}/{image_id}?auth={user_auth})
+        Includes authentication credentials in the URL to reuse the existing connection.
+        
+        Format: [IMAGE_REF:image_id] → ![Image](/ui/image_vertex/{graphname}/{image_id}?auth={base64_creds})
         
         Args:
             text (str): The text containing [IMAGE_REF:] markers.
             
         Returns:
-            str: The text with [IMAGE_REF:] markers converted to markdown with authenticated endpoint URLs.
+            str: The text with [IMAGE_REF:] markers converted to markdown with endpoint URLs.
         """
         if not isinstance(text, str):
             return text
@@ -486,7 +493,14 @@ class TigerGraphAgentGraph:
             return text
         
         import re
-        import urllib.parse
+        import base64
+        
+        # Extract credentials from existing connection (no new connection needed!)
+        username = self.db_connection.username
+        password = self.db_connection.password
+        
+        # Encode credentials as base64 (same pattern as ui.py line 455)
+        auth = base64.b64encode(f"{username}:{password}".encode()).decode()
         
         # Get the base URL from environment or use relative path
         base_url = os.getenv("GRAPHRAG_API_BASE_URL", "")
@@ -501,21 +515,15 @@ class TigerGraphAgentGraph:
         # Get graphname from connection
         graphname = self.db_connection.graphname
         
-        # Build the auth query parameter if user_auth is available
-        auth_param = ""
-        if self.user_auth:
-            # URL encode the auth credentials for safe transmission
-            auth_param = f"?auth={urllib.parse.quote(self.user_auth)}"
-        
-        # Replace [IMAGE_REF:image_id] with markdown image syntax pointing to the authenticated endpoint
-        # The endpoint /ui/image_vertex/{graphname}/{image_id}?auth={credentials} serves images from TigerGraph
+        # Replace [IMAGE_REF:image_id] with markdown image syntax pointing to the endpoint
+        # Include auth query parameter to reuse existing credentials
         converted = re.sub(
             r'\[IMAGE_REF:([^\]]+)\]',
-            rf'![Image]({base_url}{path_prefix}/ui/image_vertex/{graphname}/\1{auth_param})',
+            rf'![Image]({base_url}{path_prefix}/ui/image_vertex/{graphname}/\1?auth={auth})',
             text
         )
         
-        logger.info(f"Converted {text.count('[IMAGE_REF:')} image reference(s) to authenticated endpoint URLs")
+        logger.info(f"Converted {text.count('[IMAGE_REF:')} image reference(s) to endpoint URLs with auth")
         return converted
 
 

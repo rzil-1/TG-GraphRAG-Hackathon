@@ -22,16 +22,11 @@ CREATE LOADING JOB load_documents_content_json_with_images_@uuid@ {
     // Load Images (ONLY for image storage entries which have image_data field)
     LOAD DocumentContent TO VERTEX Image VALUES(
         gsql_lower($"doc_id"),
-        $"image_description",
         $"image_data",
         $"image_format",
         gsql_lower($"parent_doc"),
         $"page_number",
-        $"width",
-        $"height",
-        gsql_current_time_epoch(0),
-        _,
-        _
+        gsql_current_time_epoch(0)
     ) WHERE $"image_data" != ""
       USING JSON_FILE="true";
     

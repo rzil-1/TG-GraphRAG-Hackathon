@@ -17,16 +17,11 @@
 CREATE SCHEMA_CHANGE JOB add_image_support_schema {
     ADD VERTEX Image(
         PRIMARY_ID id STRING,
-        description STRING,
         image_data STRING,           // base64 encoded image data
         image_format STRING,          // jpg, png, gif, etc.
         source_document STRING,       // parent document ID
         page_number INT,              // for PDFs, which page
-        width INT,                    // image width
-        height INT,                   // image height
-        epoch_added UINT,
-        epoch_processing UINT,
-        epoch_processed UINT
+        epoch_added UINT
     ) WITH STATS="OUTDEGREE_BY_EDGETYPE", PRIMARY_ID_AS_ATTRIBUTE="true";
     
     // Document can have multiple images (standalone or embedded)
