@@ -4,6 +4,47 @@
 > - **Supported Backend:** TigerGraph is the only Vector and Graph DB supported in this project. Hybrid Search is the officially retriever method supported at backend.  
 > - **Limitations:** No official support is provided unless delivered through a Statement of Work (SOW) with the Solutions team. Customizations are customer-owned self-service to handle custom LLM service, prompt logic, UI integration, and pipeline orchestration. This project is provided "as is" without any warranties or guarantees.
 
+## Table of Contents
+
+- [Releases](#releases)
+- [Overview](#overview)
+  - [Nature Language Query](#nature-language-query)
+  - [Knowledge Graph Query](#knowledge-graph-query)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Quick Start](#quick-start)
+    - [Use TigerGraph Docker-Based Instance](#use-tigergraph-docker-based-instance)
+    - [Use Pre-Installed TigerGraph Instance](#use-pre-installed-tigergraph-instance)
+  - [Deploy GraphRAG Manually](#deploy-graphrag-manually)
+    - [Manual Deploy of GraphRAG with Docker Compose](#manual-deploy-of-graphrag-with-docker-compose)
+    - [Use Standalone TigerGraph instance (If preferred)](#use-standalone-tigergraph-instance-if-preferred)
+    - [Manual Deploy of GraphRAG with Kubernetes](#manual-deploy-of-graphrag-with-kubernetes)
+- [Use TigerGraph GraphRAG](#use-tigergraph-graphrag)
+  - [Run Demo with Preloaded GraphRAG](#run-demo-with-preloaded-graphrag)
+  - [Manually Build GraphRAG From Scratch](#manually-build-graphrag-from-scratch)
+- [Detailed Data Ingestion Methods](#detailed-data-ingestion-methods)
+- [More Detailed Configurations](#more-detailed-configurations)
+  - [DB configuration](#db-configuration)
+  - [GraphRAG configuration](#graphrag-configuration)
+  - [Chat configuration](#chat-configuration)
+  - [LLM provider configuration](#llm-provider-configuration)
+    - [OpenAI](#openai)
+    - [Google GenAI](#google-genai)
+    - [GCP VertexAI](#gcp-vertexai)
+    - [Azure](#azure)
+    - [AWS Bedrock](#aws-bedrock)
+    - [Ollama](#ollama)
+    - [Hugging Face](#hugging-face)
+    - [Groq](#groq)
+- [Customization and Extensibility](#customization-and-extensibility)
+  - [Test Your Code Changes](#test-your-code-changes)
+    - [Testing with Pytest](#testing-with-pytest)
+    - [Test Code Change in Docker Container](#test-code-change-in-docker-container)
+  - [Test Script Options](#test-script-options)
+    - [Configure LLM Service](#configure-llm-service)
+    - [Configure Testing Graphs](#configure-testing-graphs)
+    - [Configure Weights and Biases](#configure-weights-and-biases)
+
 ## Releases
 * **9/22/2025: GraphRAG is available now officially v1.1 (v1.1.0). AWS Bedrock support is completed with BDA integration for multimodal document ingestion.
 * **6/18/2025: GraphRAG is available now officially v1.0 (v1.0.0). TigerGraph database is the only graph and vector storagge supported.
@@ -246,7 +287,7 @@ In the chat box, input the question `how to load data to tigergraph vector store
 ![Demo Question](./docs/img/DemoQuestion.jpg)
 
 You can also ask other questions on statistics and data inside the TigerGraph database.
-![Data Inquiry](./docs/img/Inquiry.jpg)
+![Data          ](./docs/img/Inquiry.jpg)
 
 [Go back to top](#top)
 
