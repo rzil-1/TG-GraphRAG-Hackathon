@@ -364,7 +364,7 @@ class TigerGraphAgentGraph:
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
             answer = step.generate_answer(
-                state["question"], state["context"]["result"]
+                state["question"], state["context"]["result"]["final_retrieval"]
             )
         elif state["lookup_source"] == "inquiryai":
             logger.debug_pii(
@@ -397,12 +397,6 @@ class TigerGraphAgentGraph:
             # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)
             if isinstance(self.llm_provider, AWSBedrock):
                 answer.generated_answer = self.replace_s3_urls_with_presigned(answer.generated_answer)
-            
-            # LOG: Check what LLM generated
-            logger.info(f"[IMAGE_DEBUG] ========== CHECKING LLM OUTPUT ==========")
-            logger.info(f"[IMAGE_DEBUG] answer.generated_answer: {answer.generated_answer}")
-            logger.info(f"[IMAGE_DEBUG] state['context']: {state['context']}")
-            logger.info(f"[IMAGE_DEBUG] ==========================================")
             
             # Convert [IMAGE_REF:image_id] to markdown images for React UI
             # This converts internal image references to URLs that the UI can display
@@ -473,12 +467,13 @@ class TigerGraphAgentGraph:
         """
         Convert [IMAGE_REF:image_id] markers to markdown image syntax with API endpoint URLs.
         
-        Similar to Bedrock's approach with presigned S3 URLs, this creates URLs pointing to
-        the /ui/image_vertex/ endpoint which serves images from TigerGraph.
+        Creates relative URLs pointing to the /ui/image_vertex/ endpoint which serves images 
+        from TigerGraph. The endpoint uses standard HTTP Basic Authentication (same pattern as 
+        other endpoints), so credentials are handled via HTTP headers, not URL parameters.
         
-        Includes authentication credentials in the URL to reuse the existing connection.
+        PATH_PREFIX is automatically handled by FastAPI router configuration.
         
-        Format: [IMAGE_REF:image_id] → ![Image](/ui/image_vertex/{graphname}/{image_id}?auth={base64_creds})
+        Format: [IMAGE_REF:image_id] → ![Image](/ui/image_vertex/{graphname}/{image_id})
         
         Args:
             text (str): The text containing [IMAGE_REF:] markers.
@@ -493,37 +488,20 @@ class TigerGraphAgentGraph:
             return text
         
         import re
-        import base64
-        
-        # Extract credentials from existing connection (no new connection needed!)
-        username = self.db_connection.username
-        password = self.db_connection.password
-        
-        # Encode credentials as base64 (same pattern as ui.py line 455)
-        auth = base64.b64encode(f"{username}:{password}".encode()).decode()
-        
-        # Get the base URL from environment or use relative path
-        base_url = os.getenv("GRAPHRAG_API_BASE_URL", "")
-        
-        # Get PATH_PREFIX from environment
-        path_prefix = os.getenv("PATH_PREFIX", "")
-        if path_prefix and not path_prefix.startswith("/"):
-            path_prefix = f"/{path_prefix}"
-        if path_prefix.endswith("/"):
-            path_prefix = path_prefix[:-1]
         
         # Get graphname from connection
         graphname = self.db_connection.graphname
         
         # Replace [IMAGE_REF:image_id] with markdown image syntax pointing to the endpoint
-        # Include auth query parameter to reuse existing credentials
+        # Note: Authentication is handled via HTTP Basic Auth headers (standard FastAPI pattern)
+        # PATH_PREFIX is already applied at router level in main.py, so use relative URL
         converted = re.sub(
             r'\[IMAGE_REF:([^\]]+)\]',
-            rf'![Image]({base_url}{path_prefix}/ui/image_vertex/{graphname}/\1?auth={auth})',
+            rf'![Image](/ui/image_vertex/{graphname}/\1)',
             text
         )
         
-        logger.info(f"Converted {text.count('[IMAGE_REF:')} image reference(s) to endpoint URLs with auth")
+        logger.info(f"Converted {text.count('[IMAGE_REF:')} image reference(s) to endpoint URLs")
         return converted
 
 

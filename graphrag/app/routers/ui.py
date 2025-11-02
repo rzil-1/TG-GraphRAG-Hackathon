@@ -143,37 +143,27 @@ def add_feedback(
 async def serve_image_from_vertex(
     graphname: str,
     image_id: str,
-    auth: str,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
     Serve an image directly from the TigerGraph Image vertex.
     
-    This endpoint accepts authentication credentials via the 'auth' query parameter.
-    The auth parameter should be a base64-encoded string of "username:password".
-    This allows the endpoint to reuse the existing user's connection credentials.
-    
-    Similar to Bedrock's approach with presigned S3 URLs - the URL includes auth but 
-    you need both the image_id and valid credentials to access it.
-    
-    This endpoint fetches the base64 encoded image data from the Image vertex
+    This endpoint uses standard HTTP Basic Authentication (same pattern as other endpoints).
+    The endpoint fetches the base64 encoded image data from the Image vertex
     and returns it as an image response with the appropriate content type.
     
-    Example URL: /ui/image_vertex/{graphname}/{image_id}?auth={base64_creds}
+    Example URL: /ui/image_vertex/{graphname}/{image_id}
     """
     from fastapi.responses import Response
     
     try:
-        # Decode auth parameter to extract username and password (same pattern as ui.py line 455-456)
-        try:
-            decoded_auth = base64.b64decode(auth.encode()).decode()
-            username, password = decoded_auth.split(":", 1)
-        except Exception as e:
-            logger.error(f"Failed to decode auth parameter: {e}")
-            raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-        
-        # Connect to the graph using the SAME credentials as the user's existing connection
-        # This reuses the user's auth - no new/default connection needed!
-        conn = get_db_connection_pwd_manual(graphname, username, password)
+        # Extract credentials from the dependency (same pattern as graph_query and other endpoints)
+        creds = creds[1]
+        encoded_username = base64.b64encode(creds.username.encode()).decode()
+        encoded_password = base64.b64encode(creds.password.encode()).decode()
+
+        # now you can use them separately
+        conn = get_db_connection_pwd_manual(graphname, encoded_username, encoded_password)
         
         # Fetch the Image vertex by ID
         image_vertices = conn.getVerticesById('Image', [image_id.lower()])
