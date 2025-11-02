@@ -129,7 +129,7 @@ class TigerGraphAgentGraph:
         """
         self.emit_progress(DONE)
         state["answer"] = GraphRAGResponse(
-            natural_language_response="I'm sorry, I don't know the answer to that question. Please try rephrasing your question.",
+            natural_language_response="I'm sorry, there isn't enough context to answer your question. Please try rephrasing it.",
             answered_question=False,
             response_type="error",
             query_sources={"error": True, "error_history": state["error_history"]},
