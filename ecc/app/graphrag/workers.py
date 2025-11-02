@@ -97,17 +97,11 @@ async def chunk_doc(
             logger.info(f"""Cloning doc/content {doc["v_id"]} -> {v_id}""")
             await upsert_chan.put((upsert_doc, (conn, v_id, chunker_type, doc["attributes"]["text"])))
         
-        # Bypass chunking for images - treat entire content as single chunk
-        if chunker_type == "image":
-            logger.info(f"Bypassing chunking for image document {v_id} - treating as single chunk")
-            # decode the text return from tigergraph as it was encoded when written into jsonl file for uploading
-            content = doc["attributes"]["text"].encode('utf-8').decode('unicode_escape')
-            chunks = [content]  # Single chunk with full content
-        else:
-            # Normal chunking for non-image documents
-            chunker = ecc_util.get_chunker(chunker_type)
-            # decode the text return from tigergraph as it was encoded when written into jsonl file for uploading
-            chunks = chunker.chunk(doc["attributes"]["text"].encode('utf-8').decode('unicode_escape'))
+        # Use get_chunker for all types (including images)
+        # For images, get_chunker returns SingleChunker which preserves [IMAGE_REF:] markers
+        chunker = ecc_util.get_chunker(chunker_type)
+        # decode the text return from tigergraph as it was encoded when written into jsonl file for uploading
+        chunks = chunker.chunk(doc["attributes"]["text"].encode('utf-8').decode('unicode_escape'))
        
         logger.info(f"Chunking {v_id} into {len(chunks)} chunk(s)")
         for i, chunk in enumerate(chunks):
