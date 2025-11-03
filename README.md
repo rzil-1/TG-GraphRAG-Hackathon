@@ -94,7 +94,7 @@ Organizing the data as a knowledge graph allows a chatbot to access accurate, fa
 #### Use TigerGraph Docker-Based Instance
 Using the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
 ```
-curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/setup_graphrag.sh | sh
+curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag.sh | sh
 ```
 
 The GraphRAG instances will be deployed at `./graphrag` folder and TigerGraph instance will be available at `http://localhost:14240`.
@@ -104,7 +104,7 @@ To change installation folder, use `sh -s -- <graphrag_folder>` instead of `sh` 
 
 Using the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
 ```
-curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/setup_graphrag_tg.sh | sh
+curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag_tg.sh | sh
 ```
 
 The GraphRAG instances will be deployed at `./graphrag` folder and connect to TigerGraph instance at `http://localhost:14240` by default.
@@ -119,15 +119,15 @@ The GraphRAG services can be deployed manually using Docker Compose or Kubernete
 #### Manual Deploy of GraphRAG with Docker Compose
 
 ##### Step 1: Get docker-compose file
-Download the [docker-compose.yml](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/docker-compose.yml) file directly
+Download the [docker-compose.yml](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/docker-compose.yml) file directly
 
 The Docker Compose file contains all dependencies for GraphRAG including a TigerGraph database. If you want to use a separate TigerGraph instance, you can comment out the `tigergraph` section from the docker compose file and restart all services. However, please follow the instructions below to make sure your standalone TigerGraph server is accessible from other GraphRAG containers.
 
 ##### Step 2: Set up configurations
 
 Next, download the following configuration files and put them in a `configs` subdirectory of the directory contains the Docker Compose file:
-* [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/configs/server_config.json)
-* [configs/nginx.conf](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/configs/nginx.conf)
+* [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/server_config.json)
+* [configs/nginx.conf](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/nginx.conf)
 
 Here’s what the folder structure looks like:
 ```
@@ -211,14 +211,14 @@ gadmin stop all
 #### Manual Deploy of GraphRAG with Kubernetes
 
 ##### Step 1: Get kubernetes deployment file
-  Download the [graphrag-k8s.yml](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/graphrag-k8s.yml) file directly
+  Download the [graphrag-k8s.yml](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/graphrag-k8s.yml) file directly
 
 ##### Step 2: Modify `graphrag-k8s.yml` (Optional)
   Remove the sections for tigergraph instance if you're using a standalone TigerGraph instance instead
 
 ##### Step 3: Set up server configurations
   Next, in the same directory as the Kubernetes deployment file is in, create a `configs` directory and download the following configuration files:
-  * [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/configs/server_config.json)
+  * [configs/server_config.json](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/server_config.json)
 
   Update the TigerGraph database information, LLM API keys and other configs accordingly.
 
@@ -249,12 +249,12 @@ The pre-loaded knowledge graph `TigerGraphRAG` is provided for an express access
 #### Step 1: Get data package
 
 Download the following data file and put it under `/home/tigergraph/graphrag/` inside your TigerGraph container:
-* [ExportedGraph.zip](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/data/ExportedGraph.zip)
+* [ExportedGraph.zip](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/data/ExportedGraph.zip)
 
 Use the following commands if the file cannot be downloaded inside the TigerGraph container directly:
 ```
 docker exec -it tigergraph mkdir -p /home/tigergraph/graphrag
-docker exec -it tigergraph curl -kL https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/data/ExportedGraph.zip -o /home/tigergraph/graphrag/ExportedGraph.zip
+docker exec -it tigergraph curl -kL https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/data/ExportedGraph.zip -o /home/tigergraph/graphrag/ExportedGraph.zip
 ```
 
 > Note: command should be changed to equivalent formats if standalone TigerGraph instance is used
@@ -299,14 +299,14 @@ If you want to experience the whole process of GraphRAG, you can build the Graph
 #### Step 1: Get demo script
 
 The following scripts are needed to run the demo. Please download and put them in the same directory `./graphrag` as the Docker Compose file:
-* Demo driver: [graphrag_demo.sh](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/graphrag_demo.sh)
-* GraphRAG initializer: [init_graphrag.py](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/init_graphrag.py)
-* Example: [answer_question.py](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/tutorials/answer_question.py)
+* Demo driver: [graphrag_demo.sh](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/graphrag_demo.sh)
+* GraphRAG initializer: [init_graphrag.py](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/init_graphrag.py)
+* Example: [answer_question.py](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/answer_question.py)
 
 #### Step 2: Download the demo data
 
 Next, download the following data file and put it in a `data` subdirectory of the directory contains the Docker Compose file:
-* [data/tg_tutorials.jsonl](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/master/docs/data/tg_tutorials.jsonl)
+* [data/tg_tutorials.jsonl](https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/data/tg_tutorials.jsonl)
 
 #### Step 3: Run the demo driver script
 
