@@ -1,4 +1,4 @@
-import { FC, useState } from "react";
+import { FC, useState, useEffect } from "react";
 import Markdown from 'react-markdown'
 import {
   Dialog,
@@ -50,6 +50,69 @@ const getReasoning = (msg) => {
   return msg.query_sources.reasoning
 }
 
+// Custom Image component that fetches images with authentication headers
+const AuthenticatedImage: FC<{ src: string; alt: string }> = ({ src, alt }) => {
+  const [imageSrc, setImageSrc] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<boolean>(false);
+
+  useEffect(() => {
+    const fetchImage = async () => {
+      try {
+        // Get credentials from localStorage (same pattern as Interact.tsx and SideMenu.tsx)
+        const creds = localStorage.getItem("creds");
+        if (!creds) {
+          setError(true);
+          setLoading(false);
+          return;
+        }
+
+        // Fetch image with authentication header
+        const response = await fetch(src, {
+          headers: {
+            Authorization: `Basic ${creds}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to load image: ${response.status}`);
+        }
+
+        // Convert to blob and create object URL
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        setImageSrc(objectUrl);
+        setLoading(false);
+      } catch (err) {
+        console.error("Error loading image:", err);
+        setError(true);
+        setLoading(false);
+      }
+    };
+
+    if (src) {
+      fetchImage();
+    }
+
+    // Cleanup object URL on unmount
+    return () => {
+      if (imageSrc) {
+        URL.revokeObjectURL(imageSrc);
+      }
+    };
+  }, [src]);
+
+  if (loading) {
+    return <span className="text-gray-500">Loading image...</span>;
+  }
+
+  if (error || !imageSrc) {
+    return <span className="text-red-500">Failed to load image</span>;
+  }
+
+  return <img src={imageSrc} alt={alt} className="max-w-full h-auto rounded-md" />;
+};
+
 export const CustomChatMessage: FC<IChatbotMessageProps> = ({
   message,
 }) => {
@@ -82,11 +145,24 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
     return true;
   };
 
+  // Custom markdown components to handle images with authentication
+  const markdownComponents = {
+    img: ({ src, alt }: { src?: string; alt?: string }) => {
+      if (!src) return null;
+      // Check if it's an internal API image that needs authentication
+      if (src.startsWith('/ui/image_vertex/')) {
+        return <AuthenticatedImage src={src} alt={alt || 'Image'} />;
+      }
+      // For external images, use regular img tag
+      return <img src={src} alt={alt} className="max-w-full h-auto rounded-md" />;
+    },
+  };
+
   return (
     <>
       {typeof message === "string" ? (
         <div className="prose dark:prose-invert text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
-          <Markdown className="typewriter">{message}</Markdown>
+          <Markdown className="typewriter" components={markdownComponents}>{message}</Markdown>
         </div>
       ) : message.key === null ? (
         message
@@ -96,7 +172,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
             {message.response_type === "progress" ? (
               <p className="graphrag-thinking typewriter">{message.content}</p>
             ) : (
-              <Markdown className="typewriter">{message.content}</Markdown>
+              <Markdown className="typewriter" components={markdownComponents}>{message.content}</Markdown>
             )}
             <Interactions
               message={message} 
