@@ -1,7 +1,7 @@
 {
   "db_config": {
     "hostname": "http://tigergraph",
-    "restppPort": "9000",
+    "restppPort": "14240",
     "gsPort": "14240",
     "getToken": false,
     "default_timeout": 300,
@@ -11,31 +11,27 @@
   "graphrag_config": {
     "reuse_embedding": false,
     "ecc": "http://graphrag-ecc:8001",
-    "chat_history_api": "http://chat-history:8002"
+    "chat_history_api": "http://chat-history:8002",
+    "chunker_config": {}
   },
   "llm_config": {
-    "token_limit": 0,
-    "authentication_configuration": {
-      "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY_HERE"
-    },
     "embedding_service": {
       "model_name": "text-embedding-3-small",
-      "embedding_model_service": "openai"
+      "embedding_model_service": "openai",
+      "authentication_configuration": {
+        "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY_HERE"
+      }
     },
     "completion_service": {
       "llm_service": "openai",
       "llm_model": "gpt-4.1-mini",
+      "authentication_configuration": {
+        "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY_HERE"
+      },
       "model_kwargs": {
         "temperature": 0
       },
       "prompt_path": "./common/prompts/openai_gpt4/"
-    },
-    "multimodal_service": {
-      "llm_service": "openai",
-      "llm_model": "gpt-4o-mini",
-      "model_kwargs": {
-        "temperature": 0
-      }
     }
   },
   "chat_config": {

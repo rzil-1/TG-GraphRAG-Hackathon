@@ -32,11 +32,14 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security.http import HTTPBase
 from pyTigerGraph import TigerGraphConnection
 from tools.validation_utils import MapQuestionToSchemaException
 
@@ -134,6 +137,68 @@ def add_feedback(
         raise e
 
     return {"message": "feedback saved", "message_id": message.message_id}
+
+
+@router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
+async def serve_image_from_vertex(
+    graphname: str,
+    image_id: str,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
+):
+    """
+    Serve an image directly from the TigerGraph Image vertex.
+    
+    This endpoint uses standard HTTP Basic Authentication (same pattern as other endpoints).
+    The endpoint fetches the base64 encoded image data from the Image vertex
+    and returns it as an image response with the appropriate content type.
+    
+    Example URL: /ui/image_vertex/{graphname}/{image_id}
+    """
+    from fastapi.responses import Response
+    
+    try:
+        # Extract credentials from the dependency (same pattern as graph_query and other endpoints)
+        creds = creds[1]
+        encoded_username = base64.b64encode(creds.username.encode()).decode()
+        encoded_password = base64.b64encode(creds.password.encode()).decode()
+
+        # now you can use them separately
+        conn = get_db_connection_pwd_manual(graphname, encoded_username, encoded_password)
+        
+        # Fetch the Image vertex by ID
+        image_vertices = conn.getVerticesById('Image', [image_id.lower()])
+        
+        if not image_vertices:
+            raise HTTPException(status_code=404, detail=f"Image not found: {image_id}")
+        
+        image_vertex = image_vertices[0]
+        image_data_b64 = image_vertex['attributes'].get('image_data', '')
+        image_format = image_vertex['attributes'].get('image_format', 'jpg')
+        
+        if not image_data_b64:
+            raise HTTPException(status_code=404, detail=f"No image data for: {image_id}")
+        
+        # Decode base64 to bytes
+        image_bytes = base64.b64decode(image_data_b64)
+        
+        # Determine content type
+        content_type_map = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'webp': 'image/webp'
+        }
+        content_type = content_type_map.get(image_format.lower(), 'image/jpeg')
+        
+        # Return image as Response
+        return Response(content=image_bytes, media_type=content_type)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving image {image_id} from graph {graphname}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error serving image: {str(e)}")
 
 
 @router.get(route_prefix + "/user/{user_id}")

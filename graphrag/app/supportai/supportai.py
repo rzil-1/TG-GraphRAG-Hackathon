@@ -17,7 +17,7 @@ from common.py_schemas.schemas import (
     # SupportAIMethod,
     # SupportAIQuestion,
 )
-
+from common.utils.text_extractors import TextExtractor
 logger = logging.getLogger(__name__)
 
 def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, dict]:
@@ -47,6 +47,20 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
         schema_res = conn.gsql(
             """USE GRAPH {}\n{}\nRUN SCHEMA_CHANGE JOB add_supportai_schema""".format(
                 graphname, schema
+            )
+        )
+    
+    # Add Image vertex schema (for storing images from documents)
+    if "- VERTEX Image" in current_schema:
+        schema_res += " Image schema already exists, skipped"
+    else:
+        file_path = "common/gsql/supportai/SupportAI_Schema_Images.gsql"
+        with open(file_path, "r") as f:
+            image_schema = f.read()
+        schema_res += " "
+        schema_res += conn.gsql(
+            """USE GRAPH {}\n{}\nRUN SCHEMA_CHANGE JOB add_image_support_schema""".format(
+                graphname, image_schema
             )
         )
 
@@ -305,13 +319,21 @@ def create_ingest(
     conn: TigerGraphConnection,
 ):
     # Check for invalid combination of multi format and non-s3 data source
-    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() != "s3":
+    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() not in ["s3", "server"]:
         raise Exception(
-            "AWS Bedrock BDA preprocessing with 'multi' file format is only supported for S3 data sources.")
+            "Multi-format file processing is only supported for S3 and server data sources.")
 
-    if ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
+    # Choose loading job template based on source/format
+    if (
+        ingest_config.file_format.lower() == "multi"
+        and ingest_config.data_source.lower() == "server"
+    ):
+        # Server multi can include images; use the WithImages loading job
+        file_path = "common/gsql/supportai/SupportAI_InitialLoadJSON_WithImages.gsql"
+    elif ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
         file_path = "common/gsql/supportai/SupportAI_InitialLoadJSON.gsql"
 
+    if ingest_config.file_format.lower() in ["json", "multi"]:
         with open(file_path) as f:
             ingest_template = f.read()
         ingest_template = ingest_template.replace("@uuid@", str(uuid.uuid4().hex))
@@ -438,7 +460,20 @@ def create_ingest(
         data_stream_conn = data_stream_conn.replace(
             "@source_config@", json.dumps(connector)
         )
-    elif ingest_config.data_source.lower() == "local" or ingest_config.data_source.lower() == "remote":
+    elif ingest_config.data_source.lower() == "server":
+        folder_path = ingest_config.data_source_config.get("folder_path", None)
+        if folder_path is None:
+            raise Exception("Folder path not provided for server processing")
+        if ingest_config.file_format.lower() == "multi":
+            extractor = TextExtractor()
+            server_processing_result = extractor.process_folder(folder_path, graphname=graphname)
+            if server_processing_result.get("statusCode") != 200:
+                raise Exception(f"Server folder processing failed: {server_processing_result}")
+            documents = server_processing_result.get("documents", [])
+            res_ingest_config["server_jobs"] = documents
+        else:
+            raise Exception("Server data source supports only 'multi' file_format")
+    elif ingest_config.data_source.lower() == "remote":
         pass
     else:
         raise Exception("Data source not implemented")
@@ -455,8 +490,13 @@ def create_ingest(
         res["data_path"] = ingest_config.data_source_config.get("output_bucket", "")
         # key name to be changed
         res["data_source_id"] = res_ingest_config
-    elif ingest_config.data_source.lower() == "local":
-        res["data_source_id"] = "DocumentContent"
+    elif ingest_config.data_source.lower() == "server" and ingest_config.file_format.lower() == "multi":
+        # Mirror S3 behavior: attach full ingest config (including server_jobs) to response
+        res_ingest_config["data_source_id"] = "DocumentContent"
+        # Use a placeholder path that doesn't start with "/" to avoid pyTigerGraph treating it as a file
+        # The actual folder path is stored in server_jobs, this is just for the API call
+        res["data_path"] = "server_multi"
+        res["data_source_id"] = res_ingest_config
     else:
         data_source_created = conn.gsql(
             "USE GRAPH {}\n".format(graphname) + data_stream_conn
@@ -599,5 +639,42 @@ def ingest(
                 "job_name": loader_info.load_job_id,
                 "summary": processed_files
             }
+        elif ingest_config.get("data_source") == "server" and ingest_config.get("file_format") == "multi":
+            try:
+                processed_files = []
+                data_source_id = ingest_config.get("data_source_id", "DocumentContent")
+                if ingest_config.get("server_jobs"):
+                    for doc_data in ingest_config.get("server_jobs"):
+                        if doc_data.get("image_data"):
+                            payload = {
+                                "doc_id": doc_data.get("doc_id", ""),
+                                "doc_type": "image",
+                                "image_data": doc_data.get("image_data", ""),
+                                "image_format": doc_data.get("image_format", "jpg"),
+                                "parent_doc": doc_data.get("parent_doc", ""),
+                                "page_number": doc_data.get("page_number", 0),
+                                "position": doc_data.get("position", 0),
+                                "content": ""
+                            }
+                        else:
+                            payload = {
+                                "doc_id": doc_data.get("doc_id", ""),
+                                "doc_type": doc_data.get("doc_type", "markdown"),
+                                "content": doc_data.get("content", "")
+                            }
+                        payload_json = json.dumps(payload)
+                        conn.runLoadingJobWithData(payload_json, data_source_id, loader_info.load_job_id)
+                        processed_files.append({
+                            'file_path': doc_data.get("doc_id", ""),
+                            'parent_doc': doc_data.get("parent_doc", ""),
+                        })
+                        logger.info(f"Data uploading done for doc_id: {doc_data.get('doc_id', 'unknown')}")
+            except Exception as e:
+                raise Exception(f"Error during server markdown extraction and TigerGraph loading: {e}")
+            return {
+                "job_name": loader_info.load_job_id,
+                "summary": processed_files
+            }
+
         else:
             raise Exception("Data source and file format combination not implemented")
