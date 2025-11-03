@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Database, Upload, RefreshCw, Loader2, Trash2, FolderUp, Cloud, ArrowLeft, CloudDownload } from "lucide-react";
+import { Database, Upload, RefreshCw, Loader2, Trash2, FolderUp, Cloud, ArrowLeft, CloudDownload, CloudCog } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useConfirm } from "@/hooks/useConfirm";
 
 const DEFAULT_MAX_UPLOAD_SIZE_MB = 100;
 const envUploadLimit = Number(import.meta.env.VITE_MAX_UPLOAD_SIZE_MB);
@@ -37,6 +38,7 @@ const formatBytes = (bytes: number) => {
 
 const Setup = () => {
   const navigate = useNavigate();
+  const [confirm, confirmDialog, isConfirmDialogOpen] = useConfirm();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
   
   const [createGraphOpen, setCreateGraphOpen] = useState(false);
@@ -256,7 +258,8 @@ const Setup = () => {
   const handleDeleteAllFiles = async () => {
     if (!ingestGraphName) return;
 
-    if (!confirm("Are you sure you want to delete all uploaded files?")) return;
+    const shouldDelete = await confirm("Are you sure you want to delete all uploaded files?");
+    if (!shouldDelete) return;
 
     try {
       const creds = localStorage.getItem("creds");
@@ -396,7 +399,8 @@ const Setup = () => {
   const handleDeleteAllDownloadedFiles = async () => {
     if (!ingestGraphName) return;
 
-    if (!confirm("Are you sure you want to delete all downloaded files?")) return;
+    const shouldDelete = await confirm("Are you sure you want to delete all downloaded files?");
+    if (!shouldDelete) return;
 
     try {
       const creds = localStorage.getItem("creds");
@@ -557,6 +561,15 @@ const Setup = () => {
       return;
     }
 
+    // Ask user to confirm before proceeding with refresh
+    const shouldRefresh = await confirm(
+      `Are you sure you want to refresh the knowledge graph "${refreshGraphName}"? This will rebuild the graph content.`
+    );
+    if (!shouldRefresh) {
+      setRefreshMessage("Operation cancelled by user.");
+      return;
+    }
+
     setIsRefreshing(true);
     setRefreshMessage("Submitting rebuild request...");
 
@@ -660,8 +673,21 @@ const Setup = () => {
         throw new Error(createData.detail || createData.message || `Failed to create graph: ${createResponse.statusText}`);
       }
 
-      if (createData.status === "error") {
-        throw new Error(createData.message || "Failed to create graph");
+      if (createData.status !== "success") {
+        if (createData.message && createData.message.includes("already exists")) {
+          // Ask user to confirm before proceeding with initialization
+          const shouldInitialize = await confirm(
+            `Graph "${graphName}" already exists. Do you want to initialize it with GraphRAG schema?`
+          );
+          if (!shouldInitialize) {
+            setStatusMessage("Operation cancelled by user.");
+            setStatusType("error");
+            setIsCreating(false);
+            return;
+          }
+        } else {
+          throw new Error(createData.message || `Failed to create graph: ${createData.details}`);
+        }
       }
 
       // Step 2: Initialize the graph with GraphRAG schema
@@ -679,6 +705,13 @@ const Setup = () => {
         throw new Error(initData.detail || `Failed to initialize graph: ${initResponse.statusText}`);
       }
 
+      if (initData.status !== "success") {
+        setStatusMessage(initData.message || `Failed to initialize graph: ${initData.details}`);
+        setStatusType("error");
+        setIsCreating(false);
+        return;
+      }
+      
       setStatusMessage(`✅ Graph "${graphName}" created and initialized successfully! You can now close this dialog.`);
       setStatusType("success");
       
@@ -722,7 +755,7 @@ const Setup = () => {
             Back to Chat
           </Button>
           <h1 className="text-2xl font-bold mb-2 text-black dark:text-white">
-            Knowledge Graph Setup
+            Knowledge Graph Administration
           </h1>
           <p className="text-sm text-gray-600 dark:text-[#D9D9D9]">
             Configure and manage your knowledge graphs
@@ -739,10 +772,10 @@ const Setup = () => {
                 <Database className="h-6 w-6 text-tigerOrange" />
               </div>
               <h2 className="text-lg font-semibold mb-2 text-black dark:text-white">
-                Add New Knowledge Graph
+                Create Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Create a new knowledge graph for your data
+                Create or add a new knowledge graph for your documents
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
@@ -763,10 +796,10 @@ const Setup = () => {
                 <Upload className="h-6 w-6 text-tigerOrange" />
               </div>
               <h2 className="text-lg font-semibold mb-2 text-black dark:text-white">
-                Data Ingest for a KG
+                Ingest to Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Upload and process data into your knowledge graph
+                Upload and ingest documents into your knowledge graph for content processing
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
@@ -775,7 +808,7 @@ const Setup = () => {
                 onClick={() => setIngestOpen(true)}
               >
                 <Upload className="h-4 w-4 mr-2" />
-                Ingest Data
+                Ingest Document
               </Button>
             </div>
           </div>
@@ -790,7 +823,7 @@ const Setup = () => {
                 Refresh Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Rebuild and refresh your knowledge graph
+                Process the new documents in your knowledge graph to refresh the graph content
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
@@ -807,8 +840,20 @@ const Setup = () => {
         </div>
 
         {/* Create Graph Dialog */}
-        <Dialog open={createGraphOpen} onOpenChange={setCreateGraphOpen}>
-          <DialogContent className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]">
+        <Dialog 
+          open={createGraphOpen} 
+          onOpenChange={(open) => {
+            // Prevent closing if confirm dialog is open
+            if (!open && isConfirmDialogOpen) {
+              return;
+            }
+            setCreateGraphOpen(open);
+          }}
+        >
+          <DialogContent 
+            className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]"
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
               <DialogTitle className="text-black dark:text-white">Create New Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
@@ -903,12 +948,24 @@ const Setup = () => {
         </Dialog>
 
         {/* Data Ingest Dialog */}
-        <Dialog open={ingestOpen} onOpenChange={setIngestOpen}>
-          <DialogContent className="sm:max-w-[700px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D] max-h-[80vh] overflow-y-auto">
+        <Dialog 
+          open={ingestOpen} 
+          onOpenChange={(open) => {
+            // Prevent closing if confirm dialog is open
+            if (!open && isConfirmDialogOpen) {
+              return;
+            }
+            setIngestOpen(open);
+          }}
+        >
+          <DialogContent 
+            className="sm:max-w-[700px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D] max-h-[80vh] overflow-y-auto"
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
-              <DialogTitle className="text-black dark:text-white">Data Ingest for Knowledge Graph</DialogTitle>
+              <DialogTitle className="text-black dark:text-white">Document Ingestion for Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
-                Upload files locally, download from cloud storage, or configure S3 Bedrock for data ingestion
+                Upload files locally, download from cloud storage, or configure Amazon Bedrock Data Automation for document ingestion
               </DialogDescription>
             </DialogHeader>
 
@@ -946,15 +1003,15 @@ const Setup = () => {
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="upload">
                   <FolderUp className="h-4 w-4 mr-2" />
-                  Upload Data
+                  Upload Files
                 </TabsTrigger>
                 <TabsTrigger value="cloudDownload">
                   <CloudDownload className="h-4 w-4 mr-2" />
                   Download from Cloud
                 </TabsTrigger>
                 <TabsTrigger value="s3">
-                  <Cloud className="h-4 w-4 mr-2" />
-                  S3 Bedrock Configuration
+                  <CloudCog className="h-4 w-4 mr-2" />
+                  Amazon BDA Configuration
                 </TabsTrigger>
               </TabsList>
 
@@ -1018,7 +1075,7 @@ const Setup = () => {
                   {uploadedFiles.length > 0 && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
-                        Ingest Data into Knowledge Graph
+                        Ingest Documents into Knowledge Graph
                       </h3>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
                         Process uploaded files and add them to the knowledge graph
@@ -1036,7 +1093,7 @@ const Setup = () => {
                         ) : (
                           <>
                             <Database className="h-4 w-4 mr-2" />
-                            Ingest Data into {ingestGraphName}
+                            Ingest Documents into {ingestGraphName}
                           </>
                         )}
                       </Button>
@@ -1357,7 +1414,7 @@ const Setup = () => {
                   {downloadedFiles.length > 0 && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
-                        Ingest Downloaded Data into Knowledge Graph
+                        Ingest Documents into Knowledge Graph
                       </h3>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
                         Process downloaded files and add them to the knowledge graph
@@ -1375,7 +1432,7 @@ const Setup = () => {
                         ) : (
                           <>
                             <Database className="h-4 w-4 mr-2" />
-                            Ingest Downloaded Data into {ingestGraphName}
+                            Ingest Documents into {ingestGraphName}
                           </>
                         )}
                       </Button>
@@ -1516,12 +1573,24 @@ const Setup = () => {
         </Dialog>
 
         {/* Refresh Graph Dialog */}
-        <Dialog open={refreshOpen} onOpenChange={setRefreshOpen}>
-          <DialogContent className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]">
+        <Dialog 
+          open={refreshOpen} 
+          onOpenChange={(open) => {
+            // Prevent closing if confirm dialog is open
+            if (!open && isConfirmDialogOpen) {
+              return;
+            }
+            setRefreshOpen(open);
+          }}
+        >
+          <DialogContent 
+            className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]"
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
               <DialogTitle className="text-black dark:text-white">Refresh Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
-                Rebuild the community structure of your knowledge graph
+                Rebuild the graph content of your knowledge graph
               </DialogDescription>
             </DialogHeader>
 
@@ -1555,7 +1624,7 @@ const Setup = () => {
                   ⚠️ Warning
                 </p>
                 <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                  This operation will rebuild community that will interrupt related queries. 
+                  This operation will rebuild the graph content that will interrupt related queries. 
                   Please confirm to proceed.
                 </p>
               </div>
@@ -1614,6 +1683,9 @@ const Setup = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* User Confirmation Dialog */}
+        {confirmDialog}
       </div>
     </div>
   );

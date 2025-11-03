@@ -197,7 +197,7 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
         for page_num, page in enumerate(doc, start=1):
             if page_num > 1:
                 markdown_parts.append("\n\n")
-            markdown_parts.append(f"--- Page {page_num} ---\n\n")
+            markdown_parts.append(f"--- Page {page_num} ---\n") #Avoid to be splitted as a single chunk
 
             blocks = page.get_text("blocks", sort=True)
             text_blocks_with_pos = []
@@ -271,8 +271,7 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
                 else:
                     # Add image description as text, then markdown image reference
                     # Use short alt text in markdown, full description as regular text
-                    markdown_parts.append(f"{element['description']}\n\n")
-                    markdown_parts.append(f"![Image](tg://{element['image_doc_id']})\n\n")
+                    markdown_parts.append(f"![{element['description']}](tg://{element['image_doc_id']})\n\n")
 
                     image_entries.append({
                         "doc_id": element['image_doc_id'],
@@ -289,7 +288,10 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
 
         doc.close()
 
-        markdown_content = "".join(markdown_parts) if markdown_parts else "[No content extracted from PDF]"
+        markdown_content = "".join(markdown_parts) if markdown_parts else "" #No content extracted from PDF
+        if not markdown_content:
+            return []
+
         result = [{
             "doc_id": base_doc_id,
             "doc_type": "markdown",
@@ -350,7 +352,7 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
 
         image_id = f"{base_doc_id}_image_1"
         # Put description as text, then markdown image reference with short alt text
-        content = f"{description}\n\n![Image](tg://{image_id})"
+        content = f"![{description}](tg://{image_id})"
 
         return [
             {

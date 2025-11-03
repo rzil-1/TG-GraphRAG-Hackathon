@@ -166,17 +166,6 @@ def create_graph(
         result = conn.gsql(create_query)
 
         LogWriter.info(f"Graph creation result: {result}")
-
-        # Check if creation was successful
-        if "error" in result.lower() or "failed" in result.lower():
-            if "already exists" in result.lower():
-                return {
-                    "status": "error",
-                    "message": f"Graph '{graphname}' already exists",
-                    "details": result
-                }
-            raise Exception(f"Failed to create graph: {result}")
-
         return {
             "status": "success",
             "message": f"Graph '{graphname}' created successfully",
@@ -186,10 +175,18 @@ def create_graph(
 
     except Exception as e:
         LogWriter.error(f"Error creating graph {graphname}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create graph: {str(e)}"
-        )
+        if "conflicts" in str(e).lower() or "existing graph" in str(e).lower():
+            return {
+                "status": "error",
+                "message": f"Graph '{graphname}' already exists",
+                "details": str(e)
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Failed to create graph '{graphname}': {str(e)}",
+                "details": str(e)
+            }
 
 
 @router.post(route_prefix + "/{graphname}/initialize_graph")
@@ -227,10 +224,11 @@ def init_graph(
 
     except Exception as e:
         LogWriter.error(f"Error initializing graph {graphname}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to initialize graph: {str(e)}"
-        )
+        return {
+            "status": "error",
+            "message": f"Failed to initialize graph '{graphname}': {str(e)}",
+            "details": str(e)
+        }
 
 
 @router.post(route_prefix + "/{graphname}/rebuild_graph")

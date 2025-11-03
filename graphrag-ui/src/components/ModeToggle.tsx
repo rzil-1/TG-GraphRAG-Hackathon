@@ -9,30 +9,35 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "@/components/ThemeProvider";
+import { useConfirm } from "@/hooks/useConfirm";
 
 export function ModeToggle() {
   const { setTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const isLoginRoute = location.pathname === "/";
+  const [confirm, confirmDialog] = useConfirm();
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     // Show confirmation dialog
-    if (window.confirm("Are you sure you want to logout? This will clear all your chat history.")) {
-      // Clear all localStorage data
-      localStorage.clear();
-      
-      // Clear sessionStorage
-      sessionStorage.clear();
-      
-      // Clear any cookies
-      document.cookie.split(";").forEach(function(c) { 
-        document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
-      });
-      
-      // Redirect to login page
-      navigate("/");
+    const shouldLogout = await confirm("Are you sure you want to logout? This will clear all your chat history.");
+    if (!shouldLogout) {
+      return;
     }
+
+    // Clear all localStorage data
+    localStorage.clear();
+    
+    // Clear sessionStorage
+    sessionStorage.clear();
+    
+    // Clear any cookies
+    document.cookie.split(";").forEach(function(c) { 
+      document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
+    });
+    
+    // Redirect to login page
+    navigate("/");
   };
 
   const handleSetup = () => {
@@ -81,6 +86,9 @@ export function ModeToggle() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* User Confirmation Dialog */}
+      {confirmDialog}
     </div>
   );
 }
