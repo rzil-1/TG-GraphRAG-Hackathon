@@ -92,7 +92,7 @@ Organizing the data as a knowledge graph allows a chatbot to access accurate, fa
 ### Quick Start
 
 #### Use TigerGraph Docker-Based Instance
-Using the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
+Set your OpenAI api key as environment varabiel OPENAI_API_KEY and use the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
 ```
 curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag.sh | sh
 ```
