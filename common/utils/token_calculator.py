@@ -221,3 +221,4 @@ class TokenCalculator:
             return self.truncate_dict_to_token_limit(text, max_tokens)
         else:
             return self.truncate_text_to_token_limit(text, max_tokens)
+

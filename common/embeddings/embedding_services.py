@@ -11,7 +11,7 @@ from langchain_ollama import OllamaEmbeddings
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
 from common.metrics.prometheus_metrics import metrics
-from common.utils import TokenCalculator
+from common.utils.token_calculator import TokenCalculator
 
 logger = logging.getLogger(__name__)
 

@@ -173,9 +173,9 @@ def process_id(v_id: str):
     has_func = re.compile(r"(.*)\(").findall(v_id)
     if len(has_func) > 0:
         v_id = has_func[0]
+    v_id = v_id.replace(" ", "-").lower().replace("(", "").replace(")", "")
     if v_id == "''" or v_id == '""':
         return ""
-    v_id = v_id.replace(" ", "-").lower().replace("(", "").replace(")", "")
 
     return v_id
 
