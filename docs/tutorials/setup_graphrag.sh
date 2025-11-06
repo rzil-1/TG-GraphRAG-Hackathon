@@ -26,28 +26,34 @@ root_dir=${1:-./graphrag}
 tg_username=$(echo ${2:-tigergraph} | sed 's/[][\/.^$*+?|(){}]/\\&/g')
 tg_password=$(echo ${3:-tigergraph} | sed 's/[][\/.^$*+?|(){}]/\\&/g')
 
+if [[ -z $OPENAI_API_KEY ]]; then
+  echo "OPENAI_API_KEY is not found in current environment, please set it using 'export OPENAI_API_KEY=xxx'."
+  exit 5
+fi
+
 mkdir -p $root_dir || true
-[[ -d $root_dir ]] || (echo "Target dir $root_dir is not found!" && exit 5)
+[[ -d $root_dir ]] || (echo "Target dir $root_dir is not found!" && exit 6)
 
 echo "Entering GraphRAG root dir: $root_dir"
 cd $root_dir || (echo "Cannot switch to $root_dir!" && exit 6)
 
 echo "Downloading GraphRAG sevice config..."
 mkdir -p configs || true
-curl -s https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/docker-compose.yml | sed "s/community:4.2.1/community:${tg_version}/g" > docker-compose.yml
-curl -s https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/nginx.conf -o configs/nginx.conf
-curl -s https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/server_config.json | sed '/"gsPort": "14240"/a\
+curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/docker-compose.yml | sed "s/community:4.2.1/community:${tg_version}/g" > docker-compose.yml
+curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/nginx.conf -o configs/nginx.conf
+curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/server_config.json | sed '/"gsPort": "14240"/a\
     "username": "'${tg_username}'",\
     "password": "'${tg_password}'",
-' > configs/server_config.json
+' | sed "s/YOUR_OPENAI_API_KEY_HERE/${OPENAI_API_KEY}/g" > configs/server_config.json
 
 echo "Starting GraphRAG sevices.."
+docker compose pull --ignore-pull-failures
 docker compose up -d
 sleep 5
 
 echo "Checking service status..."
 if ! curl -s http://localhost:14240/restpp/version >/dev/null; then
-  docker exec -it tigergraph /home/tigergraph/tigergraph/app/cmd/gadmin start all >/dev/null
+  docker exec tigergraph /home/tigergraph/tigergraph/app/cmd/gadmin start all >/dev/null
   docker compose up -d >/dev/null
   sleep 5
 fi
