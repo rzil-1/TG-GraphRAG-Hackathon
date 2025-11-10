@@ -132,6 +132,7 @@ python-docx==1.1.2
 pytesseract==0.3.10
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
+python-multipart==0.0.20
 python-iso639==2025.2.18
 python-magic==0.4.27
 pyTigerDriver==1.0.15
