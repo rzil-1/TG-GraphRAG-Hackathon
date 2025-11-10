@@ -473,7 +473,7 @@ const Setup = () => {
 
       // Step 1: Create the graph
       setStatusMessage("Step 1/2: Creating graph...");
-      const createResponse = await fetch(`/${graphName}/graphrag/create_graph`, {
+      const createResponse = await fetch(`/ui/${graphName}/create_graph`, {
         method: "POST",
         headers: {
           Authorization: `Basic ${creds}`,

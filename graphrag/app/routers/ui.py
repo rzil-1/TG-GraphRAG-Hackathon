@@ -140,6 +140,54 @@ def add_feedback(
     return {"message": "feedback saved", "message_id": message.message_id}
 
 
+@router.post(route_prefix + "/{graphname}/create_graph")
+async def create_graph(
+    graphname: str,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
+):
+    """
+    Create a new TigerGraph knowledge graph.
+    This creates an empty graph with the specified name.
+    Uses HTTP Basic Authentication to get credentials and create a connection.
+    """
+    try:
+        # Extract credentials from the dependency (same pattern as other endpoints)
+        creds = creds[1]
+        auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
+        _, conn = ws_basic_auth(auth, graphname)
+
+        # Create the graph using GSQL
+        LogWriter.info(f"Creating graph: {graphname}")
+        create_query = f"CREATE GRAPH {graphname}()"
+        result = conn.gsql(create_query)
+
+        LogWriter.info(f"Graph creation result: {result}")
+
+        # Check if creation was successful
+        if "error" in result.lower() or "failed" in result.lower():
+            if "already exists" in result.lower():
+                return {
+                    "status": "error",
+                    "message": f"Graph '{graphname}' already exists",
+                    "details": result
+                }
+            raise Exception(f"Failed to create graph: {result}")
+
+        return {
+            "status": "success",
+            "message": f"Graph '{graphname}' created successfully",
+            "graphname": graphname,
+            "details": result
+        }
+
+    except Exception as e:
+        LogWriter.error(f"Error creating graph {graphname}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create graph: {str(e)}"
+        )
+
+
 @router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
 async def serve_image_from_vertex(
     graphname: str,
@@ -160,11 +208,8 @@ async def serve_image_from_vertex(
     try:
         # Extract credentials from the dependency (same pattern as graph_query and other endpoints)
         creds = creds[1]
-        encoded_username = base64.b64encode(creds.username.encode()).decode()
-        encoded_password = base64.b64encode(creds.password.encode()).decode()
-
-        # now you can use them separately
-        conn = get_db_connection_pwd_manual(graphname, encoded_username, encoded_password)
+        auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
+        _, conn = ws_basic_auth(auth, graphname)
         
         # Fetch the Image vertex by ID
         image_vertices = conn.getVerticesById('Image', [image_id.lower()])
