@@ -92,23 +92,24 @@ Organizing the data as a knowledge graph allows a chatbot to access accurate, fa
 ### Quick Start
 
 #### Use TigerGraph Docker-Based Instance
-Set your OpenAI api key as environment varabiel OPENAI_API_KEY and use the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
+Set your LLM Provider (supported `openai` or `gemini`) api key as environment varabiel LLM_API_KEY and use the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
 ```
-curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag.sh | sh
+curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag.sh | bash
 ```
 
 The GraphRAG instances will be deployed at `./graphrag` folder and TigerGraph instance will be available at `http://localhost:14240`.
-To change installation folder, use `sh -s -- <graphrag_folder>` instead of `sh` at the end of the above command.
+To change installation folder, use `bash -s -- <graphrag_folder> <llm_provider>` instead of `bash` at the end of the above command.
+
+> Note: for other LLM providers, manually update `configs/server_config.json` accordingly and re-run `docker compose up -d`
 
 #### Use Pre-Installed TigerGraph Instance
-
-Using the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
+Similar to the above setup, and use the following command for a one-step quick deployment connecting to a pre-installed TigerGraph with default configurations:
 ```
-curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag_tg.sh | sh
+curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag_tg.sh | bash
 ```
 
 The GraphRAG instances will be deployed at `./graphrag` folder and connect to TigerGraph instance at `http://localhost:14240` by default.
-To change installation folder, TigerGraph instance location or username/password, use `sh -s -- <graphrag_loc> <tg_host> <tg_port> <tg_username> <tg_password>` instead of `sh` at the end of the above command.
+To change installation folder, TigerGraph instance location or username/password, use `bash -s -- <graphrag_folder> <llm_provider> <tg_host> <tg_port> <tg_username> <tg_password>` instead of `bash` at the end of the above command.
 
 [Go back to top](#top)
 
