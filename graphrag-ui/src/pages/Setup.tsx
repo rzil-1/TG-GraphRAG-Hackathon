@@ -492,7 +492,7 @@ const Setup = () => {
 
       // Step 2: Initialize the graph with GraphRAG schema
       setStatusMessage("Step 2/2: Initializing GraphRAG schema...");
-      const initResponse = await fetch(`/${graphName}/graphrag/initialize`, {
+      const initResponse = await fetch(`/ui/${graphName}/initialize_graph`, {
         method: "POST",
         headers: {
           Authorization: `Basic ${creds}`,

@@ -49,6 +49,7 @@ from common.db.connections import get_db_connection_pwd_manual
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
 from common.metrics.prometheus_metrics import metrics as pmetrics
+from supportai import supportai
 from common.py_schemas.schemas import (
     AgentProgess,
     GraphRAGResponse,
@@ -185,6 +186,47 @@ async def create_graph(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create graph: {str(e)}"
+        )
+
+
+@router.post(route_prefix + "/{graphname}/initialize_graph")
+async def init_graph(
+    graphname: str,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
+):
+    """
+    Initialize a TigerGraph knowledge graph with GraphRAG schema.
+    This initializes the graph with SupportAI/GraphRAG schema, indexes, and queries.
+    Uses HTTP Basic Authentication to get credentials and create a connection.
+    """
+    try:
+        # Extract credentials from the dependency (same pattern as other endpoints)
+        creds = creds[1]
+        auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
+        _, conn = ws_basic_auth(auth, graphname)
+
+        # Initialize the graph with GraphRAG schema
+        LogWriter.info(f"Initializing graph: {graphname}")
+        resp = supportai.init_supportai(conn, graphname)
+        schema_res, index_res, query_res = resp[0], resp[1], resp[2]
+
+        LogWriter.info(f"Graph initialization completed for: {graphname}")
+
+        return {
+            "status": "success",
+            "message": f"Graph '{graphname}' initialized successfully",
+            "graphname": graphname,
+            "host_name": conn._tg_connection.host,
+            "schema_creation_status": json.dumps(schema_res),
+            "index_creation_status": json.dumps(index_res),
+            "query_creation_status": json.dumps(query_res),
+        }
+
+    except Exception as e:
+        LogWriter.error(f"Error initializing graph {graphname}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize graph: {str(e)}"
         )
 
 
