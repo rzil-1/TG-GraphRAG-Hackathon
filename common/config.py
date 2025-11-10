@@ -91,6 +91,14 @@ if embedding_config is None:
     raise Exception("embedding_service is not found in llm_config")
 embedding_dimension = embedding_config.get("dimensions", 1536)
 
+# Get context window size from llm_config
+# <=0 means unlimited tokens (no truncation), otherwise use the specified limit
+if "token_limit" in llm_config:
+    if "token_limit" not in completion_config:
+        completion_config["token_limit"] = llm_config["token_limit"]
+    if "token_limit" not in embedding_config:
+        embedding_config["token_limit"] = llm_config["token_limit"]
+
 # Get multimodal_service config (optional, for vision/image tasks)
 multimodal_config = llm_config.get("multimodal_service")
 

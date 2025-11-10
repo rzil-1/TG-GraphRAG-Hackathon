@@ -3,29 +3,34 @@ import { HiOutlineChatBubbleOvalLeft } from "react-icons/hi2";
 import { useTheme } from "@/components/ThemeProvider";
 
 
-const questions =
-  localStorage.getItem('selectedGraph') === 'pyTigerGraphRAG'
-    ? [
-        {title: 'What can pyTG do?'},
-        {title: 'How do I authenticate with the DB?'},
-        {title: 'How do I run PageRank?'},
-        {title: 'Help me initialize a NodePiece model'},
-        {title: 'Can I load data with pyTG?'},
-        {title: 'Write a short python snippet to run a loading job'},
-      ]
-    : localStorage.getItem('selectedGraph') === 'Transaction_Fraud' ?
-      [
-        {title: 'How many transactions are there?'},
-        {title: 'Tell me about transaction fraud.'},
-        {title: 'Describe flow of one transaction.'},
-        {title: 'How TigerGraph can help me?'}
-        // { title: "How to use visualization correctly?" },
-        // { title: "How to detect fraud in transactions?" },
-        // { title: "What is William Torres' ID?" },
-        // { title: "What's his email?" },
-        // {title:"How do I get a count of vertices in Python?"}
-      ]
-    : [];
+const questions = (() => {
+  const selectedGraph = localStorage.getItem('selectedGraph');
+
+  if (selectedGraph?.includes('pyTigerGraphRAG') || selectedGraph?.includes('pyTG')) {
+    return [
+      {title: 'What can pyTG do?'},
+      {title: 'How do I authenticate with the DB?'},
+      {title: 'How do I run PageRank?'},
+      {title: 'Help me initialize a NodePiece model'},
+      {title: 'Can I load data with pyTG?'},
+      {title: 'Write a short python snippet to run a loading job'},
+    ];
+  } else if (selectedGraph?.includes('Transaction_Fraud') || selectedGraph?.includes('fraud')) {
+    return [
+      {title: 'How many transactions are there?'},
+      {title: 'Tell me about transaction fraud.'},
+      {title: 'Describe flow of one transaction.'},
+      {title: 'How TigerGraph can help me?'}
+      // { title: "How to use visualization correctly?" },
+      // { title: "How to detect fraud in transactions?" },
+      // { title: "What is William Torres' ID?" },
+      // { title: "What's his email?" },
+      // {title:"How do I get a count of vertices in Python?"}
+    ];
+  }
+
+  return [];
+})();
 
 interface Start {
   props: any;

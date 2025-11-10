@@ -75,6 +75,7 @@ class HybridRetriever(BaseRetriever):
                     "doc_only": doc_only,
                     "verbose": verbose,
                 },
+                sizeLimit=1000000000,
                 usePost=True
             )  
         if len(res) > 1 and "verbose" in res[1]:

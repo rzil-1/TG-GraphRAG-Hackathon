@@ -103,7 +103,7 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 need_install = True
                 logger.info(f"Done creating vector query {q_name} with status {q_res}")
         #TBD
-        if need_install and False:
+        if need_install:
             logger.info(f"Installing supportai queries all together")
             query_res = self.conn.gsql(
                 """USE GRAPH {}\nINSTALL QUERY ALL\n""".format(

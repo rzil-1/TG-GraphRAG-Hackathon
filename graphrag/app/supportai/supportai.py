@@ -32,10 +32,6 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
         "common/gsql/supportai/Selected_Set_Display.gsql",
         "common/gsql/supportai/retrievers/GraphRAG_Hybrid_Search_Display.gsql",
         "common/gsql/supportai/retrievers/GraphRAG_Community_Search_Display.gsql",
-        "common/gsql/supportai/retrievers/Chunk_Sibling_Search.gsql",
-        "common/gsql/supportai/retrievers/Content_Similarity_Search.gsql",
-        "common/gsql/supportai/retrievers/GraphRAG_Hybrid_Search.gsql",
-        "common/gsql/supportai/retrievers/GraphRAG_Community_Search.gsql",
     ]
 
     if "- VERTEX ResolvedEntity" in current_schema:
@@ -145,12 +141,14 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
 
     # Set default configuration values
     # Configure granularity options
-    granularity_types = data_source_config.get('granularity', ["DOCUMENT", "ELEMENT"])
+    granularity_types = data_source_config.get('granularity', ["DOCUMENT", "PAGE", "ELEMENT", "WORD"])
 
     # Configure text format options
     text_format_types = data_source_config.get('text_format', ["MARKDOWN"])
 
-    project_arn = None
+    # If project ARN is provided, use it, otherwise create a new project
+    project_arn = data_source_config.get('project_arn', None)
+
     try:
         # there is a bug in AWS bedrock, it does not delete projects properly, so here
         # we generate random project name each time below
@@ -161,40 +159,62 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
         #         bda_client.delete_data_automation_project(projectArn=project["projectArn"])
         #         time.sleep(2)
         #         break
-
-        # Create BDA project
-        logger.info(f"Creating BDA project")
-        project_name = f"bda-preprocessing-{uuid.uuid4().hex[:6]}"
-        project_response = bda_client.create_data_automation_project(
-            projectName=project_name,
-            projectDescription='Preprocessing multi data formats using bedrock data automation',
-            projectStage='DEVELOPMENT',
-            standardOutputConfiguration={
-                "document": {
-                    "extraction": {
-                        "granularity": {"types": granularity_types},
-                        "boundingBox": {"state": "ENABLED"}
+        project_stage = "LIVE"
+        if not project_arn:
+            # Create BDA project
+            logger.info(f"Creating BDA project")
+            project_name = f"bda-preprocessing-{uuid.uuid4().hex[:6]}"
+            project_response = bda_client.create_data_automation_project(
+                projectName=project_name,
+                projectDescription='Preprocessing multi data formats using bedrock data automation',
+                projectStage='DEVELOPMENT',
+                standardOutputConfiguration={
+                    "document": {
+                        "extraction": {
+                            "granularity": {"types": granularity_types},
+                            "boundingBox": {"state": "ENABLED"}
+                        },
+                        "generativeField": {"state": "ENABLED"},
+                        "outputFormat": {
+                            "textFormat": {"types": text_format_types},
+                            "additionalFileFormat": {"state": "ENABLED"}
+                        }
                     },
-                    "generativeField": {"state": "ENABLED"},
-                    "outputFormat": {
-                        "textFormat": {"types": text_format_types},
-                        "additionalFileFormat": {"state": "ENABLED"}
+                    'image': {
+                        'extraction': {
+                            'category': {
+                                'state': 'ENABLED',
+                                'types': [
+                                    'TEXT_DETECTION',
+                                    'LOGOS',
+                                ]
+                            },
+                            'boundingBox': {'state': 'ENABLED'}
+                        },
+                        'generativeField': {
+                            'state': 'ENABLED',
+                            'types': [
+                                'IMAGE_SUMMARY'
+                            ]
+                        }
                     }
-                }}
-        )
+                }
+            )
 
-        project_arn = project_response['projectArn']
-        logger.info(f"Created BDA project {project_name} with ARN {project_arn}")
+            project_arn = project_response['projectArn']
+            project_stage = "DEVELOPMENT"
+            logger.info(f"Created BDA project {project_name} with ARN {project_arn}")
+
         # Get file names from S3
         s3_pattern = re.compile(r'^s3://[a-z0-9\.-]{3,63}/.+$')
         if s3_pattern.match(input_uri):
             input_bucket = input_uri[5:].split("/")[0]
-            input_prefix = "/".join(input_uri[5:].split("/")[1:])
+            input_prefix = "/".join(input_uri[5:].split("/")[1:])+"/"
         elif "//" in input_uri or input_uri.startswith("/") or input_uri.startswith("."):
             raise Exception("Input URI is not in the format of s3://<bucket_name>/<prefix>")
         else:
             input_bucket = input_uri.split("/")[0]
-            input_prefix = "/".join(input_uri.split("/")[1:])
+            input_prefix = "/".join(input_uri.split("/")[1:])+"/"
             input_uri = "s3://" + input_uri
 
         if not s3_pattern.match(output_uri):
@@ -225,7 +245,7 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
                 },
                 dataAutomationConfiguration={
                     'dataAutomationProjectArn': project_arn,
-                    'stage': 'DEVELOPMENT'
+                    'stage': project_stage
                 },
                 dataAutomationProfileArn=f'arn:aws:bedrock:{region}:{account_id}:data-automation-profile/us.data-automation-v1'
             )
@@ -256,6 +276,8 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
                     job['status'] = status
                 time.sleep(1)
                 max_timeout -= 1
+                if max_timeout % 60 == 0:
+                    logger.info(f"Waiting for BDA job {job_arn} on file {file_key} to complete")
             if all(job['status'] for job in job_results):
                 break
         if max_timeout <= 0:
@@ -279,7 +301,7 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
 
     finally:
         # Clean up: Delete the BDA project after all jobs are completed
-        if project_arn:
+        if not data_source_config.get('project_arn', None):
             try:
                 logger.info(f"Cleaning up BDA project: {project_arn}")
                 delete_response = bda_client.delete_data_automation_project(projectArn=project_arn)
@@ -454,6 +476,7 @@ def create_ingest(
     else:
         raise Exception("Data source not implemented")
 
+    logger.debug(f"Ingest template: USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
     load_job_created = conn.gsql(f"USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
     res = {"load_job_id": load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")}
 
@@ -557,6 +580,8 @@ def ingest(
             else:
                 s3_bucket = loader_info.file_path.split("/")[0]
                 s3_prefix = "/".join(loader_info.file_path.split("/")[1:])
+            if not s3_prefix.endswith("/"):
+                s3_prefix += "/"
 
             # --- Begin: S3 markdown extraction and TigerGraph loading ---
             # Possiblely we can download the files locally and then process them with next conn.runDocumentIngest() after it supports folder

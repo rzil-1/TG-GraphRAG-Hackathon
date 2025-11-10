@@ -83,6 +83,7 @@ async def init(
     requried_queries = [
         "common/gsql/graphrag/StreamIds",
         "common/gsql/graphrag/StreamDocContent",
+        "common/gsql/graphrag/StreamChunkContent",
         "common/gsql/graphrag/SetEpochProcessing",
         "common/gsql/graphrag/ResolveRelationships",
         "common/gsql/graphrag/get_community_children",
@@ -169,14 +170,12 @@ def map_attrs(attributes: dict):
 
 
 def process_id(v_id: str):
-    v_id = v_id.replace(" ", "_").replace("/", "").replace("%", "percent").lower()
-
     has_func = re.compile(r"(.*)\(").findall(v_id)
     if len(has_func) > 0:
         v_id = has_func[0]
+    v_id = v_id.replace(" ", "-").lower().replace("(", "").replace(")", "")
     if v_id == "''" or v_id == '""':
         return ""
-    v_id = v_id.replace("(", "").replace(")", "")
 
     return v_id
 

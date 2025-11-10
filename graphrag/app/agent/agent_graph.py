@@ -35,6 +35,7 @@ from typing_extensions import TypedDict
 from common.logs.log import req_id_cv
 from common.py_schemas import GraphRAGResponse, MapQuestionToSchemaResponse
 from common.llm_services.aws_bedrock_service import AWSBedrock
+from common.config import graphrag_config
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +85,9 @@ class TigerGraphAgentGraph:
         self.supportai_enabled = True
         self.supportai_retriever = supportai_retriever.lower().replace(" ", "")
         try:
-            self.db_connection.getQueryMetadata("GraphRAG_Hybrid_Search")
+            self.db_connection.getQueryMetadata("StreamDocContent")
         except TigerGraphException as e:
-            logger.info(f"GraphRAG_Hybrid_Search not found in the graph {self.db_connection.graphname}. Disabling supportai.")
+            logger.info(f"StreamDocContent not found in the graph {self.db_connection.graphname}. Disabling supportai.")
             self.supportai_enabled = False
 
     def emit_progress(self, msg):
@@ -229,15 +230,18 @@ class TigerGraphAgentGraph:
             self.llm_provider.model,
             self.db_connection,
         )
+        chunk_only=graphrag_config.get("chunk_only", True)
         step = retriever.search(
             state["question"],
-            indices=["Document", "DocumentChunk", "Entity", "Relationship"],
-            top_k=3,
-            num_seen_min=2,
-            num_hops=2,
+            indices=(["DocumentChunk"] if chunk_only else ["Document", "DocumentChunk", "Entity"]),
+            top_k=graphrag_config.get("top_k", 5),
+            num_seen_min=graphrag_config.get("num_seen_min", 2),
+            num_hops=graphrag_config.get("num_hops", 2),
+            chunk_only=chunk_only,
+            doc_only=graphrag_config.get("doc_only", False),
         )
 
-        query_name = "GraphRAG_Hybrid_Search"
+        query_name = "GraphRAG_Hybrid_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
@@ -263,10 +267,10 @@ class TigerGraphAgentGraph:
         step = retriever.search(
             state["question"],
             index="DocumentChunk",
-            top_k=5
+            top_k=graphrag_config.get("top_k", 5)
         )
 
-        query_name = "Content_Similarity_Search"
+        query_name = "Content_Similarity_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
@@ -291,10 +295,10 @@ class TigerGraphAgentGraph:
         step = retriever.search(
             state["question"],
             index="DocumentChunk",
-            top_k=3
+            top_k=graphrag_config.get("top_k", 5)
         )
 
-        query_name = "Chunk_Sibling_Search"
+        query_name = "Chunk_Sibling_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
@@ -318,12 +322,12 @@ class TigerGraphAgentGraph:
         )
         step = retriever.search(
             state["question"],
-            community_level=2,
-            top_k=5,
-            with_chunk=True,
+            community_level=graphrag_config.get("community_level", 2),
+            top_k=graphrag_config.get("top_k", 5),
+            with_chunk=graphrag_config.get("with_chunk", True),
         )
 
-        query_name = "GraphRAG_Community_Search"
+        query_name = "GraphRAG_Community_Vector_Search"
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
@@ -366,6 +370,11 @@ class TigerGraphAgentGraph:
             answer = step.generate_answer(
                 state["question"], state["context"]["result"]["final_retrieval"]
             )
+
+            if not answer.citation:
+                answer.citation = list(state["context"]["result"]["final_retrieval"].keys())
+            state["context"]["reasoning"] = list(set(answer.citation))
+
         elif state["lookup_source"] == "inquiryai":
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
@@ -376,7 +385,7 @@ class TigerGraphAgentGraph:
                 logger.error(f"Failed to serialize context to JSON: {e}")
                 raise ValueError("Invalid context data format. Unable to convert to JSON.")
 
-            answer = step.generate_answer(state["question"], context_data_str)
+            answer = step.generate_answer(state["question"], state["context"]["result"])
 
         elif state["lookup_source"] == "cypher":
             logger.debug_pii(
@@ -386,12 +395,6 @@ class TigerGraphAgentGraph:
         logger.debug_pii(
             f"request_id={req_id_cv.get()} Generated answer: {answer.generated_answer}"
         )
-
-        if state["lookup_source"] == "supportai":
-            import re
-
-            citations = [re.sub(r"_chunk_\d+", "", x) for x in answer.citation]
-            state["context"]["reasoning"] = list(set(citations))
 
         try:
             # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)

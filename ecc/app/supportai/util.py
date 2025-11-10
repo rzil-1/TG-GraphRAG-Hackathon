@@ -80,6 +80,7 @@ async def init(
         "common/gsql/supportai/Check_Nonexistent_Vertices",
         "common/gsql/graphRAG/StreamIds",
         "common/gsql/graphRAG/StreamDocContent"
+        "common/gsql/graphRAG/StreamChunkContent"
     ]
     await install_queries(requried_queries, conn)
 
@@ -152,11 +153,10 @@ def map_attrs(attributes: dict):
 
 
 def process_id(v_id: str):
-    v_id = v_id.replace(" ", "_").replace("/", "").replace("%", "percent").lower()
-
     has_func = re.compile(r"(.*)\(").findall(v_id)
     if len(has_func) > 0:
         v_id = has_func[0]
+    v_id = v_id.replace(" ", "-").lower().replace("(", "").replace(")", "")
     if v_id == "''" or v_id == '""':
         return ""
 

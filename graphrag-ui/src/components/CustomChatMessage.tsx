@@ -1,5 +1,6 @@
 import { FC, useState, useEffect } from "react";
-import Markdown from 'react-markdown'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   Dialog,
   DialogContent,
@@ -162,7 +163,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
     <>
       {typeof message === "string" ? (
         <div className="prose dark:prose-invert text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
-          <Markdown className="typewriter" components={markdownComponents}>{message}</Markdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} className="typewriter">{message}</ReactMarkdown>
         </div>
       ) : message.key === null ? (
         message
@@ -172,7 +173,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
             {message.response_type === "progress" ? (
               <p className="graphrag-thinking typewriter">{message.content}</p>
             ) : (
-              <Markdown className="typewriter" components={markdownComponents}>{message.content}</Markdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} className="typewriter">{message.content}</ReactMarkdown>
             )}
             <Interactions
               message={message} 
@@ -187,8 +188,8 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
               {/* {message.query_sources?.result ? <pre>{JSON.stringify(message.query_sources?.result, null, 2)}</pre> : null} */}
               {/* <pre>{JSON.stringify(message, null, 2)}</pre> */}
               <div className="relative w-full h-[550px] my-10 border border-solid border-[#000]">
-                {message.query_sources?.result ? (
-                  <KnowledgeGraphPro data={message.query_sources?.result} />
+                {message.query_sources?.result.edges ? (
+                  <KnowledgeGraphPro data={message.query_sources?.result.edges} />
                 ) : (
                   <div className="flex items-center justify-center h-full text-gray-500">
                     No graph data available

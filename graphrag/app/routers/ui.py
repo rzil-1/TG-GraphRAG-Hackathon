@@ -403,13 +403,12 @@ async def load_conversation_history(conversation_id: str, usr_auth: str) -> list
             )
             res.raise_for_status()
             conversation_data = res.json()
-            
             # Convert conversation messages to the format expected by the agent
             history = []
-            for msg in conversation_data.get("messages", []):
+            for msg in conversation_data:
                 if msg.get("role") == "user":
                     # Find the corresponding system response
-                    for response_msg in conversation_data.get("messages", []):
+                    for response_msg in conversation_data:
                         if (response_msg.get("role") == "system" and 
                             response_msg.get("parent_id") == msg.get("message_id")):
                             history.append({
@@ -450,6 +449,7 @@ async def graph_query(
     graphname: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     q: str | None = None,
+    rag_pattern: str | None = None,
     conversation_id: str | None = None,
 ):
     creds = creds[1]
@@ -469,7 +469,7 @@ async def graph_query(
 
         # create agent
         # get retrieval pattern to use
-        rag_pattern = "hybridsearch"
+        rag_pattern = rag_pattern or "hybridsearch"
         agent = make_agent(graphname, conn, use_cypher, supportai_retriever=rag_pattern)
 
         prev_id = None
@@ -523,7 +523,8 @@ async def graph_query(
 @router.websocket(route_prefix + "/{graphname}/chat")
 async def chat(
     graphname: str,
-    websocket: WebSocket
+    websocket: WebSocket,
+    rag_pattern: str | None = None,
 ):
     """
     WebSocket endpoint for chat functionality with conversation history support.
@@ -542,13 +543,24 @@ async def chat(
     
     await websocket.accept()
 
-    # AUTH
-    # this will error if auth does not pass. FastAPI will correctly respond depending on error
-    usr_auth = await websocket.receive_text()
-    _, conn = ws_basic_auth(usr_auth, graphname)
+    # AUTH with proper error handling and timeout
+    try:
+        logger.info(f"WebSocket connected, waiting for authentication for graph: {graphname}")
+        usr_auth = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+        logger.info(f"Received authentication data, length: {len(usr_auth)}")
+        _, conn = ws_basic_auth(usr_auth, graphname)
+        logger.info("Authentication successful")
+    except asyncio.TimeoutError:
+        logger.error("WebSocket authentication timeout - no credentials received")
+        await websocket.close(code=1008, reason="Authentication timeout")
+        return
+    except Exception as e:
+        logger.error(f"Authentication failed: {e}")
+        await websocket.close(code=1008, reason=f"Authentication failed")
+        return
 
     # Get RAG pattern
-    rag_pattern = await websocket.receive_text()
+    rag_pattern = rag_pattern or "hybridsearch"
     
     # Get conversation ID
     conversation_id = await websocket.receive_text()

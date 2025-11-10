@@ -14,6 +14,7 @@
     "chat_history_api": "http://chat-history:8002"
   },
   "llm_config": {
+    "token_limit": 0,
     "authentication_configuration": {
       "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY_HERE"
     },

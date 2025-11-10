@@ -60,6 +60,7 @@ class CommunityRetriever(BaseRetriever):
                     "with_doc": with_doc,
                     "verbose": verbose,
                 },
+                sizeLimit=1000000000,
                 usePost=True
             )
 

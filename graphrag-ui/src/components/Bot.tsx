@@ -6,7 +6,7 @@ import ActionProvider from "../actions/ActionProvider.js";
 import config from "../actions/config.js";
 import MessageParser from "../actions/MessageParser.js";
 import { MdKeyboardArrowDown } from "react-icons/md";
-import { SelectedGraphContext } from './Contexts.js';
+import { SelectedGraphContext, RagPatternContext } from './Contexts.js';
 
 import { Button } from "@/components/ui/button";
 import {
@@ -22,13 +22,26 @@ import {
 const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getConversationId?:any }) => {
   const [store, setStore] = useState<any>();
   const [currentDate, setCurrentDate] = useState('');
-  const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || 'TigerGraphRAG');
-  const [ragPattern, setRagPattern] = useState(localStorage.getItem("ragPattern") || 'Hybrid Search');
+  const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || '');
+  const [ragPattern, setRagPattern] = useState(localStorage.getItem("ragPattern") || '');
   const navigate = useNavigate();
 
   useEffect(() => {
     const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
     setStore(parseStore);
+
+    // Set default selectedGraph to first graph if no value in localStorage
+    if (!localStorage.getItem("selectedGraph") && parseStore?.graphs?.length > 0) {
+      const firstGraph = parseStore.graphs[0];
+      setSelectedGraph(firstGraph);
+      localStorage.setItem("selectedGraph", firstGraph);
+    }
+
+    // Set default ragPattern if no value in localStorage
+    if (!localStorage.getItem("ragPattern")) {
+      setRagPattern("Hybrid Search");
+      localStorage.setItem("ragPattern", "Hybrid Search");
+    }
 
     const date = new Date();
     const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
@@ -46,6 +59,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
   const handleSelectRag = (value) => {
     setRagPattern(value);
     localStorage.setItem("ragPattern", value);
+    navigate("/chat");
     //window.location.reload();
   };
 
@@ -108,15 +122,17 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
         </div>
       
       <SelectedGraphContext.Provider value={selectedGraph}>
-        <Chatbot
-          // eslint-disable-next-line
-          // @ts-ignore
-          config={config}
-          fullPage={layout}
-          getConversationId={getConversationId}
-          messageParser={MessageParser}
-          actionProvider={ActionProvider}
-        />
+        <RagPatternContext.Provider value={ragPattern}>
+          <Chatbot
+            // eslint-disable-next-line
+            // @ts-ignore
+            config={config}
+            fullPage={layout}
+            getConversationId={getConversationId}
+            messageParser={MessageParser}
+            actionProvider={ActionProvider}
+          />
+        </RagPatternContext.Provider>
       </SelectedGraphContext.Provider>
     </div>
   );

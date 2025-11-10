@@ -2,7 +2,7 @@ import React, {useState, useCallback, useEffect, useContext} from 'react';
 import {createClientMessage} from 'react-chatbot-kit';
 import useWebSocket, {ReadyState} from 'react-use-websocket';
 import Loader from '../components/Loader';
-import { SelectedGraphContext } from '../components/Contexts';
+import { SelectedGraphContext, RagPatternContext } from '../components/Contexts';
 
 interface ActionProviderProps {
   createChatBotMessage: any;
@@ -80,23 +80,36 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
   children,
 }) => {
   const selectedGraph = useContext(SelectedGraphContext);
-  const WS_URL = "/ui/" + selectedGraph + "/chat";
+  const selectedRagPattern = useContext(RagPatternContext);
+  const WS_URL = "/ui/" + selectedGraph + "/chat" + "?rag_pattern=" + selectedRagPattern;
   const [messageHistory, setMessageHistory] = useState<MessageEvent<Message>[]>(
     [],
   );
   const { sendMessage, lastMessage, readyState } = useWebSocket(WS_URL, {
     onOpen: () => {
       // Send authentication credentials
-      queryGraphragWs2(localStorage.getItem("creds")!);
+      const creds = localStorage.getItem("creds");
+      console.log("Sending credentials, length:", creds ? creds.length : 0);
+      queryGraphragWs2(creds!);
       
       // Send RAG pattern
-      sendMessage(localStorage.getItem("ragPattern") || "Hybrid Search");
+      //sendMessage(selectedRagPattern);
       
       // Send conversation ID (or "new" for new conversation)
       const conversationId = conversationManager.getCurrentConversationId();
       const conversationIdToSend = conversationId || "new";
       console.log("WebSocket connection " + conversationIdToSend + " established to " + WS_URL);
       sendMessage(conversationIdToSend);
+    },
+    onError: (error) => {
+      console.error("WebSocket error:", error);
+    },
+    onClose: (event) => {
+      console.log("WebSocket closed:", event.code, event.reason);
+    },
+    shouldReconnect: (closeEvent) => {
+      console.log("WebSocket should reconnect:", closeEvent.code !== 1000);
+      return closeEvent.code !== 1000; // Don't reconnect on normal closure
     },
   });
 
