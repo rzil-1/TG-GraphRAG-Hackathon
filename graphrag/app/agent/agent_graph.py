@@ -370,6 +370,11 @@ class TigerGraphAgentGraph:
             answer = step.generate_answer(
                 state["question"], state["context"]["result"]["final_retrieval"]
             )
+
+            if not answer.citation:
+                answer.citation = list(state["context"]["result"]["final_retrieval"].keys())
+            state["context"]["reasoning"] = list(set(answer.citation))
+
         elif state["lookup_source"] == "inquiryai":
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
@@ -390,12 +395,6 @@ class TigerGraphAgentGraph:
         logger.debug_pii(
             f"request_id={req_id_cv.get()} Generated answer: {answer.generated_answer}"
         )
-
-        if state["lookup_source"] == "supportai":
-            import re
-
-            citations = [re.sub(r"_chunk_\d+", "", x) for x in answer.citation]
-            state["context"]["reasoning"] = list(set(citations))
 
         try:
             # Replace S3 URLs with presigned URLs (for AWS Bedrock BDA processing)
