@@ -32,10 +32,11 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
     const loadStore = () => {
       const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
       setStore(parseStore);
+      return parseStore;
     };
 
     // Initial load
-    loadStore();
+    const parseStore = loadStore();
 
     const date = new Date();
     const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
