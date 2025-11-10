@@ -209,12 +209,12 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
         s3_pattern = re.compile(r'^s3://[a-z0-9\.-]{3,63}/.+$')
         if s3_pattern.match(input_uri):
             input_bucket = input_uri[5:].split("/")[0]
-            input_prefix = "/".join(input_uri[5:].split("/")[1:])
+            input_prefix = "/".join(input_uri[5:].split("/")[1:])+"/"
         elif "//" in input_uri or input_uri.startswith("/") or input_uri.startswith("."):
             raise Exception("Input URI is not in the format of s3://<bucket_name>/<prefix>")
         else:
             input_bucket = input_uri.split("/")[0]
-            input_prefix = "/".join(input_uri.split("/")[1:])
+            input_prefix = "/".join(input_uri.split("/")[1:])+"/"
             input_uri = "s3://" + input_uri
 
         if not s3_pattern.match(output_uri):
@@ -276,6 +276,8 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
                     job['status'] = status
                 time.sleep(1)
                 max_timeout -= 1
+                if max_timeout % 60 == 0:
+                    logger.info(f"Waiting for BDA job {job_arn} on file {file_key} to complete")
             if all(job['status'] for job in job_results):
                 break
         if max_timeout <= 0:
@@ -578,6 +580,8 @@ def ingest(
             else:
                 s3_bucket = loader_info.file_path.split("/")[0]
                 s3_prefix = "/".join(loader_info.file_path.split("/")[1:])
+            if not s3_prefix.endswith("/"):
+                s3_prefix += "/"
 
             # --- Begin: S3 markdown extraction and TigerGraph loading ---
             # Possiblely we can download the files locally and then process them with next conn.runDocumentIngest() after it supports folder
