@@ -30,6 +30,7 @@ from agent.agent import TigerGraphAgent, make_agent
 from agent.Q import DONE
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     HTTPException,
@@ -228,6 +229,34 @@ async def init_graph(
             status_code=500,
             detail=f"Failed to initialize graph: {str(e)}"
         )
+
+
+@router.post(route_prefix + "/{graphname}/rebuild_graph")
+async def forceupdate(
+    graphname: str,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
+    bg_tasks: BackgroundTasks,
+):
+    """
+    Force update/refresh of a GraphRAG knowledge graph.
+    This triggers the ECC (Eventual Consistency Checker) service to rebuild the graph.
+    Uses HTTP Basic Authentication to get credentials.
+    """
+    # Extract credentials from the dependency
+    creds = creds[1]
+    auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
+
+    from httpx import get as http_get
+
+    ecc = (
+        graphrag_config.get("ecc", "http://localhost:8001")
+        + f"/{graphname}/graphrag/consistency_status"
+    )
+    LogWriter.info(f"Sending ECC request to: {ecc}")
+    bg_tasks.add_task(
+        http_get, ecc, headers={"Authorization": f"Basic {auth}"}
+    )
+    return {"status": "submitted"}
 
 
 @router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
