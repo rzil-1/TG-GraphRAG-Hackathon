@@ -141,7 +141,7 @@ class BaseRetriever:
                     self.logger.info(f"Truncated retrieved text from {retrieved_tokens} to {max_context_tokens} tokens")
 
         model = self.llm_service.llm
-        prompt = self.llm_service.supportai_response_prompt
+        prompt = self.llm_service.chatbot_response_prompt
 
         prompt = ChatPromptTemplate.from_template(prompt)
         output_parser = StrOutputParser()

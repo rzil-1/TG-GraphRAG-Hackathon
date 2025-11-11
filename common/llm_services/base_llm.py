@@ -131,11 +131,6 @@ Format: {format_instructions}\
         raise ("entity_relationship_extraction_prompt not supported in base class")
 
     @property
-    def supportai_response_prompt(self):
-        """Property to get the prompt for the SupportAI response."""
-        return "Answer this question: {question}\nUse this information: {sources}"
-
-    @property
     def chatbot_response_prompt(self):
         """Property to get the prompt for the SupportAI response."""
         prompt ="""Given the answer context in JSON format, rephrase it to answer the question. \n

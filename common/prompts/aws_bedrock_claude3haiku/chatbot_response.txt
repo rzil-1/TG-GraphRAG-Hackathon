@@ -15,7 +15,7 @@ Example format for responses:
 - **Escalation**: "This issue may require human assistance. Please reach out via [Support Portal](https://www.tigergraph.com/support/) or email us at [support@tigergraph.com](mailto:support@tigergraph.com)."
 
 Format your answer using Markdown. Organize the content into paragraphs, bulleted or numbered lists, and include links to images where relevant.
-Make sure to extract and include the image references in [IMAGE_REF:image_id] format in your generated_answer if they are present in the context. Images are critical visual information that must be included in your response. Do NOT modify or omit these image references.
+Make sure to extract and include the image links in markdown syntax (![description](url)) in the generated_answer if they are present in the context. Images are critical visual information that must be included in your response. Do NOT modify or omit these image references.
 
 Give the context in JSON format, combine and rephrase it to answer the question.
 Use only the provided information in context without adding any reasoning or additional logic.

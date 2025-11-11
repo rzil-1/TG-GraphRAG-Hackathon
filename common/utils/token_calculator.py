@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class TokenCalculator:
     """Utility class for token counting and text truncation operations."""
 
-    def __init__(self, token_limit: int = 0, model_name: str = "gpt-4"):
+    def __init__(self, token_limit: int = 0, model_name: str = None):
         """
         Initialize the token calculator.
 
@@ -31,8 +31,8 @@ class TokenCalculator:
             model_name: Name of the model to use for token counting
                                Use <= 0 for unlimited tokens (no truncation).
         """
-        self.max_context_tokens = token_limit
-        self.model_name = model_name
+        self.max_context_tokens = token_limit if token_limit else 0
+        self.model_name = model_name if model_name else "gpt-4"
         try:
             self.token_encoding = tiktoken.encoding_for_model(self.model_name)
         except Exception as e:

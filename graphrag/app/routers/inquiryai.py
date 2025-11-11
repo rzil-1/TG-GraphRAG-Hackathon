@@ -136,11 +136,11 @@ def retrieve_answer_with_chathistory(
         resp = agent.question_for_agent(query.query, latest_history_query)
         
         # Convert IMAGE_REF markers to markdown images for UI display
-        if resp.natural_language_response and "[IMAGE_REF:" in resp.natural_language_response:
+        if resp.natural_language_response and "[IMAGE_REF](tg://" in resp.natural_language_response:
             import re
             resp.natural_language_response = re.sub(
-                r'\[IMAGE_REF:([^\]]+)\]',
-                rf'![Image](/ui/image_vertex/{graphname}/\1)',
+                r'\[IMAGE_REF\]\(tg://([\w\-.]+)\)',
+                rf'[\1](/ui/image_vertex/{graphname}/\1)',
                 resp.natural_language_response
             )
         

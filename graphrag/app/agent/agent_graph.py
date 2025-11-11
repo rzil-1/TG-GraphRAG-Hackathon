@@ -404,7 +404,6 @@ class TigerGraphAgentGraph:
             # Convert [IMAGE_REF:image_id] to markdown images for React UI
             # This converts internal image references to URLs that the UI can display
             answer.generated_answer = self.convert_image_refs_to_markdown(answer.generated_answer)
-            logger.info(f"[IMAGE_DEBUG] After conversion: {answer.generated_answer}")
             
             resp = GraphRAGResponse(
                 natural_language_response=answer.generated_answer,
@@ -468,7 +467,7 @@ class TigerGraphAgentGraph:
 
     def convert_image_refs_to_markdown(self, text):
         """
-        Convert [IMAGE_REF:image_id] markers to markdown image syntax with API endpoint URLs.
+        Convert [IMAGE_REF](tg://image_id) markers to markdown image syntax with API endpoint URLs.
         
         Creates relative URLs pointing to the /ui/image_vertex/ endpoint which serves images 
         from TigerGraph. The endpoint uses standard HTTP Basic Authentication (same pattern as 
@@ -476,21 +475,21 @@ class TigerGraphAgentGraph:
         
         PATH_PREFIX is automatically handled by FastAPI router configuration.
         
-        Format: [IMAGE_REF:image_id] → ![Image](/ui/image_vertex/{graphname}/{image_id})
+        Format: [IMAGE_REF](tg://image_id) → [Image](/ui/image_vertex/{graphname}/{image_id})
         
         Args:
-            text (str): The text containing [IMAGE_REF:] markers.
+            text (str): The text containing [IMAGE_REF](tg://image_id) markers.
             
         Returns:
-            str: The text with [IMAGE_REF:] markers converted to markdown with endpoint URLs.
+            str: The text with [IMAGE_REF](tg://image_id) markers converted to markdown with endpoint URLs.
         """
         if not isinstance(text, str):
             return text
             
-        if "[IMAGE_REF:" not in text:
+        if "[IMAGE_REF](tg://" not in text:
             return text
         
-        import re
+        tg_url_pattern = r'\[IMAGE_REF\]\(tg://([\w\-.]+)\)'
         
         # Get graphname from connection
         graphname = self.db_connection.graphname
@@ -498,13 +497,15 @@ class TigerGraphAgentGraph:
         # Replace [IMAGE_REF:image_id] with markdown image syntax pointing to the endpoint
         # Note: Authentication is handled via HTTP Basic Auth headers (standard FastAPI pattern)
         # PATH_PREFIX is already applied at router level in main.py, so use relative URL
-        converted = re.sub(
-            r'\[IMAGE_REF:([^\]]+)\]',
-            rf'![Image](/ui/image_vertex/{graphname}/\1)',
+        converted, num_matches = re.subn(
+            tg_url_pattern,
+            rf'[\1](/ui/image_vertex/{graphname}/\1)',
             text
         )
         
-        logger.info(f"Converted {text.count('[IMAGE_REF:')} image reference(s) to endpoint URLs")
+        logger.info(f"Converted {num_matches} image reference(s) to endpoint URLs")
+        logger.info(f"[IMAGE_DEBUG] After conversion: {converted}")
+
         return converted
 
 
