@@ -1,5 +1,5 @@
 import { Moon, Sun, LogOut, Settings } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,8 @@ import { useTheme } from "@/components/ThemeProvider";
 export function ModeToggle() {
   const { setTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isLoginRoute = location.pathname === "/";
 
   const handleLogout = () => {
     // Show confirmation dialog
@@ -39,14 +41,16 @@ export function ModeToggle() {
 
   return (
     <div className="absolute right-4 top-[13px] flex items-center gap-2">
-      <Button 
-        variant="outline" 
-        className="dark:border-[#3D3D3D]"
-        onClick={handleSetup}
-        title="Setup"
-      >
-        <Settings className="h-[1rem] w-[1rem]" />
-      </Button>
+      {!isLoginRoute && (
+        <Button 
+          variant="outline" 
+          className="dark:border-[#3D3D3D]"
+          onClick={handleSetup}
+          title="Setup"
+        >
+          <Settings className="h-[1rem] w-[1rem]" />
+        </Button>
+      )}
       
       <Button 
         variant="outline" 
