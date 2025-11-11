@@ -1408,7 +1408,7 @@ const Setup = () => {
             <DialogHeader>
               <DialogTitle className="text-black dark:text-white">Refresh Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
-                Rebuild the community structure of your knowledge graph
+                Refresh data and rebuild the community structure of your knowledge graph
               </DialogDescription>
             </DialogHeader>
 
@@ -1442,7 +1442,7 @@ const Setup = () => {
                   ⚠️ Warning
                 </p>
                 <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                  This operation will rebuild community that will interrupt related queries. 
+                  This operation will process new data and redo community detection that will interrupt related queries. 
                   Please confirm to proceed.
                 </p>
               </div>
