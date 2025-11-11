@@ -341,7 +341,7 @@ const Setup = () => {
         file_format: "multi"
       };
 
-      const createResponse = await fetch(`/${ingestGraphName}/graphrag/create_ingest`, {
+      const createResponse = await fetch(`/ui/${ingestGraphName}/create_ingest`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -367,7 +367,7 @@ const Setup = () => {
         file_path: createData.data_path || createData.file_path, // Handle both field names
       };
 
-      const ingestResponse = await fetch(`/${ingestGraphName}/graphrag/ingest`, {
+      const ingestResponse = await fetch(`/ui/${ingestGraphName}/ingest`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

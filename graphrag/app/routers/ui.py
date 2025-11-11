@@ -53,7 +53,9 @@ from common.metrics.prometheus_metrics import metrics as pmetrics
 from supportai import supportai
 from common.py_schemas.schemas import (
     AgentProgess,
+    CreateIngestConfig,
     GraphRAGResponse,
+    LoadingInfo,
     Message,
     ResponseType,
     Role,
@@ -143,7 +145,7 @@ def add_feedback(
 
 
 @router.post(route_prefix + "/{graphname}/create_graph")
-async def create_graph(
+def create_graph(
     graphname: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -191,7 +193,7 @@ async def create_graph(
 
 
 @router.post(route_prefix + "/{graphname}/initialize_graph")
-async def init_graph(
+def init_graph(
     graphname: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -232,7 +234,7 @@ async def init_graph(
 
 
 @router.post(route_prefix + "/{graphname}/rebuild_graph")
-async def forceupdate(
+def forceupdate(
     graphname: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     bg_tasks: BackgroundTasks,
@@ -257,6 +259,68 @@ async def forceupdate(
         http_get, ecc, headers={"Authorization": f"Basic {auth}"}
     )
     return {"status": "submitted"}
+
+
+@router.post(route_prefix + "/{graphname}/create_ingest")
+def create_ingest(
+    graphname: str,
+    cfg: CreateIngestConfig,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
+):
+    """
+    Create an ingest configuration for a GraphRAG knowledge graph.
+    This sets up the data source and load job configuration for document ingestion.
+    Uses HTTP Basic Authentication to get credentials and create a connection.
+    """
+    try:
+        # Extract credentials from the dependency (same pattern as other endpoints)
+        creds = creds[1]
+        auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
+        _, conn = ws_basic_auth(auth, graphname)
+
+        # Create the ingest configuration
+        LogWriter.info(f"Creating ingest configuration for graph: {graphname}")
+        result = supportai.create_ingest(graphname, cfg, conn)
+
+        return result
+
+    except Exception as e:
+        LogWriter.error(f"Error creating ingest configuration for graph {graphname}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create ingest configuration: {str(e)}"
+        )
+
+
+@router.post(route_prefix + "/{graphname}/ingest")
+def ingest(
+    graphname: str,
+    loader_info: LoadingInfo,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
+):
+    """
+    Run document ingestion for a GraphRAG knowledge graph.
+    This processes documents from the configured data source and loads them into the graph.
+    Uses HTTP Basic Authentication to get credentials and create a connection.
+    """
+    try:
+        # Extract credentials from the dependency (same pattern as other endpoints)
+        creds = creds[1]
+        auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
+        _, conn = ws_basic_auth(auth, graphname)
+
+        # Run the ingestion
+        LogWriter.info(f"Running ingestion for graph: {graphname}")
+        result = supportai.ingest(graphname, loader_info, conn)
+
+        return result
+
+    except Exception as e:
+        LogWriter.error(f"Error running ingestion for graph {graphname}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to run ingestion: {str(e)}"
+        )
 
 
 @router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
