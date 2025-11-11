@@ -20,6 +20,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const DEFAULT_MAX_UPLOAD_SIZE_MB = 20;
+const envUploadLimit = Number(import.meta.env.VITE_MAX_UPLOAD_SIZE_MB);
+const MAX_UPLOAD_SIZE_MB =
+  Number.isFinite(envUploadLimit) && envUploadLimit > 0 ? envUploadLimit : DEFAULT_MAX_UPLOAD_SIZE_MB;
+const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+
+const formatBytes = (bytes: number) => {
+  if (bytes === 0) return "0 Bytes";
+  const units = ["Bytes", "KB", "MB", "GB", "TB"];
+  const exponent = Math.floor(Math.log(bytes) / Math.log(1024));
+  const value = bytes / Math.pow(1024, exponent);
+  const rounded = value >= 10 || exponent === 0 ? value.toFixed(0) : value.toFixed(1);
+  return `${rounded} ${units[exponent]}`;
+};
+
 const Setup = () => {
   const navigate = useNavigate();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
@@ -102,15 +117,33 @@ const Setup = () => {
       return;
     }
 
+    const filesArray = Array.from(selectedFiles);
+    const totalSize = filesArray.reduce((sum, file) => sum + file.size, 0);
+
+    if (totalSize > MAX_UPLOAD_SIZE_BYTES) {
+      setUploadMessage(
+        `❌ Selected files total ${formatBytes(totalSize)}, exceeding the ${MAX_UPLOAD_SIZE_MB} MB limit. ` +
+          "Please remove a file or upload them one at a time."
+      );
+      return;
+    }
+
+    const oversizedFiles = filesArray.filter((file) => file.size > MAX_UPLOAD_SIZE_BYTES);
+    if (oversizedFiles.length > 0) {
+      const names = oversizedFiles.map((file) => file.name).join(", ");
+      setUploadMessage(
+        `❌ ${names} ${oversizedFiles.length === 1 ? "is" : "are"} too large. The maximum per upload is ${MAX_UPLOAD_SIZE_MB} MB.`
+      );
+      return;
+    }
+
     setIsUploading(true);
     setUploadMessage("Uploading files...");
 
     try {
       const creds = localStorage.getItem("creds");
       const formData = new FormData();
-      for (let i = 0; i < selectedFiles.length; i++) {
-        formData.append("files", selectedFiles[i]);
-      }
+      filesArray.forEach((file) => formData.append("files", file));
 
       const response = await fetch(`/ui/${ingestGraphName}/uploads?overwrite=true`, {
         method: "POST",
@@ -401,10 +434,38 @@ const Setup = () => {
     }
 
     setIsRefreshing(true);
-    setRefreshMessage("Rebuilding community...");
+    setRefreshMessage("Checking rebuild status...");
 
     try {
       const creds = localStorage.getItem("creds");
+      
+      // First, check if a rebuild is already in progress
+      const statusResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${creds}`,
+        },
+      });
+
+      if (!statusResponse.ok) {
+        const errorData = await statusResponse.json();
+        throw new Error(errorData.detail || `Failed to check rebuild status: ${statusResponse.statusText}`);
+      }
+
+      const statusData = await statusResponse.json();
+      console.log("Rebuild status:", statusData);
+
+      // If already running, prevent submission
+      if (statusData.is_running) {
+        const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
+        setRefreshMessage(`⚠️ A rebuild is already in progress for "${refreshGraphName}" (started at ${startTime}). Please wait for it to complete.`);
+        setIsRefreshing(false);
+        return;
+      }
+
+      // If not running, proceed with rebuild
+      setRefreshMessage("Submitting rebuild request...");
+      
       const response = await fetch(`/ui/${refreshGraphName}/rebuild_graph`, {
         method: "POST",
         headers: {
@@ -798,6 +859,9 @@ const Setup = () => {
                       disabled={isUploading}
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                    Maximum upload per request: {MAX_UPLOAD_SIZE_MB} MB.
+                  </p>
                   </div>
 
                   <div className="flex gap-2">

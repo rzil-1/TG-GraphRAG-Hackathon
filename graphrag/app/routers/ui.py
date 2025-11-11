@@ -261,6 +261,53 @@ def forceupdate(
     return {"status": "submitted"}
 
 
+@router.get(route_prefix + "/{graphname}/rebuild_status")
+def get_rebuild_status(
+    graphname: str,
+    creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
+):
+    """
+    Check if a GraphRAG rebuild is currently in progress for the specified graph.
+    Returns the current status without triggering a new rebuild.
+    Uses HTTP Basic Authentication to get credentials.
+    """
+    # Extract credentials from the dependency
+    creds = creds[1]
+    auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
+
+    try:
+        ecc_status_url = (
+            graphrag_config.get("ecc", "http://localhost:8001")
+            + f"/{graphname}/graphrag/rebuild_status"
+        )
+        LogWriter.info(f"Checking ECC status at: {ecc_status_url}")
+        
+        response = httpx.get(
+            ecc_status_url,
+            headers={"Authorization": f"Basic {auth}"},
+            timeout=10.0
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            LogWriter.warning(f"ECC status check returned {response.status_code}")
+            return {
+                "graphname": graphname,
+                "is_running": False,
+                "status": "unknown",
+                "error": f"ECC service returned status {response.status_code}"
+            }
+    except Exception as e:
+        LogWriter.error(f"Failed to check ECC status: {str(e)}")
+        return {
+            "graphname": graphname,
+            "is_running": False,
+            "status": "error",
+            "error": str(e)
+        }
+
+
 @router.post(route_prefix + "/{graphname}/create_ingest")
 def create_ingest(
     graphname: str,
