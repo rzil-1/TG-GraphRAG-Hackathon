@@ -46,7 +46,7 @@ from common.py_schemas.schemas import SupportAIMethod
 
 logger = logging.getLogger(__name__)
 consistency_checkers = {}
-running_tasks = {}  # Track running graphrag/supportai rebuild tasks
+running_tasks = {}  # Track running graphrag rebuild tasks
 
 
 @asynccontextmanager
@@ -169,7 +169,7 @@ def root():
 
 
 @app.get("/{graphname}/{ecc_method}/rebuild_status")
-def get_rebuild_status(
+def rebuild_status(
     graphname: str,
     ecc_method: str,
     response: Response,
@@ -233,8 +233,9 @@ async def cleanup_task_status(task_key: str, delay: int):
         LogWriter.info(f"Cleaned up task status for: {task_key}")
 
 
+@app.get("/{graphname}/{ecc_method}/consistency_update")
 @app.get("/{graphname}/{ecc_method}/consistency_status")
-def consistency_status(
+def consistency_update(
     graphname: str,
     ecc_method: str,
     background: BackgroundTasks,
