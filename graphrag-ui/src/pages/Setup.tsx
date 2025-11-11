@@ -405,8 +405,8 @@ const Setup = () => {
 
     try {
       const creds = localStorage.getItem("creds");
-      const response = await fetch(`/${refreshGraphName}/graphrag/forceupdate`, {
-        method: "GET",
+      const response = await fetch(`/ui/${refreshGraphName}/rebuild_graph`, {
+        method: "POST",
         headers: {
           Authorization: `Basic ${creds}`,
         },
