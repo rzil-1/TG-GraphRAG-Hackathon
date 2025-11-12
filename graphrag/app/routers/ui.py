@@ -252,7 +252,7 @@ def forceupdate(
 
     ecc = (
         graphrag_config.get("ecc", "http://localhost:8001")
-        + f"/{graphname}/graphrag/consistency_status"
+        + f"/{graphname}/graphrag/consistency_update"
     )
     LogWriter.info(f"Sending ECC request to: {ecc}")
     bg_tasks.add_task(

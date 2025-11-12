@@ -338,7 +338,7 @@ def build_concepts(
 
 
 @router.get("/{graphname}/{method}/forceupdate")
-def supportai_update(
+def graphrag_update(
     graphname: str,
     method: str,
     conn: Request,
@@ -354,7 +354,7 @@ def supportai_update(
 
     ecc = (
         graphrag_config.get("ecc", "http://localhost:8001")
-        + f"/{graphname}/{method}/consistency_status"
+        + f"/{graphname}/{method}/consistency_update"
     )
     LogWriter.info(f"Sending ECC request to: {ecc}")
     bg_tasks.add_task(

@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const DEFAULT_MAX_UPLOAD_SIZE_MB = 20;
+const DEFAULT_MAX_UPLOAD_SIZE_MB = 100;
 const envUploadLimit = Number(import.meta.env.VITE_MAX_UPLOAD_SIZE_MB);
 const MAX_UPLOAD_SIZE_MB =
   Number.isFinite(envUploadLimit) && envUploadLimit > 0 ? envUploadLimit : DEFAULT_MAX_UPLOAD_SIZE_MB;
