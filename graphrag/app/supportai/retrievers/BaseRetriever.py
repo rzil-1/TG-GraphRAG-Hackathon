@@ -128,7 +128,7 @@ class BaseRetriever:
 
         return questions
 
-    def _generate_response(self, question, retrieved, verbose):
+    def _generate_response(self, question, retrieved, query = "", verbose = False):
         # Truncate retrieved sources to fit within token limit
         if not self.token_calculator.is_unlimited_tokens():
             # Reserve tokens for question, query, and format instructions (approximately 1000 tokens)
@@ -147,13 +147,13 @@ class BaseRetriever:
         output_parser = StrOutputParser()
 
         if verbose:
-            self.logger.info("Prompt to LLM:\n" + prompt.invoke({"question": question, "sources": retrieved}).to_string())
+            self.logger.info("Prompt to LLM:\n" + prompt.invoke({"question": question, "context": retrieved, "query": query}).to_string())
 
         chain = prompt | model | output_parser
 
         usage_data = {}
         with get_openai_callback() as cb:
-            generated = chain.invoke({"question": question, "sources": retrieved})
+            generated = chain.invoke({"question": question, "context": retrieved, "query": query})
 
             usage_data["input_tokens"] = cb.prompt_tokens
             usage_data["output_tokens"] = cb.completion_tokens
