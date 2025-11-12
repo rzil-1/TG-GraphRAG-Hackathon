@@ -393,6 +393,8 @@ async def serve_image_from_vertex(
         auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
         _, conn = ws_basic_auth(auth, graphname)
         
+        LogWriter.info(f"Serving image {image_id} from graph {graphname}")
+
         # Fetch the Image vertex by ID
         image_vertices = conn.getVerticesById('Image', [image_id.lower()])
         
