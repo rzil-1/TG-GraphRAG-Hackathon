@@ -120,25 +120,27 @@ const Setup = () => {
     }
 
     const filesArray = Array.from(selectedFiles);
-    const totalSize = filesArray.reduce((sum, file) => sum + file.size, 0);
-
-    if (totalSize > MAX_UPLOAD_SIZE_BYTES) {
-      setUploadMessage(
-        `❌ Selected files total ${formatBytes(totalSize)}, exceeding the ${MAX_UPLOAD_SIZE_MB} MB limit. ` +
-          "Please remove a file or upload them one at a time."
-      );
-      return;
-    }
-
+    
+    // Check if any single file exceeds the server limit
     const oversizedFiles = filesArray.filter((file) => file.size > MAX_UPLOAD_SIZE_BYTES);
     if (oversizedFiles.length > 0) {
-      const names = oversizedFiles.map((file) => file.name).join(", ");
+      const names = oversizedFiles.map((file) => `${file.name} (${formatBytes(file.size)})`).join(", ");
       setUploadMessage(
-        `❌ ${names} ${oversizedFiles.length === 1 ? "is" : "are"} too large. The maximum per upload is ${MAX_UPLOAD_SIZE_MB} MB.`
+        `❌ ${names} ${oversizedFiles.length === 1 ? "exceeds" : "exceed"} the ${MAX_UPLOAD_SIZE_MB} MB limit per file. ` +
+        `Please split or compress ${oversizedFiles.length === 1 ? "this file" : "these files"}.`
       );
       return;
     }
 
+    const totalSize = filesArray.reduce((sum, file) => sum + file.size, 0);
+
+    // If total size exceeds limit and we have multiple files, upload one by one
+    if (totalSize > MAX_UPLOAD_SIZE_BYTES && filesArray.length > 1) {
+      await handleBatchUpload(filesArray);
+      return;
+    }
+
+    // Single file or files within limit - upload normally
     setIsUploading(true);
     setUploadMessage("Uploading files...");
 
@@ -163,6 +165,67 @@ const Setup = () => {
       }
     } catch (error: any) {
       setUploadMessage(`❌ Error: ${error.message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Handle batch upload when total size exceeds limit - upload one file at a time
+  const handleBatchUpload = async (filesArray: File[]) => {
+    setIsUploading(true);
+    setUploadMessage("Total size exceeds limit. Uploading files one by one...");
+
+    try {
+      const creds = localStorage.getItem("creds");
+      let uploadedCount = 0;
+      let failedCount = 0;
+      const totalFiles = filesArray.length;
+
+      // Upload files one at a time to avoid 413 errors
+      for (let i = 0; i < filesArray.length; i++) {
+        const file = filesArray[i];
+        const fileNumber = i + 1;
+        
+        setUploadMessage(`Uploading file ${fileNumber}/${totalFiles}: ${file.name} (${formatBytes(file.size)})...`);
+        
+        const formData = new FormData();
+        formData.append("files", file);
+
+        try {
+          const response = await fetch(`/ui/${ingestGraphName}/uploads?overwrite=true`, {
+            method: "POST",
+            headers: { Authorization: `Basic ${creds}` },
+            body: formData,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Upload failed with status ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (data.status === "success") {
+            uploadedCount++;
+          } else {
+            failedCount++;
+            console.error(`File ${file.name} failed:`, data);
+          }
+        } catch (err) {
+          console.error(`File ${file.name} error:`, err);
+          failedCount++;
+        }
+      }
+
+      // Show final result
+      if (failedCount === 0) {
+        setUploadMessage(`✅ Successfully uploaded all ${uploadedCount} files (uploaded individually).`);
+      } else {
+        setUploadMessage(`⚠️ Uploaded ${uploadedCount} files successfully, ${failedCount} failed.`);
+      }
+      
+      setSelectedFiles(null);
+      await fetchUploadedFiles();
+    } catch (error: any) {
+      setUploadMessage(`❌ Batch upload error: ${error.message}`);
     } finally {
       setIsUploading(false);
     }
