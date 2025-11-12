@@ -173,7 +173,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
     <>
       {typeof message === "string" ? (
         <div className="prose dark:prose-invert text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} className="typewriter">{message}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} className="typewriter">{message}</ReactMarkdown>
         </div>
       ) : message.key === null ? (
         message
@@ -183,7 +183,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
             {message.response_type === "progress" ? (
               <p className="graphrag-thinking typewriter">{message.content}</p>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} className="typewriter">{message.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} className="typewriter">{message.content}</ReactMarkdown>
             )}
             <Interactions
               message={message} 

@@ -233,7 +233,7 @@ class TigerGraphAgentGraph:
         chunk_only=graphrag_config.get("chunk_only", True)
         step = retriever.search(
             state["question"],
-            indices=(["DocumentChunk"] if chunk_only else ["Document", "DocumentChunk", "Entity"]),
+            indices=["DocumentChunk", "Entity"],
             top_k=graphrag_config.get("top_k", 5),
             num_seen_min=graphrag_config.get("num_seen_min", 2),
             num_hops=graphrag_config.get("num_hops", 2),
@@ -367,13 +367,19 @@ class TigerGraphAgentGraph:
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
+            context = state["context"]["result"]["final_retrieval"]
+            citations = sorted(list(context.keys()))
             answer = step.generate_answer(
-                state["question"], state["context"]["result"]["final_retrieval"]
+                state["question"], context
             )
 
-            if not answer.citation:
-                answer.citation = list(state["context"]["result"]["final_retrieval"].keys())
-            state["context"]["reasoning"] = list(set(answer.citation))
+            if answer.citation:
+                for citation in answer.citation:
+                    if citation in citations:
+                        citations[citations.index(citation)] = f"* {citation}"
+                    else:
+                        logger.info(f"Answer citation {citation} not found in the context")
+            state["context"]["reasoning"] = citations
 
         elif state["lookup_source"] == "inquiryai":
             logger.debug_pii(

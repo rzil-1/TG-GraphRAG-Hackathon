@@ -23,13 +23,9 @@ from common.logs.logwriter import LogWriter
 from common.logs.log import req_id_cv
 from common.utils.token_calculator import TokenCalculator
 from common.config import completion_config
-
+from common.py_schemas import GraphRAGAnswerOutput
 
 logger = logging.getLogger(__name__)
-
-class GraphRAGAnswerOutput(BaseModel):
-    generated_answer: str = Field(description="The generated answer to the question. Make sure maintain a professional tone.")
-    citation: Optional[list[str]] = Field(description="The citation for the answer. List the metadata of the parts of the context used.", default=[])
 
 class TigerGraphAgentGenerator:
     def __init__(self, llm_model):
