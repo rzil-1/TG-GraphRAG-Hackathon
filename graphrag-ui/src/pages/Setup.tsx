@@ -60,6 +60,8 @@ const Setup = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState("");
   const [refreshGraphName, setRefreshGraphName] = useState("");
+  const [isRebuildRunning, setIsRebuildRunning] = useState(false);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   
   // S3 state
   const [fileFormat, setFileFormat] = useState<"json" | "multi">("json");
@@ -426,6 +428,59 @@ const Setup = () => {
     }
   };
 
+  // Check rebuild status
+  const checkRebuildStatus = async (graphName: string, showLoadingMessage: boolean = false) => {
+    if (!graphName) return;
+
+    setIsCheckingStatus(true);
+    if (showLoadingMessage) {
+      setRefreshMessage("Checking rebuild status...");
+    }
+
+    try {
+      const creds = localStorage.getItem("creds");
+      const statusResponse = await fetch(`/ui/${graphName}/rebuild_status`, {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${creds}`,
+        },
+      });
+
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        const wasRunning = isRebuildRunning;
+        const isCurrentlyRunning = statusData.is_running || false;
+        
+        setIsRebuildRunning(isCurrentlyRunning);
+        
+        if (isCurrentlyRunning) {
+          const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
+          setRefreshMessage(`⚠️ A rebuild is already in progress for "${graphName}" (started at ${startTime}). Please wait for it to complete.`);
+        } else {
+          // Rebuild is not running anymore
+          if (wasRunning && statusData.status === "completed") {
+            // Just finished
+            setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
+          } else if (statusData.status === "failed") {
+            setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
+          } else {
+            // Clear message only if we're not showing loading message
+            if (!showLoadingMessage) {
+              setRefreshMessage("");
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error("Error checking rebuild status:", error);
+      // On error, assume it's safe to proceed
+      setIsRebuildRunning(false);
+      setRefreshMessage("");
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  };
+
   // Handle refresh knowledge graph
   const handleRefreshGraph = async () => {
     if (!refreshGraphName) {
@@ -433,38 +488,17 @@ const Setup = () => {
       return;
     }
 
+    // Double-check status one more time before submitting
+    if (isRebuildRunning) {
+      setRefreshMessage(`⚠️ A rebuild is already in progress. Please wait for it to complete.`);
+      return;
+    }
+
     setIsRefreshing(true);
-    setRefreshMessage("Checking rebuild status...");
+    setRefreshMessage("Submitting rebuild request...");
 
     try {
       const creds = localStorage.getItem("creds");
-      
-      // First, check if a rebuild is already in progress
-      const statusResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${creds}`,
-        },
-      });
-
-      if (!statusResponse.ok) {
-        const errorData = await statusResponse.json();
-        throw new Error(errorData.detail || `Failed to check rebuild status: ${statusResponse.statusText}`);
-      }
-
-      const statusData = await statusResponse.json();
-      console.log("Rebuild status:", statusData);
-
-      // If already running, prevent submission
-      if (statusData.is_running) {
-        const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
-        setRefreshMessage(`⚠️ A rebuild is already in progress for "${refreshGraphName}" (started at ${startTime}). Please wait for it to complete.`);
-        setIsRefreshing(false);
-        return;
-      }
-
-      // If not running, proceed with rebuild
-      setRefreshMessage("Submitting rebuild request...");
       
       const response = await fetch(`/ui/${refreshGraphName}/rebuild_graph`, {
         method: "POST",
@@ -482,6 +516,7 @@ const Setup = () => {
       console.log("Refresh response:", data);
 
       setRefreshMessage(`✅ Refresh submitted successfully! The knowledge graph "${refreshGraphName}" is being rebuilt.`);
+      setIsRebuildRunning(true);
     } catch (error: any) {
       console.error("Error refreshing graph:", error);
       setRefreshMessage(`❌ Error: ${error.message}`);
@@ -489,6 +524,21 @@ const Setup = () => {
       setIsRefreshing(false);
     }
   };
+
+  // Check rebuild status when graph selection or dialog state changes
+  useEffect(() => {
+    if (refreshOpen && refreshGraphName) {
+      // Check status immediately when dialog opens
+      checkRebuildStatus(refreshGraphName, true);
+      
+      // Set up polling to check status every 5 seconds while dialog is open
+      const intervalId = setInterval(() => {
+        checkRebuildStatus(refreshGraphName, false);
+      }, 5000);
+      
+      return () => clearInterval(intervalId);
+    }
+  }, [refreshOpen, refreshGraphName]);
 
   // Load available graphs from localStorage on mount
   useEffect(() => {
@@ -1465,22 +1515,31 @@ const Setup = () => {
                 variant="outline"
                 onClick={() => {
                   setRefreshOpen(false);
-                  setRefreshMessage("");
                 }}
                 disabled={isRefreshing}
                 className="dark:border-[#3D3D3D]"
               >
-                Cancel
+                Close
               </Button>
               <Button
                 onClick={handleRefreshGraph}
-                disabled={isRefreshing || !refreshGraphName}
+                disabled={isRefreshing || !refreshGraphName || isRebuildRunning || isCheckingStatus}
                 className="gradient text-white"
               >
                 {isRefreshing ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Refreshing...
+                    Submitting...
+                  </>
+                ) : isCheckingStatus ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Checking Status...
+                  </>
+                ) : isRebuildRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Rebuild In Progress...
                   </>
                 ) : (
                   <>
