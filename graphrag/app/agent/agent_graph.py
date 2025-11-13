@@ -465,7 +465,7 @@ class TigerGraphAgentGraph:
 
     def convert_image_refs_to_markdown(self, text):
         """
-        Convert [IMAGE_REF:image_id] markers to markdown image syntax with API endpoint URLs.
+        Convert tg:// protocol URLs to actual API endpoint URLs for images stored in TigerGraph.
         
         Creates relative URLs pointing to the /ui/image_vertex/ endpoint which serves images 
         from TigerGraph. The endpoint uses standard HTTP Basic Authentication (same pattern as 
@@ -473,18 +473,18 @@ class TigerGraphAgentGraph:
         
         PATH_PREFIX is automatically handled by FastAPI router configuration.
         
-        Format: [IMAGE_REF:image_id] → ![Image](/ui/image_vertex/{graphname}/{image_id})
+        Format: ![description](tg://image_id) → ![description](/ui/image_vertex/{graphname}/{image_id})
         
         Args:
-            text (str): The text containing [IMAGE_REF:] markers.
+            text (str): The text containing markdown images with tg:// protocol.
             
         Returns:
-            str: The text with [IMAGE_REF:] markers converted to markdown with endpoint URLs.
+            str: The text with tg:// URLs converted to endpoint URLs.
         """
         if not isinstance(text, str):
             return text
             
-        if "[IMAGE_REF:" not in text:
+        if "tg://" not in text:
             return text
         
         import re
@@ -492,16 +492,21 @@ class TigerGraphAgentGraph:
         # Get graphname from connection
         graphname = self.db_connection.graphname
         
-        # Replace [IMAGE_REF:image_id] with markdown image syntax pointing to the endpoint
+        # Replace tg://image_id with actual endpoint URL
+        # Preserves the image description from markdown
         # Note: Authentication is handled via HTTP Basic Auth headers (standard FastAPI pattern)
         # PATH_PREFIX is already applied at router level in main.py, so use relative URL
         converted = re.sub(
-            r'\[IMAGE_REF:([^\]]+)\]',
-            rf'![Image](/ui/image_vertex/{graphname}/\1)',
+            r'!\[([^\]]*)\]\(tg://([^\)]+)\)',
+            rf'![\1](/ui/image_vertex/{graphname}/\2)',
             text
         )
         
-        logger.info(f"Converted {text.count('[IMAGE_REF:')} image reference(s) to endpoint URLs")
+        # Count how many conversions were made
+        count = len(re.findall(r'tg://', text))
+        if count > 0:
+            logger.info(f"Converted {count} tg:// image reference(s) to endpoint URLs")
+        
         return converted
 
 

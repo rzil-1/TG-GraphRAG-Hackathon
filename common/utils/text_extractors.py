@@ -269,9 +269,10 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
                     markdown_parts.append(element['content'])
                     markdown_parts.append("\n\n")
                 else:
-                    markdown_parts.append("### Image Description\n\n")
-                    markdown_parts.append(element['description'])
-                    markdown_parts.append(f"\n\n[IMAGE_REF:{element['image_doc_id']}]\n\n")
+                    # Add image description as text, then markdown image reference
+                    # Use short alt text in markdown, full description as regular text
+                    markdown_parts.append(f"{element['description']}\n\n")
+                    markdown_parts.append(f"![Image](tg://{element['image_doc_id']})\n\n")
 
                     image_entries.append({
                         "doc_id": element['image_doc_id'],
@@ -348,7 +349,8 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
         image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
         image_id = f"{base_doc_id}_image_1"
-        content = f"{description}\n\n[IMAGE_REF:{image_id}]"
+        # Put description as text, then markdown image reference with short alt text
+        content = f"{description}\n\n![Image](tg://{image_id})"
 
         return [
             {
