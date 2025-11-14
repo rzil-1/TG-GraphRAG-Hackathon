@@ -41,9 +41,9 @@ const Setup = () => {
   const [confirm, confirmDialog, isConfirmDialogOpen] = useConfirm();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
   
-  const [createGraphOpen, setCreateGraphOpen] = useState(false);
+  const [initializeGraphOpen, setInitializeGraphOpen] = useState(false);
   const [graphName, setGraphName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [statusType, setStatusType] = useState<"success" | "error" | "">("");
 
@@ -417,7 +417,7 @@ const Setup = () => {
   };
 
   // Ingest files into knowledge graph (uploaded or downloaded)
-  const handleIngestData = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
+  const handleIngestDocuments = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
     if (!ingestGraphName) {
       setIngestMessage("Please select a graph");
       return;
@@ -640,14 +640,14 @@ const Setup = () => {
     }
   }, [ingestOpen, ingestGraphName]);
 
-  const handleCreateGraph = async () => {
+  const handleInitializeGraph = async () => {
     if (!graphName.trim()) {
       setStatusMessage("Please enter a graph name");
       setStatusType("error");
       return;
     }
 
-    setIsCreating(true);
+    setIsInitializing(true);
     setStatusMessage("Creating graph and initializing GraphRAG schema...");
     setStatusType("");
 
@@ -682,7 +682,7 @@ const Setup = () => {
           if (!shouldInitialize) {
             setStatusMessage("Operation cancelled by user.");
             setStatusType("error");
-            setIsCreating(false);
+            setIsInitializing(false);
             return;
           }
         } else {
@@ -708,7 +708,7 @@ const Setup = () => {
       if (initData.status !== "success") {
         setStatusMessage(initData.message || `Failed to initialize graph: ${initData.details}`);
         setStatusType("error");
-        setIsCreating(false);
+        setIsInitializing(false);
         return;
       }
       
@@ -738,7 +738,7 @@ const Setup = () => {
       setStatusMessage(`❌ Error: ${error.message}`);
       setStatusType("error");
     } finally {
-      setIsCreating(false);
+      setIsInitializing(false);
     }
   };
 
@@ -765,26 +765,26 @@ const Setup = () => {
         {/* Three cards displayed horizontally */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Section 1: Add New Knowledge Graph */}
+          {/* Section 1: Initialize Knowledge Graph */}
           <div className="border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6 bg-white dark:bg-shadeA flex flex-col h-full">
             <div className="mb-4">
               <div className="w-12 h-12 rounded-full bg-tigerOrange/10 flex items-center justify-center mb-4">
                 <Database className="h-6 w-6 text-tigerOrange" />
               </div>
               <h2 className="text-lg font-semibold mb-2 text-black dark:text-white">
-                Create Knowledge Graph
+                Initialize Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Create or add a new knowledge graph for your documents
+                Create the knowledge graph schema and queries for future document ingestion.
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
               <Button 
                 className="gradient w-full text-white"
-                onClick={() => setCreateGraphOpen(true)}
+                onClick={() => setInitializeGraphOpen(true)}
               >
                 <Database className="h-4 w-4 mr-2" />
-                Create Graph
+                Initialize Graph
               </Button>
             </div>
           </div>
@@ -799,7 +799,7 @@ const Setup = () => {
                 Ingest to Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Upload and ingest documents into your knowledge graph for content processing
+                Upload and ingest documents into your knowledge graph for future content processing.
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
@@ -823,7 +823,7 @@ const Setup = () => {
                 Refresh Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Process the new documents in your knowledge graph to refresh the graph content
+                Process new documents in your knowledge graph to refresh its content.
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
@@ -839,15 +839,15 @@ const Setup = () => {
 
         </div>
 
-        {/* Create Graph Dialog */}
+        {/* Initialize Graph Dialog */}
         <Dialog 
-          open={createGraphOpen} 
+          open={initializeGraphOpen}
           onOpenChange={(open) => {
             // Prevent closing if confirm dialog is open
             if (!open && isConfirmDialogOpen) {
               return;
             }
-            setCreateGraphOpen(open);
+            setInitializeGraphOpen(open);
           }}
         >
           <DialogContent 
@@ -855,26 +855,26 @@ const Setup = () => {
             onInteractOutside={(e) => e.preventDefault()}
           >
             <DialogHeader>
-              <DialogTitle className="text-black dark:text-white">Create New Knowledge Graph</DialogTitle>
+              <DialogTitle className="text-black dark:text-white">Initialize Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
-                Enter a name for your new knowledge graph. This will create the graph and initialize the GraphRAG schema.
+                Enter the name of your knowledge graph. The system will create it if necessary and initialize it with the GraphRAG schema.
               </DialogDescription>
             </DialogHeader>
             
             <div className="py-4">
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                  Graph Name
+                  Knowledge Graph Name
                 </label>
                 <Input
                   placeholder="e.g., MyKnowledgeGraph"
                   value={graphName}
                   onChange={(e) => setGraphName(e.target.value)}
-                  disabled={isCreating}
+                  disabled={isInitializing}
                   className="dark:border-[#3D3D3D] dark:bg-shadeA"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !isCreating) {
-                      handleCreateGraph();
+                    if (e.key === "Enter" && !isInitializing) {
+                      handleInitializeGraph();
                     }
                   }}
                 />
@@ -900,7 +900,7 @@ const Setup = () => {
                 <Button
                   className="gradient text-white w-full"
                   onClick={() => {
-                    setCreateGraphOpen(false);
+                    setInitializeGraphOpen(false);
                     setGraphName("");
                     setStatusMessage("");
                     setStatusType("");
@@ -914,22 +914,22 @@ const Setup = () => {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      setCreateGraphOpen(false);
+                      setInitializeGraphOpen(false);
                       setGraphName("");
                       setStatusMessage("");
                       setStatusType("");
                     }}
-                    disabled={isCreating}
+                    disabled={isInitializing}
                     className="dark:border-[#3D3D3D]"
                   >
                     Cancel
                   </Button>
                   <Button
-                    onClick={handleCreateGraph}
-                    disabled={isCreating || !graphName.trim()}
+                    onClick={handleInitializeGraph}
+                    disabled={isInitializing || !graphName.trim()}
                     className="gradient text-white"
                   >
-                    {isCreating ? (
+                    {isInitializing ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         Creating...
@@ -1081,7 +1081,7 @@ const Setup = () => {
                         Process uploaded files and add them to the knowledge graph
                       </p>
                       <Button
-                        onClick={() => handleIngestData("uploaded")}
+                        onClick={() => handleIngestDocuments("uploaded")}
                         disabled={isIngesting}
                         className="gradient text-white w-full"
                       >
@@ -1420,7 +1420,7 @@ const Setup = () => {
                         Process downloaded files and add them to the knowledge graph
                       </p>
                       <Button
-                        onClick={() => handleIngestData("downloaded")}
+                        onClick={() => handleIngestDocuments("downloaded")}
                         disabled={isIngesting}
                         className="gradient text-white w-full"
                       >
