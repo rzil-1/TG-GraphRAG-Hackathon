@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Database, Upload, RefreshCw, Loader2, Trash2, FolderUp, Cloud, ArrowLeft, CloudDownload } from "lucide-react";
+import { Database, Upload, RefreshCw, Loader2, Trash2, FolderUp, Cloud, ArrowLeft, CloudDownload, CloudCog } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useConfirm } from "@/hooks/useConfirm";
 
 const DEFAULT_MAX_UPLOAD_SIZE_MB = 100;
 const envUploadLimit = Number(import.meta.env.VITE_MAX_UPLOAD_SIZE_MB);
@@ -37,11 +38,12 @@ const formatBytes = (bytes: number) => {
 
 const Setup = () => {
   const navigate = useNavigate();
+  const [confirm, confirmDialog, isConfirmDialogOpen] = useConfirm();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
   
-  const [createGraphOpen, setCreateGraphOpen] = useState(false);
+  const [initializeGraphOpen, setInitializeGraphOpen] = useState(false);
   const [graphName, setGraphName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [statusType, setStatusType] = useState<"success" | "error" | "">("");
 
@@ -60,6 +62,8 @@ const Setup = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState("");
   const [refreshGraphName, setRefreshGraphName] = useState("");
+  const [isRebuildRunning, setIsRebuildRunning] = useState(false);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   
   // S3 state
   const [fileFormat, setFileFormat] = useState<"json" | "multi">("json");
@@ -118,25 +122,27 @@ const Setup = () => {
     }
 
     const filesArray = Array.from(selectedFiles);
-    const totalSize = filesArray.reduce((sum, file) => sum + file.size, 0);
-
-    if (totalSize > MAX_UPLOAD_SIZE_BYTES) {
-      setUploadMessage(
-        `❌ Selected files total ${formatBytes(totalSize)}, exceeding the ${MAX_UPLOAD_SIZE_MB} MB limit. ` +
-          "Please remove a file or upload them one at a time."
-      );
-      return;
-    }
-
+    
+    // Check if any single file exceeds the server limit
     const oversizedFiles = filesArray.filter((file) => file.size > MAX_UPLOAD_SIZE_BYTES);
     if (oversizedFiles.length > 0) {
-      const names = oversizedFiles.map((file) => file.name).join(", ");
+      const names = oversizedFiles.map((file) => `${file.name} (${formatBytes(file.size)})`).join(", ");
       setUploadMessage(
-        `❌ ${names} ${oversizedFiles.length === 1 ? "is" : "are"} too large. The maximum per upload is ${MAX_UPLOAD_SIZE_MB} MB.`
+        `❌ ${names} ${oversizedFiles.length === 1 ? "exceeds" : "exceed"} the ${MAX_UPLOAD_SIZE_MB} MB limit per file. ` +
+        `Please split or compress ${oversizedFiles.length === 1 ? "this file" : "these files"}.`
       );
       return;
     }
 
+    const totalSize = filesArray.reduce((sum, file) => sum + file.size, 0);
+
+    // If total size exceeds limit and we have multiple files, upload one by one
+    if (totalSize > MAX_UPLOAD_SIZE_BYTES && filesArray.length > 1) {
+      await handleBatchUpload(filesArray);
+      return;
+    }
+
+    // Single file or files within limit - upload normally
     setIsUploading(true);
     setUploadMessage("Uploading files...");
 
@@ -161,6 +167,67 @@ const Setup = () => {
       }
     } catch (error: any) {
       setUploadMessage(`❌ Error: ${error.message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Handle batch upload when total size exceeds limit - upload one file at a time
+  const handleBatchUpload = async (filesArray: File[]) => {
+    setIsUploading(true);
+    setUploadMessage("Total size exceeds limit. Uploading files one by one...");
+
+    try {
+      const creds = localStorage.getItem("creds");
+      let uploadedCount = 0;
+      let failedCount = 0;
+      const totalFiles = filesArray.length;
+
+      // Upload files one at a time to avoid 413 errors
+      for (let i = 0; i < filesArray.length; i++) {
+        const file = filesArray[i];
+        const fileNumber = i + 1;
+        
+        setUploadMessage(`Uploading file ${fileNumber}/${totalFiles}: ${file.name} (${formatBytes(file.size)})...`);
+        
+        const formData = new FormData();
+        formData.append("files", file);
+
+        try {
+          const response = await fetch(`/ui/${ingestGraphName}/uploads?overwrite=true`, {
+            method: "POST",
+            headers: { Authorization: `Basic ${creds}` },
+            body: formData,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Upload failed with status ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (data.status === "success") {
+            uploadedCount++;
+          } else {
+            failedCount++;
+            console.error(`File ${file.name} failed:`, data);
+          }
+        } catch (err) {
+          console.error(`File ${file.name} error:`, err);
+          failedCount++;
+        }
+      }
+
+      // Show final result
+      if (failedCount === 0) {
+        setUploadMessage(`✅ Successfully uploaded all ${uploadedCount} files (uploaded individually).`);
+      } else {
+        setUploadMessage(`⚠️ Uploaded ${uploadedCount} files successfully, ${failedCount} failed.`);
+      }
+      
+      setSelectedFiles(null);
+      await fetchUploadedFiles();
+    } catch (error: any) {
+      setUploadMessage(`❌ Batch upload error: ${error.message}`);
     } finally {
       setIsUploading(false);
     }
@@ -191,7 +258,8 @@ const Setup = () => {
   const handleDeleteAllFiles = async () => {
     if (!ingestGraphName) return;
 
-    if (!confirm("Are you sure you want to delete all uploaded files?")) return;
+    const shouldDelete = await confirm("Are you sure you want to delete all uploaded files?");
+    if (!shouldDelete) return;
 
     try {
       const creds = localStorage.getItem("creds");
@@ -331,7 +399,8 @@ const Setup = () => {
   const handleDeleteAllDownloadedFiles = async () => {
     if (!ingestGraphName) return;
 
-    if (!confirm("Are you sure you want to delete all downloaded files?")) return;
+    const shouldDelete = await confirm("Are you sure you want to delete all downloaded files?");
+    if (!shouldDelete) return;
 
     try {
       const creds = localStorage.getItem("creds");
@@ -348,7 +417,7 @@ const Setup = () => {
   };
 
   // Ingest files into knowledge graph (uploaded or downloaded)
-  const handleIngestData = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
+  const handleIngestDocuments = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
     if (!ingestGraphName) {
       setIngestMessage("Please select a graph");
       return;
@@ -426,6 +495,59 @@ const Setup = () => {
     }
   };
 
+  // Check rebuild status
+  const checkRebuildStatus = async (graphName: string, showLoadingMessage: boolean = false) => {
+    if (!graphName) return;
+
+    setIsCheckingStatus(true);
+    if (showLoadingMessage) {
+      setRefreshMessage("Checking rebuild status...");
+    }
+
+    try {
+      const creds = localStorage.getItem("creds");
+      const statusResponse = await fetch(`/ui/${graphName}/rebuild_status`, {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${creds}`,
+        },
+      });
+
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        const wasRunning = isRebuildRunning;
+        const isCurrentlyRunning = statusData.is_running || false;
+        
+        setIsRebuildRunning(isCurrentlyRunning);
+        
+        if (isCurrentlyRunning) {
+          const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
+          setRefreshMessage(`⚠️ A rebuild is already in progress for "${graphName}" (started at ${startTime}). Please wait for it to complete.`);
+        } else {
+          // Rebuild is not running anymore
+          if (wasRunning && statusData.status === "completed") {
+            // Just finished
+            setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
+          } else if (statusData.status === "failed") {
+            setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
+          } else {
+            // Clear message only if we're not showing loading message
+            if (!showLoadingMessage) {
+              setRefreshMessage("");
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error("Error checking rebuild status:", error);
+      // On error, assume it's safe to proceed
+      setIsRebuildRunning(false);
+      setRefreshMessage("");
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  };
+
   // Handle refresh knowledge graph
   const handleRefreshGraph = async () => {
     if (!refreshGraphName) {
@@ -433,38 +555,26 @@ const Setup = () => {
       return;
     }
 
+    // Double-check status one more time before submitting
+    if (isRebuildRunning) {
+      setRefreshMessage(`⚠️ A rebuild is already in progress. Please wait for it to complete.`);
+      return;
+    }
+
+    // Ask user to confirm before proceeding with refresh
+    const shouldRefresh = await confirm(
+      `Are you sure you want to refresh the knowledge graph "${refreshGraphName}"? This will rebuild the graph content.`
+    );
+    if (!shouldRefresh) {
+      setRefreshMessage("Operation cancelled by user.");
+      return;
+    }
+
     setIsRefreshing(true);
-    setRefreshMessage("Checking rebuild status...");
+    setRefreshMessage("Submitting rebuild request...");
 
     try {
       const creds = localStorage.getItem("creds");
-      
-      // First, check if a rebuild is already in progress
-      const statusResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${creds}`,
-        },
-      });
-
-      if (!statusResponse.ok) {
-        const errorData = await statusResponse.json();
-        throw new Error(errorData.detail || `Failed to check rebuild status: ${statusResponse.statusText}`);
-      }
-
-      const statusData = await statusResponse.json();
-      console.log("Rebuild status:", statusData);
-
-      // If already running, prevent submission
-      if (statusData.is_running) {
-        const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
-        setRefreshMessage(`⚠️ A rebuild is already in progress for "${refreshGraphName}" (started at ${startTime}). Please wait for it to complete.`);
-        setIsRefreshing(false);
-        return;
-      }
-
-      // If not running, proceed with rebuild
-      setRefreshMessage("Submitting rebuild request...");
       
       const response = await fetch(`/ui/${refreshGraphName}/rebuild_graph`, {
         method: "POST",
@@ -482,6 +592,7 @@ const Setup = () => {
       console.log("Refresh response:", data);
 
       setRefreshMessage(`✅ Refresh submitted successfully! The knowledge graph "${refreshGraphName}" is being rebuilt.`);
+      setIsRebuildRunning(true);
     } catch (error: any) {
       console.error("Error refreshing graph:", error);
       setRefreshMessage(`❌ Error: ${error.message}`);
@@ -489,6 +600,21 @@ const Setup = () => {
       setIsRefreshing(false);
     }
   };
+
+  // Check rebuild status when graph selection or dialog state changes
+  useEffect(() => {
+    if (refreshOpen && refreshGraphName) {
+      // Check status immediately when dialog opens
+      checkRebuildStatus(refreshGraphName, true);
+      
+      // Set up polling to check status every 5 seconds while dialog is open
+      const intervalId = setInterval(() => {
+        checkRebuildStatus(refreshGraphName, false);
+      }, 5000);
+      
+      return () => clearInterval(intervalId);
+    }
+  }, [refreshOpen, refreshGraphName]);
 
   // Load available graphs from localStorage on mount
   useEffect(() => {
@@ -514,14 +640,14 @@ const Setup = () => {
     }
   }, [ingestOpen, ingestGraphName]);
 
-  const handleCreateGraph = async () => {
+  const handleInitializeGraph = async () => {
     if (!graphName.trim()) {
       setStatusMessage("Please enter a graph name");
       setStatusType("error");
       return;
     }
 
-    setIsCreating(true);
+    setIsInitializing(true);
     setStatusMessage("Creating graph and initializing GraphRAG schema...");
     setStatusType("");
 
@@ -547,8 +673,21 @@ const Setup = () => {
         throw new Error(createData.detail || createData.message || `Failed to create graph: ${createResponse.statusText}`);
       }
 
-      if (createData.status === "error") {
-        throw new Error(createData.message || "Failed to create graph");
+      if (createData.status !== "success") {
+        if (createData.message && createData.message.includes("already exists")) {
+          // Ask user to confirm before proceeding with initialization
+          const shouldInitialize = await confirm(
+            `Graph "${graphName}" already exists. Do you want to initialize it with GraphRAG schema?`
+          );
+          if (!shouldInitialize) {
+            setStatusMessage("Operation cancelled by user.");
+            setStatusType("error");
+            setIsInitializing(false);
+            return;
+          }
+        } else {
+          throw new Error(createData.message || `Failed to create graph: ${createData.details}`);
+        }
       }
 
       // Step 2: Initialize the graph with GraphRAG schema
@@ -566,6 +705,13 @@ const Setup = () => {
         throw new Error(initData.detail || `Failed to initialize graph: ${initResponse.statusText}`);
       }
 
+      if (initData.status !== "success") {
+        setStatusMessage(initData.message || `Failed to initialize graph: ${initData.details}`);
+        setStatusType("error");
+        setIsInitializing(false);
+        return;
+      }
+      
       setStatusMessage(`✅ Graph "${graphName}" created and initialized successfully! You can now close this dialog.`);
       setStatusType("success");
       
@@ -592,7 +738,7 @@ const Setup = () => {
       setStatusMessage(`❌ Error: ${error.message}`);
       setStatusType("error");
     } finally {
-      setIsCreating(false);
+      setIsInitializing(false);
     }
   };
 
@@ -609,7 +755,7 @@ const Setup = () => {
             Back to Chat
           </Button>
           <h1 className="text-2xl font-bold mb-2 text-black dark:text-white">
-            Knowledge Graph Setup
+            Knowledge Graph Administration
           </h1>
           <p className="text-sm text-gray-600 dark:text-[#D9D9D9]">
             Configure and manage your knowledge graphs
@@ -619,26 +765,26 @@ const Setup = () => {
         {/* Three cards displayed horizontally */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Section 1: Add New Knowledge Graph */}
+          {/* Section 1: Initialize Knowledge Graph */}
           <div className="border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6 bg-white dark:bg-shadeA flex flex-col h-full">
             <div className="mb-4">
               <div className="w-12 h-12 rounded-full bg-tigerOrange/10 flex items-center justify-center mb-4">
                 <Database className="h-6 w-6 text-tigerOrange" />
               </div>
               <h2 className="text-lg font-semibold mb-2 text-black dark:text-white">
-                Add New Knowledge Graph
+                Initialize Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Create a new knowledge graph for your data
+                Create the knowledge graph schema and queries for future document ingestion.
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
               <Button 
                 className="gradient w-full text-white"
-                onClick={() => setCreateGraphOpen(true)}
+                onClick={() => setInitializeGraphOpen(true)}
               >
                 <Database className="h-4 w-4 mr-2" />
-                Create Graph
+                Initialize Graph
               </Button>
             </div>
           </div>
@@ -650,10 +796,10 @@ const Setup = () => {
                 <Upload className="h-6 w-6 text-tigerOrange" />
               </div>
               <h2 className="text-lg font-semibold mb-2 text-black dark:text-white">
-                Data Ingest for a KG
+                Ingest to Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Upload and process data into your knowledge graph
+                Upload and ingest documents into your knowledge graph for future content processing.
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
@@ -662,7 +808,7 @@ const Setup = () => {
                 onClick={() => setIngestOpen(true)}
               >
                 <Upload className="h-4 w-4 mr-2" />
-                Ingest Data
+                Ingest Document
               </Button>
             </div>
           </div>
@@ -677,7 +823,7 @@ const Setup = () => {
                 Refresh Knowledge Graph
               </h2>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
-                Rebuild and refresh your knowledge graph
+                Process new documents in your knowledge graph to refresh its content.
               </p>
             </div>
             <div className="mt-auto pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
@@ -693,30 +839,42 @@ const Setup = () => {
 
         </div>
 
-        {/* Create Graph Dialog */}
-        <Dialog open={createGraphOpen} onOpenChange={setCreateGraphOpen}>
-          <DialogContent className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]">
+        {/* Initialize Graph Dialog */}
+        <Dialog 
+          open={initializeGraphOpen}
+          onOpenChange={(open) => {
+            // Prevent closing if confirm dialog is open
+            if (!open && isConfirmDialogOpen) {
+              return;
+            }
+            setInitializeGraphOpen(open);
+          }}
+        >
+          <DialogContent 
+            className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]"
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
-              <DialogTitle className="text-black dark:text-white">Create New Knowledge Graph</DialogTitle>
+              <DialogTitle className="text-black dark:text-white">Initialize Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
-                Enter a name for your new knowledge graph. This will create the graph and initialize the GraphRAG schema.
+                Enter the name of your knowledge graph. The system will create it if necessary and initialize it with the GraphRAG schema.
               </DialogDescription>
             </DialogHeader>
             
             <div className="py-4">
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                  Graph Name
+                  Knowledge Graph Name
                 </label>
                 <Input
                   placeholder="e.g., MyKnowledgeGraph"
                   value={graphName}
                   onChange={(e) => setGraphName(e.target.value)}
-                  disabled={isCreating}
+                  disabled={isInitializing}
                   className="dark:border-[#3D3D3D] dark:bg-shadeA"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !isCreating) {
-                      handleCreateGraph();
+                    if (e.key === "Enter" && !isInitializing) {
+                      handleInitializeGraph();
                     }
                   }}
                 />
@@ -742,7 +900,7 @@ const Setup = () => {
                 <Button
                   className="gradient text-white w-full"
                   onClick={() => {
-                    setCreateGraphOpen(false);
+                    setInitializeGraphOpen(false);
                     setGraphName("");
                     setStatusMessage("");
                     setStatusType("");
@@ -756,22 +914,22 @@ const Setup = () => {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      setCreateGraphOpen(false);
+                      setInitializeGraphOpen(false);
                       setGraphName("");
                       setStatusMessage("");
                       setStatusType("");
                     }}
-                    disabled={isCreating}
+                    disabled={isInitializing}
                     className="dark:border-[#3D3D3D]"
                   >
                     Cancel
                   </Button>
                   <Button
-                    onClick={handleCreateGraph}
-                    disabled={isCreating || !graphName.trim()}
+                    onClick={handleInitializeGraph}
+                    disabled={isInitializing || !graphName.trim()}
                     className="gradient text-white"
                   >
-                    {isCreating ? (
+                    {isInitializing ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         Creating...
@@ -790,12 +948,24 @@ const Setup = () => {
         </Dialog>
 
         {/* Data Ingest Dialog */}
-        <Dialog open={ingestOpen} onOpenChange={setIngestOpen}>
-          <DialogContent className="sm:max-w-[700px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D] max-h-[80vh] overflow-y-auto">
+        <Dialog 
+          open={ingestOpen} 
+          onOpenChange={(open) => {
+            // Prevent closing if confirm dialog is open
+            if (!open && isConfirmDialogOpen) {
+              return;
+            }
+            setIngestOpen(open);
+          }}
+        >
+          <DialogContent 
+            className="sm:max-w-[700px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D] max-h-[80vh] overflow-y-auto"
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
-              <DialogTitle className="text-black dark:text-white">Data Ingest for Knowledge Graph</DialogTitle>
+              <DialogTitle className="text-black dark:text-white">Document Ingestion for Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
-                Upload files locally, download from cloud storage, or configure S3 Bedrock for data ingestion
+                Upload files locally, download from cloud storage, or configure Amazon Bedrock Data Automation for document ingestion
               </DialogDescription>
             </DialogHeader>
 
@@ -833,15 +1003,15 @@ const Setup = () => {
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="upload">
                   <FolderUp className="h-4 w-4 mr-2" />
-                  Upload Data
+                  Upload Files
                 </TabsTrigger>
                 <TabsTrigger value="cloudDownload">
                   <CloudDownload className="h-4 w-4 mr-2" />
                   Download from Cloud
                 </TabsTrigger>
                 <TabsTrigger value="s3">
-                  <Cloud className="h-4 w-4 mr-2" />
-                  S3 Bedrock Configuration
+                  <CloudCog className="h-4 w-4 mr-2" />
+                  Amazon BDA Configuration
                 </TabsTrigger>
               </TabsList>
 
@@ -905,13 +1075,13 @@ const Setup = () => {
                   {uploadedFiles.length > 0 && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
-                        Ingest Data into Knowledge Graph
+                        Ingest Documents into Knowledge Graph
                       </h3>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
                         Process uploaded files and add them to the knowledge graph
                       </p>
                       <Button
-                        onClick={() => handleIngestData("uploaded")}
+                        onClick={() => handleIngestDocuments("uploaded")}
                         disabled={isIngesting}
                         className="gradient text-white w-full"
                       >
@@ -923,7 +1093,7 @@ const Setup = () => {
                         ) : (
                           <>
                             <Database className="h-4 w-4 mr-2" />
-                            Ingest Data into {ingestGraphName}
+                            Ingest Documents into {ingestGraphName}
                           </>
                         )}
                       </Button>
@@ -1244,13 +1414,13 @@ const Setup = () => {
                   {downloadedFiles.length > 0 && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
-                        Ingest Downloaded Data into Knowledge Graph
+                        Ingest Documents into Knowledge Graph
                       </h3>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
                         Process downloaded files and add them to the knowledge graph
                       </p>
                       <Button
-                        onClick={() => handleIngestData("downloaded")}
+                        onClick={() => handleIngestDocuments("downloaded")}
                         disabled={isIngesting}
                         className="gradient text-white w-full"
                       >
@@ -1262,7 +1432,7 @@ const Setup = () => {
                         ) : (
                           <>
                             <Database className="h-4 w-4 mr-2" />
-                            Ingest Downloaded Data into {ingestGraphName}
+                            Ingest Documents into {ingestGraphName}
                           </>
                         )}
                       </Button>
@@ -1403,12 +1573,24 @@ const Setup = () => {
         </Dialog>
 
         {/* Refresh Graph Dialog */}
-        <Dialog open={refreshOpen} onOpenChange={setRefreshOpen}>
-          <DialogContent className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]">
+        <Dialog 
+          open={refreshOpen} 
+          onOpenChange={(open) => {
+            // Prevent closing if confirm dialog is open
+            if (!open && isConfirmDialogOpen) {
+              return;
+            }
+            setRefreshOpen(open);
+          }}
+        >
+          <DialogContent 
+            className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]"
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
               <DialogTitle className="text-black dark:text-white">Refresh Knowledge Graph</DialogTitle>
               <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
-                Refresh data and rebuild the community structure of your knowledge graph
+                Rebuild the graph content and rerun community detection for your knowledge graph
               </DialogDescription>
             </DialogHeader>
 
@@ -1442,7 +1624,7 @@ const Setup = () => {
                   ⚠️ Warning
                 </p>
                 <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                  This operation will process new data and redo community detection that will interrupt related queries. 
+                  This operation will process new documents and rerun community detection that will interrupt related queries. 
                   Please confirm to proceed.
                 </p>
               </div>
@@ -1465,22 +1647,31 @@ const Setup = () => {
                 variant="outline"
                 onClick={() => {
                   setRefreshOpen(false);
-                  setRefreshMessage("");
                 }}
                 disabled={isRefreshing}
                 className="dark:border-[#3D3D3D]"
               >
-                Cancel
+                Close
               </Button>
               <Button
                 onClick={handleRefreshGraph}
-                disabled={isRefreshing || !refreshGraphName}
+                disabled={isRefreshing || !refreshGraphName || isRebuildRunning || isCheckingStatus}
                 className="gradient text-white"
               >
                 {isRefreshing ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Refreshing...
+                    Submitting...
+                  </>
+                ) : isCheckingStatus ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Checking Status...
+                  </>
+                ) : isRebuildRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Rebuild In Progress...
                   </>
                 ) : (
                   <>
@@ -1492,6 +1683,9 @@ const Setup = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* User Confirmation Dialog */}
+        {confirmDialog}
       </div>
     </div>
   );
