@@ -453,10 +453,10 @@ class TigerGraphAgentGraph:
                     Params={'Bucket': bucket, 'Key': key},
                     ExpiresIn=expires_in
                 )
-                return url
+                return f"({url})"
             except Exception as e:
                 logger.error(f"Failed to presign S3 url for s3://{bucket}/{key}: {e}")
-                return match.group(0)
+                return f"({match.group(0)})"
 
         def process(value):
             if isinstance(value, str):
