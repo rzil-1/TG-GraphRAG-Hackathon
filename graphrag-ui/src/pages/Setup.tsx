@@ -66,10 +66,8 @@ const Setup = () => {
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   
   // S3 state
-  const [fileFormat, setFileFormat] = useState<"json" | "multi">("json");
   const [awsAccessKey, setAwsAccessKey] = useState("");
   const [awsSecretKey, setAwsSecretKey] = useState("");
-  const [dataPath, setDataPath] = useState("");
   const [inputBucket, setInputBucket] = useState("");
   const [outputBucket, setOutputBucket] = useState("");
   const [regionName, setRegionName] = useState("");
@@ -489,6 +487,112 @@ const Setup = () => {
       setIngestMessage(`✅ Data ingested successfully! Processed documents from ${folderPath}/`);
     } catch (error: any) {
       console.error("Error ingesting data:", error);
+      setIngestMessage(`❌ Error: ${error.message}`);
+    } finally {
+      setIsIngesting(false);
+    }
+  };
+
+  // Ingest files from S3 with Bedrock BDA
+  const handleS3BedrockIngest = async () => {
+    if (!ingestGraphName) {
+      setIngestMessage("Please select a graph");
+      return;
+    }
+
+    // Validate inputs based on file format
+    if (!awsAccessKey || !awsSecretKey) {
+      setIngestMessage("❌ Please provide AWS Access Key and Secret Key");
+      return;
+    }
+
+    if (!inputBucket || !outputBucket || !regionName) {
+      setIngestMessage("❌ Please provide Input Bucket, Output Bucket, and Region Name");
+      return;
+    }
+
+    // Ask for confirmation if using Bedrock (multi format)
+    const shouldProceed = await confirm(
+      `Are you using AWS Bedrock for multimodal document processing? This will trigger AWS Bedrock BDA to process your documents from the input bucket (${inputBucket}) and store the results in the output bucket (${outputBucket}).`
+    );
+    if (!shouldProceed) {
+      setIngestMessage("Operation cancelled by user.");
+      return;
+    }
+
+    setIsIngesting(true);
+    setIngestMessage("Step 1/2: Creating ingest job...");
+
+    try {
+      const creds = localStorage.getItem("creds");
+
+      // Step 1: Create ingest job
+      const createIngestConfig: any = {
+        data_source: "s3",
+        data_source_config: {
+          aws_access_key: awsAccessKey,
+          aws_secret_key: awsSecretKey,
+          input_bucket: inputBucket,
+          output_bucket: outputBucket,
+          region_name: regionName,
+        },
+        loader_config: {
+          doc_id_field: "doc_id",
+          content_field: "content",
+          doc_type: "markdown",
+        },
+        file_format: "multi"
+      };
+
+      setIngestMessage("Step 1/2: Creating ingest job and triggering Amazon BDA processing...");
+
+      const createResponse = await fetch(`/ui/${ingestGraphName}/create_ingest`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${creds}`,
+        },
+        body: JSON.stringify(createIngestConfig),
+      });
+
+      if (!createResponse.ok) {
+        const errorData = await createResponse.json();
+        throw new Error(errorData.detail || `Failed to create ingest job: ${createResponse.statusText}`);
+      }
+
+      const createData = await createResponse.json();
+      //console.log("Create ingest response:", createData);
+
+      // Step 2: Run ingest
+      setIngestMessage("Step 2/2: Running document ingest...");
+
+      const loadingInfo = {
+        load_job_id: createData.load_job_id,
+        data_source_id: createData.data_source_id,
+        file_path: outputBucket,
+      };
+
+      const ingestResponse = await fetch(`/ui/${ingestGraphName}/ingest`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${creds}`,
+        },
+        body: JSON.stringify(loadingInfo),
+      });
+
+      if (!ingestResponse.ok) {
+        const errorData = await ingestResponse.json();
+        throw new Error(errorData.detail || `Failed to run ingest: ${ingestResponse.statusText}`);
+      }
+
+      const ingestData = await ingestResponse.json();
+      console.log("Ingest response:", ingestData);
+
+      setIngestMessage(`✅ Files ingested successfully! Amazon BDA processed documents from ${inputBucket} and loaded results from ${outputBucket}.`);
+
+    } catch (error: any) {
+      console.error("Error ingesting files:", error);
       setIngestMessage(`❌ Error: ${error.message}`);
     } finally {
       setIsIngesting(false);
@@ -1455,20 +1559,6 @@ const Setup = () => {
               {/* S3 Bedrock Configuration Tab */}
               <TabsContent value="s3" className="space-y-4">
                 <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      File Format
-                    </label>
-                    <Select value={fileFormat} onValueChange={(value: "json" | "multi") => setFileFormat(value)}>
-                      <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-shadeA">
-                        <SelectValue placeholder="Select file format" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="json">JSON</SelectItem>
-                        <SelectItem value="multi">Multi</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
 
                   {/* Common fields */}
                   <div>
@@ -1497,62 +1587,82 @@ const Setup = () => {
                     />
                   </div>
 
-                  {/* Conditional fields based on file format */}
-                  {fileFormat === "json" ? (
-                    <div>
-                      <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                        Data Path
-                      </label>
-                      <Input
-                        type="text"
-                        value={dataPath}
-                        onChange={(e) => setDataPath(e.target.value)}
-                        placeholder="s3://bucket-name/path/to/data"
-                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
-                      />
-                    </div>
-                  ) : (
-                    <>
-                      <div>
-                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                          Input Bucket
-                        </label>
-                        <Input
-                          type="text"
-                          value={inputBucket}
-                          onChange={(e) => setInputBucket(e.target.value)}
-                          placeholder="Enter input bucket name"
-                          className="dark:border-[#3D3D3D] dark:bg-shadeA"
-                        />
-                      </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      Input Bucket
+                    </label>
+                    <Input
+                      type="text"
+                      value={inputBucket}
+                      onChange={(e) => setInputBucket(e.target.value)}
+                      placeholder="Enter input bucket name"
+                      className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                    />
+                  </div>
 
-                      <div>
-                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                          Output Bucket
-                        </label>
-                        <Input
-                          type="text"
-                          value={outputBucket}
-                          onChange={(e) => setOutputBucket(e.target.value)}
-                          placeholder="Enter output bucket name"
-                          className="dark:border-[#3D3D3D] dark:bg-shadeA"
-                        />
-                      </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      Output Bucket
+                    </label>
+                    <Input
+                      type="text"
+                      value={outputBucket}
+                      onChange={(e) => setOutputBucket(e.target.value)}
+                      placeholder="Enter output bucket name"
+                      className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                    />
+                  </div>
 
-                      <div>
-                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                          Region Name
-                        </label>
-                        <Input
-                          type="text"
-                          value={regionName}
-                          onChange={(e) => setRegionName(e.target.value)}
-                          placeholder="e.g., us-east-1"
-                          className="dark:border-[#3D3D3D] dark:bg-shadeA"
-                        />
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      Region Name
+                    </label>
+                    <Input
+                      type="text"
+                      value={regionName}
+                      onChange={(e) => setRegionName(e.target.value)}
+                      placeholder="e.g., us-east-1"
+                      className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                    />
+                  </div>
+
+                  {/* Ingest S3 Files with Amazon BDA Section */}
+                  <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
+                    <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
+                      Ingest S3 files using Amazon BDA
+                    </h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                      Process multimodal documents stored in S3 with Amazon Bedrock Data Automation and ingest them into your knowledge graph.
+                    </p>
+                    <Button
+                      onClick={handleS3BedrockIngest}
+                      disabled={isIngesting}
+                      className="gradient text-white w-full"
+                    >
+                      {isIngesting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Ingesting...
+                        </>
+                      ) : (
+                        <>
+                          <Database className="h-4 w-4 mr-2" />
+                          Ingest from S3 into {ingestGraphName}
+                        </>
+                      )}
+                    </Button>
+                    {ingestMessage && (
+                      <div className={`p-3 rounded-lg text-sm mt-3 ${
+                        ingestMessage.includes("✅")
+                          ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
+                          : ingestMessage.includes("❌")
+                          ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
+                          : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                      }`}>
+                        {ingestMessage}
                       </div>
-                    </>
-                  )}
+                    )}
+                  </div>
                 </div>
               </TabsContent>
             </Tabs>
@@ -1624,7 +1734,7 @@ const Setup = () => {
                   ⚠️ Warning
                 </p>
                 <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                  This operation will process new documents and rerun community detection that will interrupt related queries. 
+                  This operation will process new documents and rerun community detection that will interrupt related queries.
                   Please confirm to proceed.
                 </p>
               </div>
