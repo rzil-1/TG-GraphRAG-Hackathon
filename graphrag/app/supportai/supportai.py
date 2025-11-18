@@ -106,6 +106,16 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
             )
         )
 
+    if "- LOADING JOB load_documents_content_json " not in current_schema:
+        supportai_queries.extend([
+            "common/gsql/supportai/SupportAI_InitialLoadJSON.gsql",
+        ])
+
+    if "- LOADING JOB load_documents_content_json_with_images " not in current_schema:
+        supportai_queries.extend([
+            "common/gsql/supportai/SupportAI_InitialLoadJSON_WithImages.gsql",
+        ])
+    
     for filename in supportai_queries:
         logger.info(f"Creating supportai query {filename}")
         with open(f"{filename}", "r") as f:
@@ -209,13 +219,16 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
         s3_pattern = re.compile(r'^s3://[a-z0-9\.-]{3,63}/.+$')
         if s3_pattern.match(input_uri):
             input_bucket = input_uri[5:].split("/")[0]
-            input_prefix = "/".join(input_uri[5:].split("/")[1:])+"/"
+            input_prefix = "/".join(input_uri[5:].split("/")[1:])
         elif "//" in input_uri or input_uri.startswith("/") or input_uri.startswith("."):
             raise Exception("Input URI is not in the format of s3://<bucket_name>/<prefix>")
         else:
             input_bucket = input_uri.split("/")[0]
-            input_prefix = "/".join(input_uri.split("/")[1:])+"/"
+            input_prefix = "/".join(input_uri.split("/")[1:])
             input_uri = "s3://" + input_uri
+
+        if input_prefix and not input_prefix.endswith("/"):
+            input_prefix += "/"
 
         if not s3_pattern.match(output_uri):
             if "//" in output_uri or output_uri.startswith("/") or output_uri.startswith("."):
@@ -223,9 +236,10 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
             else:
                 output_uri = "s3://" + output_uri
 
+
         response = s3.list_objects_v2(Bucket=input_bucket, Prefix=input_prefix)
         objects = response.get('Contents', [])
-        logger.info(f"Found {len(objects)} objects in S3 bucket {input_uri}")
+        logger.info(f"Found {len(objects)} objects in S3 bucket {input_uri} with prefix {input_prefix}")
         job_results = []
 
         # Launch all BDA jobs first and collect job_arns
@@ -270,7 +284,7 @@ def trigger_bedrock_bda(input_uri, output_uri, region, aws_access_key, aws_secre
                 status = status_response.get('status')
                 if status in ['Success', 'FAILED', 'STOPPED']:
                     if status not in ['Success']:
-                        logger.info(f"ERROR: job not success for {job_arn} on file {file_key}with end status {status}")
+                        logger.info(f"ERROR: job not success for {job_arn} on file {file_key} with end status {status}")
                     else:
                         logger.info(f"BDA job {job_arn} on file {file_key} completed successfully.")
                     job['status'] = status
@@ -321,30 +335,15 @@ def create_ingest(
         raise Exception(
             "Multi-format file processing is only supported for S3 and server data sources.")
 
-    # Choose loading job template based on source/format
-    if (
-        ingest_config.file_format.lower() == "multi"
-        and ingest_config.data_source.lower() == "server"
-    ):
-        # Server multi can include images; use the WithImages loading job
-        file_path = "common/gsql/supportai/SupportAI_InitialLoadJSON_WithImages.gsql"
-    elif ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
-        file_path = "common/gsql/supportai/SupportAI_InitialLoadJSON.gsql"
+    res_ingest_config = {"data_source": ingest_config.data_source.lower()}
+    res_ingest_config["file_format"] = ingest_config.file_format.lower()
 
-    if ingest_config.file_format.lower() in ["json", "multi"]:
-        with open(file_path) as f:
-            ingest_template = f.read()
-        ingest_template = ingest_template.replace("@uuid@", str(uuid.uuid4().hex))
-        doc_id = ingest_config.loader_config.get("doc_id_field", "doc_id")
-        doc_text = ingest_config.loader_config.get("content_field", "content")
-        doc_type = ingest_config.loader_config.get("doc_type_field", "doc_type")
-        doc_type_value = ingest_config.loader_config.get("doc_type", "")
-        ingest_template = ingest_template.replace('"doc_id"', '"{}"'.format(doc_id))
-        ingest_template = ingest_template.replace('"content"', '"{}"'.format(doc_text))
-        if doc_type_value:
-            ingest_template = ingest_template.replace('$"doc_type"', '"{}"'.format(doc_type_value))
-        else:
-            ingest_template = ingest_template.replace('"doc_type"', '"{}"'.format(doc_type))
+    # Choose loading job template based on source/format
+    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() == "server"
+        # Server multi can include images; use the WithImages loading job
+        load_job_id = "load_documents_content_json_with_images"
+    elif ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
+        load_job_id = "load_documents_content_json"
     elif ingest_config.file_format.lower() == "csv":
         file_path = "common/gsql/supportai/SupportAI_InitialLoadCSV.gsql"
 
@@ -359,126 +358,131 @@ def create_ingest(
         ingest_template = ingest_template.replace('"true"', '"{}"'.format(header))
         ingest_template = ingest_template.replace('"\\n"', '"{}"'.format(eol))
         ingest_template = ingest_template.replace('"double"', '"{}"'.format(quote))
+
+        res_ingest_config["loader_config"] = ingest_config.loader_config
+
+        logger.debug(f"Ingest template: USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
+        load_job_created = conn.gsql(f"USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
+        load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
     else:
         raise Exception("File format not implemented")
 
-    # check the data source and create the appropriate connection
-    file_path = "common/gsql/supportai/SupportAI_DataSourceCreation.gsql"
-    with open(file_path) as f:
-        data_stream_conn = f.read()
+    res_ingest_config["load_job_id"] = load_job_id
+    res = {"load_job_id": load_job_id}
+    logger.info(f"Set load job for ingestion: {load_job_id}")
 
-    # assign unique identifier to the data stream connection
-    data_stream_conn = data_stream_conn.replace(
-        "@source_name@", "SupportAI_" + graphname + "_" + str(uuid.uuid4().hex)
-    )
+    if ingest_config.data_source.lower() in ["s3", "azure", "gcs"]:
+        # check the data source and create the appropriate connection
+        file_path = "common/gsql/supportai/SupportAI_DataSourceCreation.gsql"
+        with open(file_path) as f:
+            data_stream_conn = f.read()
 
-    res_ingest_config = {"data_source": ingest_config.data_source.lower()}
-    res_ingest_config["file_format"] = ingest_config.file_format.lower()
-    res_ingest_config["loader_config"] = ingest_config.loader_config
+        # assign unique identifier to the data stream connection
+        data_stream_conn = data_stream_conn.replace(
+            "@source_name@", "SupportAI_" + graphname + "_" + str(uuid.uuid4().hex)
+        )
 
-    if ingest_config.data_source.lower() == "s3":
-        data_conf = ingest_config.data_source_config
-        aws_access_key = data_conf.get("aws_access_key", None)
-        aws_secret_key = data_conf.get("aws_secret_key", None)
+        if ingest_config.data_source.lower() == "s3":
+            data_conf = ingest_config.data_source_config
+            aws_access_key = data_conf.get("aws_access_key", None)
+            aws_secret_key = data_conf.get("aws_secret_key", None)
 
-        if aws_access_key is None or aws_secret_key is None:
-            raise Exception("AWS credentials not provided")
+            if aws_access_key is None or aws_secret_key is None:
+                raise Exception("AWS credentials not provided")
 
-        res_ingest_config["aws_access_key"] = aws_access_key
-        res_ingest_config["aws_secret_key"] = aws_secret_key
+            res_ingest_config["aws_access_key"] = aws_access_key
+            res_ingest_config["aws_secret_key"] = aws_secret_key
 
-        if ingest_config.file_format.lower() == "multi":
-            input_bucket = data_conf.get("input_bucket", None)
-            output_bucket = data_conf.get("output_bucket", None)
-            region_name = data_conf.get("region_name", None)
+            if ingest_config.file_format.lower() == "multi":
+                input_bucket = data_conf.get("input_bucket", None)
+                output_bucket = data_conf.get("output_bucket", None)
+                region_name = data_conf.get("region_name", None)
 
-            if input_bucket is None or output_bucket is None or region_name is None:
-                raise Exception("Input bucket, output bucket, or region name not provided")
+                if input_bucket is None or output_bucket is None or region_name is None:
+                    raise Exception("Input bucket, output bucket, or region name not provided")
 
-            res_ingest_config["region_name"] = region_name
+                res_ingest_config["region_name"] = region_name
 
-            try:
-                bedrock_bda_result = trigger_bedrock_bda(
-                    input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_conf)
-                if bedrock_bda_result.get("statusCode") != 200 and bedrock_bda_result.get("statusCode") != 300:
-                    raise Exception(f"Bedrock BDA failed: {bedrock_bda_result}")
-                res_ingest_config["bda_jobs"] = bedrock_bda_result.get("jobs")
-            except Exception as e:
-                raise Exception(f"Error during Bedrock BDA preprocessing: {e}")
-        else:
+                try:
+                    amazon_bda_result = trigger_bedrock_bda(
+                        input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_conf)
+                    if amazon_bda_result.get("statusCode") != 200 and amazon_bda_result.get("statusCode") != 300:
+                        raise Exception(f"Amazon BDA failed: {amazon_bda_result}")
+                    else:
+                        logger.info(f"Amazon BDA completed successfully: {amazon_bda_result}")
+                    res_ingest_config["bda_jobs"] = amazon_bda_result.get("jobs")
+                except Exception as e:
+                    raise Exception(f"Error during Amazon BDA preprocessing: {e}")
+            else:
+                connector = {
+                    "type": "s3",
+                    "access.key": aws_access_key,
+                    "secret.key": aws_secret_key,
+                }
+                data_stream_conn = data_stream_conn.replace(
+                    "@source_config@", json.dumps(connector)
+                )
+        elif ingest_config.data_source.lower() == "azure":
+            if ingest_config.data_source_config.get("account_key") is not None:
+                connector = {
+                    "type": "abs",
+                    "account.key": ingest_config.data_source_config["account_key"],
+                }
+            elif ingest_config.data_source_config.get("client_id") is not None:
+                # verify that the client secret is also provided
+                if ingest_config.data_source_config.get("client_secret") is None:
+                    raise Exception("Client secret not provided")
+                # verify that the tenant id is also provided
+                if ingest_config.data_source_config.get("tenant_id") is None:
+                    raise Exception("Tenant id not provided")
+                connector = {
+                    "type": "abs",
+                    "client.id": ingest_config.data_source_config["client_id"],
+                    "client.secret": ingest_config.data_source_config["client_secret"],
+                    "tenant.id": ingest_config.data_source_config["tenant_id"],
+                }
+            else:
+                raise Exception("Azure credentials not provided")
+            data_stream_conn = data_stream_conn.replace(
+                "@source_config@", json.dumps(connector)
+            )
+        elif ingest_config.data_source.lower() == "gcs":
+            # verify that the correct fields are provided
+            if ingest_config.data_source_config.get("project_id") is None:
+                raise Exception("Project id not provided")
+            if ingest_config.data_source_config.get("private_key_id") is None:
+                raise Exception("Private key id not provided")
+            if ingest_config.data_source_config.get("private_key") is None:
+                raise Exception("Private key not provided")
+            if ingest_config.data_source_config.get("client_email") is None:
+                raise Exception("Client email not provided")
             connector = {
-                "type": "s3",
-                "access.key": aws_access_key,
-                "secret.key": aws_secret_key,
+                "type": "gcs",
+                "project_id": ingest_config.data_source_config["project_id"],
+                "private_key_id": ingest_config.data_source_config["private_key_id"],
+                "private_key": ingest_config.data_source_config["private_key"],
+                "client_email": ingest_config.data_source_config["client_email"],
             }
             data_stream_conn = data_stream_conn.replace(
                 "@source_config@", json.dumps(connector)
             )
-    elif ingest_config.data_source.lower() == "azure":
-        if ingest_config.data_source_config.get("account_key") is not None:
-            connector = {
-                "type": "abs",
-                "account.key": ingest_config.data_source_config["account_key"],
-            }
-        elif ingest_config.data_source_config.get("client_id") is not None:
-            # verify that the client secret is also provided
-            if ingest_config.data_source_config.get("client_secret") is None:
-                raise Exception("Client secret not provided")
-            # verify that the tenant id is also provided
-            if ingest_config.data_source_config.get("tenant_id") is None:
-                raise Exception("Tenant id not provided")
-            connector = {
-                "type": "abs",
-                "client.id": ingest_config.data_source_config["client_id"],
-                "client.secret": ingest_config.data_source_config["client_secret"],
-                "tenant.id": ingest_config.data_source_config["tenant_id"],
-            }
-        else:
-            raise Exception("Azure credentials not provided")
-        data_stream_conn = data_stream_conn.replace(
-            "@source_config@", json.dumps(connector)
-        )
-    elif ingest_config.data_source.lower() == "gcs":
-        # verify that the correct fields are provided
-        if ingest_config.data_source_config.get("project_id") is None:
-            raise Exception("Project id not provided")
-        if ingest_config.data_source_config.get("private_key_id") is None:
-            raise Exception("Private key id not provided")
-        if ingest_config.data_source_config.get("private_key") is None:
-            raise Exception("Private key not provided")
-        if ingest_config.data_source_config.get("client_email") is None:
-            raise Exception("Client email not provided")
-        connector = {
-            "type": "gcs",
-            "project_id": ingest_config.data_source_config["project_id"],
-            "private_key_id": ingest_config.data_source_config["private_key_id"],
-            "private_key": ingest_config.data_source_config["private_key"],
-            "client_email": ingest_config.data_source_config["client_email"],
-        }
-        data_stream_conn = data_stream_conn.replace(
-            "@source_config@", json.dumps(connector)
-        )
-    elif ingest_config.data_source.lower() == "server":
-        folder_path = ingest_config.data_source_config.get("folder_path", None)
-        if folder_path is None:
-            raise Exception("Folder path not provided for server processing")
-        if ingest_config.file_format.lower() == "multi":
-            extractor = TextExtractor()
-            server_processing_result = extractor.process_folder(folder_path, graphname=graphname)
-            if server_processing_result.get("statusCode") != 200:
-                raise Exception(f"Server folder processing failed: {server_processing_result}")
-            documents = server_processing_result.get("documents", [])
-            res_ingest_config["server_jobs"] = documents
-        else:
-            raise Exception("Server data source supports only 'multi' file_format")
-    elif ingest_config.data_source.lower() == "remote":
+        elif ingest_config.data_source.lower() == "server":
+            folder_path = ingest_config.data_source_config.get("folder_path", None)
+            if folder_path is None:
+                raise Exception("Folder path not provided for server processing")
+            if ingest_config.file_format.lower() == "multi":
+                extractor = TextExtractor()
+                server_processing_result = extractor.process_folder(folder_path, graphname=graphname)
+                if server_processing_result.get("statusCode") != 200:
+                    raise Exception(f"Server folder processing failed: {server_processing_result}")
+                documents = server_processing_result.get("documents", [])
+                res_ingest_config["server_jobs"] = documents
+            else:
+                raise Exception("Server data source supports only 'multi' file_format")
+    elif ingest_config.data_source.lower() in ["server", "remote"]:
         pass
     else:
         raise Exception("Data source not implemented")
-
-    logger.debug(f"Ingest template: USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
-    load_job_created = conn.gsql(f"USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
-    res = {"load_job_id": load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")}
 
     if "data_path" not in res and ingest_config.data_source_config:
         res["data_path"] = ingest_config.data_source_config.get("data_path", "")
@@ -580,7 +584,8 @@ def ingest(
             else:
                 s3_bucket = loader_info.file_path.split("/")[0]
                 s3_prefix = "/".join(loader_info.file_path.split("/")[1:])
-            if not s3_prefix.endswith("/"):
+
+            if s3_prefix and not s3_prefix.endswith("/"):
                 s3_prefix += "/"
 
             # --- Begin: S3 markdown extraction and TigerGraph loading ---

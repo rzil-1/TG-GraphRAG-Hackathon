@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Database, Upload, RefreshCw, Loader2, Trash2, FolderUp, Cloud, ArrowLeft, CloudDownload, CloudCog } from "lucide-react";
+import { Database, Upload, RefreshCw, Loader2, Trash2, FolderUp, Cloud, ArrowLeft, CloudDownload, CloudLightning } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +56,7 @@ const Setup = () => {
   const [uploadMessage, setUploadMessage] = useState("");
   const [isIngesting, setIsIngesting] = useState(false);
   const [ingestMessage, setIngestMessage] = useState("");
+  const [activeTab, setActiveTab] = useState("upload");
 
   // Refresh state
   const [refreshOpen, setRefreshOpen] = useState(false);
@@ -71,6 +72,7 @@ const Setup = () => {
   const [inputBucket, setInputBucket] = useState("");
   const [outputBucket, setOutputBucket] = useState("");
   const [regionName, setRegionName] = useState("");
+  const [skipBDAProcessing, setSkipBDAProcessing] = useState(false);
 
   // Cloud Download state
   const [cloudProvider, setCloudProvider] = useState<"s3" | "gcs" | "azure">("s3");
@@ -456,7 +458,7 @@ const Setup = () => {
       }
 
       const createData = await createResponse.json();
-      console.log("Create ingest response:", createData);
+      //console.log("Create ingest response:", createData);
 
       // Step 2: Run ingest
       setIngestMessage("Step 2/2: Running document ingest...");
@@ -482,7 +484,7 @@ const Setup = () => {
       }
 
       const ingestData = await ingestResponse.json();
-      console.log("Ingest response:", ingestData);
+      //console.log("Ingest response:", ingestData);
 
       setIngestMessage(`✅ Data ingested successfully! Processed documents from ${folderPath}/`);
     } catch (error: any) {
@@ -493,8 +495,8 @@ const Setup = () => {
     }
   };
 
-  // Ingest files from S3 with Bedrock BDA
-  const handleS3BedrockIngest = async () => {
+  // Ingest files from S3 with Amazon BDA
+  const handleS3BDAIngest = async () => {
     if (!ingestGraphName) {
       setIngestMessage("Please select a graph");
       return;
@@ -506,71 +508,111 @@ const Setup = () => {
       return;
     }
 
-    if (!inputBucket || !outputBucket || !regionName) {
-      setIngestMessage("❌ Please provide Input Bucket, Output Bucket, and Region Name");
-      return;
+    if (skipBDAProcessing) {
+      // When skipping BDA, only output bucket and region are required
+      if (!outputBucket || !regionName) {
+        setIngestMessage("❌ Please provide Output Bucket and Region Name");
+        return;
+      }
+    } else {
+      // When using BDA, all fields are required
+      if (!inputBucket || !outputBucket || !regionName) {
+        setIngestMessage("❌ Please provide Input Bucket, Output Bucket, and Region Name");
+        return;
+      }
     }
 
-    // Ask for confirmation if using Bedrock (multi format)
-    const shouldProceed = await confirm(
-      `Are you using AWS Bedrock for multimodal document processing? This will trigger AWS Bedrock BDA to process your documents from the input bucket (${inputBucket}) and store the results in the output bucket (${outputBucket}).`
-    );
+    // Ask for confirmation
+    const confirmMessage = skipBDAProcessing
+      ? `You're skipping Amazon BDA processing and will ingest directly from the output bucket (${outputBucket}). Please confirm to proceed.`
+      : `You're using Amazon BDA for multimodal document processing. This will trigger Amazon BDA to process your documents from the input bucket (${inputBucket}) and store the results in the output bucket (${outputBucket}) and then ingest them into your knowledge graph. Please confirm to proceed.`;
+    
+    const shouldProceed = await confirm(confirmMessage);
     if (!shouldProceed) {
       setIngestMessage("Operation cancelled by user.");
       return;
     }
 
     setIsIngesting(true);
-    setIngestMessage("Step 1/2: Creating ingest job...");
 
     try {
       const creds = localStorage.getItem("creds");
+      let loadingInfo: any = {};
 
-      // Step 1: Create ingest job
-      const createIngestConfig: any = {
-        data_source: "s3",
-        data_source_config: {
+      if (skipBDAProcessing) {
+        // Skip BDA processing - create ingest job that reads directly from output bucket
+        const runIngestConfig: any = {
+          data_source: "s3",
           aws_access_key: awsAccessKey,
           aws_secret_key: awsSecretKey,
-          input_bucket: inputBucket,
           output_bucket: outputBucket,
           region_name: regionName,
-        },
-        loader_config: {
-          doc_id_field: "doc_id",
-          content_field: "content",
-          doc_type: "markdown",
-        },
-        file_format: "multi"
-      };
+          bda_jobs:[],
+          loader_config: {
+            doc_id_field: "doc_id",
+            content_field: "content",
+            doc_type: "markdown",
+          },
+          file_format: "multi"
+        };
 
-      setIngestMessage("Step 1/2: Creating ingest job and triggering Amazon BDA processing...");
+        setIngestMessage("Step 1/2: Creating ingest job from output bucket...");
 
-      const createResponse = await fetch(`/ui/${ingestGraphName}/create_ingest`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${creds}`,
-        },
-        body: JSON.stringify(createIngestConfig),
-      });
+        // Run ingest directly
+        loadingInfo = {
+          load_job_id: "load_documents_content_json",
+          data_source_id: runIngestConfig,
+          file_path: outputBucket,
+        };
+        setIngestMessage(`Step 2/2: Running document ingestion for all files in ${outputBucket}...`);
+      } else {
+        // Step 1: Create ingest job with BDA processing
+        const createIngestConfig: any = {
+          data_source: "s3",
+          data_source_config: {
+            aws_access_key: awsAccessKey,
+            aws_secret_key: awsSecretKey,
+            input_bucket: inputBucket,
+            output_bucket: outputBucket,
+            region_name: regionName,
+          },
+          loader_config: {
+            doc_id_field: "doc_id",
+            content_field: "content",
+            doc_type: "markdown",
+          },
+          file_format: "multi"
+        };
 
-      if (!createResponse.ok) {
-        const errorData = await createResponse.json();
-        throw new Error(errorData.detail || `Failed to create ingest job: ${createResponse.statusText}`);
+        setIngestMessage("Step 1/2: Triggering Amazon BDA processing and creating ingest job...");
+
+        const createResponse = await fetch(`/ui/${ingestGraphName}/create_ingest`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${creds}`,
+          },
+          body: JSON.stringify(createIngestConfig),
+        });
+
+        if (!createResponse.ok) {
+          const errorData = await createResponse.json();
+          throw new Error(errorData.detail || `Failed to create ingest job: ${createResponse.statusText}`);
+        }
+
+        const createData = await createResponse.json();
+        //console.log("Create ingest response:", createData);
+
+        // Step 2: Run ingest
+        loadingInfo = {
+          load_job_id: createData.load_job_id,
+          data_source_id: createData.data_source_id,
+          file_path: outputBucket,
+        };
+
+        const filesToIngest = createData.data_source_id.bda_jobs.map((job: any) => job.jobId.split("/")[-1]);
+        setIngestMessage(`Step 2/2: Running document ingest for ${filesToIngest.length} files in ${outputBucket}...`);
       }
-
-      const createData = await createResponse.json();
-      //console.log("Create ingest response:", createData);
-
-      // Step 2: Run ingest
-      setIngestMessage("Step 2/2: Running document ingest...");
-
-      const loadingInfo = {
-        load_job_id: createData.load_job_id,
-        data_source_id: createData.data_source_id,
-        file_path: outputBucket,
-      };
 
       const ingestResponse = await fetch(`/ui/${ingestGraphName}/ingest`, {
         method: "POST",
@@ -587,9 +629,10 @@ const Setup = () => {
       }
 
       const ingestData = await ingestResponse.json();
-      console.log("Ingest response:", ingestData);
+      //console.log("Ingest response:", ingestData);
+      const filesIngested = ingestData.summary.map((file: any) => file.file_path);
 
-      setIngestMessage(`✅ Files ingested successfully! Amazon BDA processed documents from ${inputBucket} and loaded results from ${outputBucket}.`);
+      setIngestMessage(`✅ Document ingestion completed successfully! Ingested ${filesIngested.length} into your knowledge graph.`);
 
     } catch (error: any) {
       console.error("Error ingesting files:", error);
@@ -1078,8 +1121,8 @@ const Setup = () => {
               <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                 Target Graph Name
               </label>
-              <Select value={ingestGraphName} onValueChange={setIngestGraphName}>
-                <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-shadeA">
+              <Select value={ingestGraphName} onValueChange={setIngestGraphName} disabled={isIngesting}>
+                <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-shadeA" disabled={isIngesting}>
                   <SelectValue placeholder="Select a graph" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1096,32 +1139,33 @@ const Setup = () => {
                   )}
                 </SelectContent>
               </Select>
-              {ingestGraphName && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Files will be uploaded to: uploads/{ingestGraphName}/
-                </p>
-              )}
             </div>
 
-            <Tabs defaultValue="upload" className="w-full">
+            <Tabs value={activeTab} onValueChange={(value) => {
+              // Block tab switching when ingesting
+              if (!isIngesting) {
+                setActiveTab(value);
+              }
+            }} className="w-full">
               <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="upload">
+                <TabsTrigger value="upload" disabled={isIngesting}>
                   <FolderUp className="h-4 w-4 mr-2" />
                   Upload Files
                 </TabsTrigger>
-                <TabsTrigger value="cloudDownload">
+                <TabsTrigger value="cloudDownload" disabled={isIngesting}>
                   <CloudDownload className="h-4 w-4 mr-2" />
                   Download from Cloud
                 </TabsTrigger>
-                <TabsTrigger value="s3">
-                  <CloudCog className="h-4 w-4 mr-2" />
-                  Amazon BDA Configuration
+                <TabsTrigger value="s3BDA" disabled={isIngesting}>
+                  <CloudLightning className="h-4 w-4 mr-2" />
+                  Use Amazon BDA
                 </TabsTrigger>
               </TabsList>
 
               {/* Upload Data Tab */}
               <TabsContent value="upload" className="space-y-4">
                 <div className="space-y-4">
+
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                       Select Files
@@ -1133,9 +1177,14 @@ const Setup = () => {
                       disabled={isUploading}
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                    Maximum upload per request: {MAX_UPLOAD_SIZE_MB} MB.
-                  </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Maximum upload per request: {MAX_UPLOAD_SIZE_MB} MB.
+                    </p>
+                    {ingestGraphName && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Upload destination: uploads/{ingestGraphName}/
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex gap-2">
@@ -1438,11 +1487,13 @@ const Setup = () => {
                       </div>
                     </>
                   )}
+                  {ingestGraphName && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                      Download destination: downloaded_files_cloud/{ingestGraphName}/
+                    </p>
+                  )}
 
                   <div className="pt-4 border-t border-gray-300 dark:border-[#3D3D3D]">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      Files will be downloaded to: downloaded_files_cloud/{ingestGraphName}/
-                    </p>
                     <Button 
                       onClick={handleCloudDownload}
                       disabled={isDownloading}
@@ -1556,9 +1607,15 @@ const Setup = () => {
                 </div>
               </TabsContent>
 
-              {/* S3 Bedrock Configuration Tab */}
-              <TabsContent value="s3" className="space-y-4">
+              {/* Amazon BDA Configuration Tab */}
+              <TabsContent value="s3BDA" className="space-y-4">
                 <div className="space-y-4">
+                  <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
+                      Ingest S3 files using Amazon BDA
+                  </h3>                  
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    Process multimodal documents stored in S3 with Amazon Bedrock Data Automation and ingest them into your knowledge graph.
+                  </p>
 
                   {/* Common fields */}
                   <div>
@@ -1571,6 +1628,7 @@ const Setup = () => {
                       onChange={(e) => setAwsAccessKey(e.target.value)}
                       placeholder="Enter AWS access key"
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                      disabled={isIngesting}
                     />
                   </div>
 
@@ -1584,19 +1642,33 @@ const Setup = () => {
                       onChange={(e) => setAwsSecretKey(e.target.value)}
                       placeholder="Enter AWS secret key"
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                      disabled={isIngesting}
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Input Bucket
-                    </label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-black dark:text-white">
+                        Input Bucket
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={skipBDAProcessing}
+                          onChange={(e) => setSkipBDAProcessing(e.target.checked)}
+                          disabled={isIngesting}
+                          className="h-4 w-4 rounded border-gray-300 dark:border-gray-600"
+                        />
+                        <span>Skip BDA processing (ingest from output bucket directly)</span>
+                      </label>
+                    </div>
                     <Input
                       type="text"
                       value={inputBucket}
                       onChange={(e) => setInputBucket(e.target.value)}
                       placeholder="Enter input bucket name"
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                      disabled={isIngesting || skipBDAProcessing}
                     />
                   </div>
 
@@ -1610,6 +1682,7 @@ const Setup = () => {
                       onChange={(e) => setOutputBucket(e.target.value)}
                       placeholder="Enter output bucket name"
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                      disabled={isIngesting}
                     />
                   </div>
 
@@ -1623,19 +1696,20 @@ const Setup = () => {
                       onChange={(e) => setRegionName(e.target.value)}
                       placeholder="e.g., us-east-1"
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                      disabled={isIngesting}
                     />
                   </div>
 
                   {/* Ingest S3 Files with Amazon BDA Section */}
                   <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
-                    <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
-                      Ingest S3 files using Amazon BDA
-                    </h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                      Process multimodal documents stored in S3 with Amazon Bedrock Data Automation and ingest them into your knowledge graph.
-                    </p>
+                    {ingestGraphName && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                        Processing destination: Input bucket ({inputBucket || "not specified"}) → Output bucket ({outputBucket || "not specified"}) → Knowledge graph ({ingestGraphName})
+                      </p>
+                    )}
+
                     <Button
-                      onClick={handleS3BedrockIngest}
+                      onClick={handleS3BDAIngest}
                       disabled={isIngesting}
                       className="gradient text-white w-full"
                     >
@@ -1647,7 +1721,7 @@ const Setup = () => {
                       ) : (
                         <>
                           <Database className="h-4 w-4 mr-2" />
-                          Ingest from S3 into {ingestGraphName}
+                          Ingest from S3 Bucket into {ingestGraphName}
                         </>
                       )}
                     </Button>
@@ -1709,8 +1783,8 @@ const Setup = () => {
                 <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                   Select Graph to Refresh
                 </label>
-                <Select value={refreshGraphName} onValueChange={setRefreshGraphName}>
-                  <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-shadeA">
+                <Select value={refreshGraphName} onValueChange={setRefreshGraphName} disabled={isRefreshing || isRebuildRunning || isCheckingStatus}>
+                  <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-shadeA" disabled={isRefreshing || isRebuildRunning || isCheckingStatus}>
                     <SelectValue placeholder="Select a graph" />
                   </SelectTrigger>
                   <SelectContent>

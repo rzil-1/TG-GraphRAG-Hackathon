@@ -294,7 +294,7 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
 
         result = [{
             "doc_id": base_doc_id,
-            "doc_type": "markdown",
+            "doc_type": "",
             "content": markdown_content,
             "position": 0
         }]
@@ -305,7 +305,7 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
         logger.error("PyMuPDF not available")
         return [{
             "doc_id": base_doc_id,
-            "doc_type": "markdown",
+            "doc_type": "",
             "content": "[PDF extraction requires PyMuPDF]",
             "position": 0
         }]
@@ -326,7 +326,7 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
         if pil_image.width < 100 or pil_image.height < 100:
             return [{
                 "doc_id": base_doc_id,
-                "doc_type": "markdown",
+                "doc_type": "",
                 "content": f"[Skipped small image: {file_path.name}]",
                 "position": 0
             }]
@@ -339,7 +339,7 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
         if any(indicator in description_lower for indicator in logo_indicators):
             return [{
                 "doc_id": base_doc_id,
-                "doc_type": "markdown",
+                "doc_type": "",
                 "content": f"[Skipped logo/icon: {file_path.name}]",
                 "position": 0
             }]
@@ -379,7 +379,7 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
         logger.error(f"Error extracting image: {e}")
         return [{
             "doc_id": base_doc_id,
-            "doc_type": "markdown",
+            "doc_type": "",
             "content": f"[Image extraction failed: {str(e)}]",
             "position": 0
         }]
@@ -441,10 +441,12 @@ def get_doc_type_from_extension(extension):
 
     if extension in ['.html', '.htm']:
         return 'html'
+    elif extension in ['.md']:
+        return 'markdown'
     elif extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
         return 'image'
     else:
-        return 'markdown'
+        return ''
 
 
 def get_supported_extensions():
