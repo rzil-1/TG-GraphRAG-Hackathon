@@ -31,6 +31,7 @@ from agent.Q import DONE
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     Depends,
     File,
     HTTPException,
@@ -1051,32 +1052,33 @@ async def clear_uploaded_files(
 async def download_from_cloud(
     graphname: str,
     credentials: Annotated[HTTPBase, Depends(security)],
-    provider: str = None,
-    # S3 parameters
-    access_key: str = None,
-    secret_key: str = None,
-    bucket: str = None,
-    region: str = None,
-    prefix: str = "",
-    # GCS parameters
-    project_id: str = None,
-    gcs_credentials_json: str = None,
-    # Azure parameters
-    account_name: str = None,
-    account_key: str = None,
-    container: str = None,
+    request_body: dict = Body(...),
 ):
     """
     Download files from cloud storage (S3, GCS, or Azure) to local directory.
     
     Parameters:
     - graphname: The graph name to associate downloaded files with
-    - provider: Cloud provider (s3, gcs, azure)
-    - For S3: access_key, secret_key, bucket, region, prefix
-    - For GCS: project_id, gcs_credentials_json, bucket, prefix
-    - For Azure: account_name, account_key, container, prefix
+    - request_body: JSON body containing:
+      - provider: Cloud provider (s3, gcs, azure)
+      - For S3: access_key, secret_key, bucket, region, prefix
+      - For GCS: project_id, gcs_credentials_json, bucket, prefix
+      - For Azure: account_name, account_key, container, prefix
     """
     try:
+        # Extract parameters from request body
+        provider = request_body.get("provider")
+        access_key = request_body.get("access_key")
+        secret_key = request_body.get("secret_key")
+        bucket = request_body.get("bucket")
+        region = request_body.get("region")
+        prefix = request_body.get("prefix", "")
+        project_id = request_body.get("project_id")
+        gcs_credentials_json = request_body.get("gcs_credentials_json")
+        account_name = request_body.get("account_name")
+        account_key = request_body.get("account_key")
+        container = request_body.get("container")
+        
         download_dir = os.path.join("downloaded_files_cloud", graphname)
         os.makedirs(download_dir, exist_ok=True)
         
