@@ -496,7 +496,7 @@ const Setup = () => {
   };
 
   // Ingest files from S3 with Amazon BDA
-  const handleS3BDAIngest = async () => {
+  const handleAmazonBDAIngest = async () => {
     if (!ingestGraphName) {
       setIngestMessage("Please select a graph");
       return;
@@ -542,7 +542,7 @@ const Setup = () => {
       if (skipBDAProcessing) {
         // Skip BDA processing - create ingest job that reads directly from output bucket
         const runIngestConfig: any = {
-          data_source: "s3",
+          data_source: "bda",
           aws_access_key: awsAccessKey,
           aws_secret_key: awsSecretKey,
           output_bucket: outputBucket,
@@ -568,7 +568,7 @@ const Setup = () => {
       } else {
         // Step 1: Create ingest job with BDA processing
         const createIngestConfig: any = {
-          data_source: "s3",
+          data_source: "bda",
           data_source_config: {
             aws_access_key: awsAccessKey,
             aws_secret_key: awsSecretKey,
@@ -1156,7 +1156,7 @@ const Setup = () => {
                   <CloudDownload className="h-4 w-4 mr-2" />
                   Download from Cloud
                 </TabsTrigger>
-                <TabsTrigger value="s3BDA" disabled={isIngesting}>
+                <TabsTrigger value="AmazonBDA" disabled={isIngesting}>
                   <CloudLightning className="h-4 w-4 mr-2" />
                   Use Amazon BDA
                 </TabsTrigger>
@@ -1165,7 +1165,9 @@ const Setup = () => {
               {/* Upload Data Tab */}
               <TabsContent value="upload" className="space-y-4">
                 <div className="space-y-4">
-
+                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">
+                    Upload local files to the server and ingest them into your knowledge graph.
+                  </p>
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                       Select Files
@@ -1178,13 +1180,8 @@ const Setup = () => {
                       className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      Maximum upload per request: {MAX_UPLOAD_SIZE_MB} MB.
+                      Maximum upload per request: {MAX_UPLOAD_SIZE_MB} MB. {ingestGraphName ? `Upload destination: uploads/${ingestGraphName}/` : ""}
                     </p>
-                    {ingestGraphName && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Upload destination: uploads/{ingestGraphName}/
-                      </p>
-                    )}
                   </div>
 
                   <div className="flex gap-2">
@@ -1298,6 +1295,9 @@ const Setup = () => {
               {/* Download from Cloud Storage Tab */}
               <TabsContent value="cloudDownload" className="space-y-4">
                 <div className="space-y-4">
+                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">
+                    Download files from cloud storage and ingest them into your knowledge graph.
+                  </p>
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                       Cloud Storage Provider
@@ -1608,12 +1608,9 @@ const Setup = () => {
               </TabsContent>
 
               {/* Amazon BDA Configuration Tab */}
-              <TabsContent value="s3BDA" className="space-y-4">
-                <div className="space-y-4">
-                  <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
-                      Ingest S3 files using Amazon BDA
-                  </h3>                  
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              <TabsContent value="AmazonBDA" className="space-y-4">
+                <div className="space-y-4">              
+                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">
                     Process multimodal documents stored in S3 with Amazon Bedrock Data Automation and ingest them into your knowledge graph.
                   </p>
 
@@ -1659,7 +1656,7 @@ const Setup = () => {
                           disabled={isIngesting}
                           className="h-4 w-4 rounded border-gray-300 dark:border-gray-600"
                         />
-                        <span>Skip BDA processing (ingest from output bucket directly)</span>
+                        <span>Skip BDA (ingest existing BDA output bucket directly)</span>
                       </label>
                     </div>
                     <Input
@@ -1700,16 +1697,16 @@ const Setup = () => {
                     />
                   </div>
 
+                  {ingestGraphName && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                      Processing destination: Input bucket ({inputBucket || "not specified"}) → Output bucket ({outputBucket || "not specified"}) → Knowledge graph ({ingestGraphName})
+                    </p>
+                  )}
+
                   {/* Ingest S3 Files with Amazon BDA Section */}
                   <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
-                    {ingestGraphName && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                        Processing destination: Input bucket ({inputBucket || "not specified"}) → Output bucket ({outputBucket || "not specified"}) → Knowledge graph ({ingestGraphName})
-                      </p>
-                    )}
-
                     <Button
-                      onClick={handleS3BDAIngest}
+                      onClick={handleAmazonBDAIngest}
                       disabled={isIngesting}
                       className="gradient text-white w-full"
                     >

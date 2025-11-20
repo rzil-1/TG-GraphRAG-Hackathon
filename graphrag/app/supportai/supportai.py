@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, dict]:
     # need to open the file using the absolute path
     ver = conn.getVer().split(".")
+    logger.info(f"TigerGraph version: {ver}")
 
     current_schema = conn.gsql("""USE GRAPH {}\n ls""".format(graphname))
 
@@ -34,8 +35,9 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
         "common/gsql/supportai/retrievers/GraphRAG_Community_Search_Display.gsql",
     ]
 
+    logger.info(f"Checking if schema needs to be created")
     if "- VERTEX ResolvedEntity" in current_schema:
-        schema_res="Schema already exists, skipped"
+        schema_res="Schema already exists, skipped."
     else:
         file_path = "common/gsql/supportai/SupportAI_Schema.gsql"
         with open(file_path, "r") as f:
@@ -48,7 +50,7 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
     
     # Add Image vertex schema (for storing images from documents)
     if "- VERTEX Image" in current_schema:
-        schema_res += " Image schema already exists, skipped"
+        schema_res += " Image schema already exists, skipped."
     else:
         file_path = "common/gsql/supportai/SupportAI_Schema_Images.gsql"
         with open(file_path, "r") as f:
@@ -60,8 +62,9 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
             )
         )
 
+    logger.info(f"Checking if embedding schema needs to be created")
     if "- embedding(Dimension=" in current_schema:
-        schema_res+=" Embeddding schema already exists, skipped"
+        schema_res+=" Embeddding schema already exists, skipped."
     else:
         if int(ver[0]) >= 4 and int(ver[1]) >= 2:
             file_path = "common/gsql/supportai/SupportAI_Schema_Native_Vector.gsql"
@@ -94,8 +97,9 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
         else:
             raise Exception(f"Vector feature is not supported by the current TigerGraph version: {ver}")
 
+    logger.info(f"Checking if index needs to be created")
     if "- doc_chunk_epoch_processed_index" in current_schema:
-        index_res="Index already exists, skipped"
+        index_res="Index already exists, skipped."
     else:
         file_path = "common/gsql/supportai/SupportAI_IndexCreation.gsql"
         with open(file_path) as f:
@@ -106,16 +110,18 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
             )
         )
 
-    if "- LOADING JOB load_documents_content_json " not in current_schema:
+    logger.info(f"Checking if loading job needs to be created")
+    if "- CREATE LOADING JOB load_documents_content_json {" not in current_schema:
         supportai_queries.extend([
             "common/gsql/supportai/SupportAI_InitialLoadJSON.gsql",
         ])
 
-    if "- LOADING JOB load_documents_content_json_with_images " not in current_schema:
+    if "- CREATE LOADING JOB load_documents_content_json_with_images {" not in current_schema:
         supportai_queries.extend([
             "common/gsql/supportai/SupportAI_InitialLoadJSON_WithImages.gsql",
         ])
-    
+
+    logger.info(f"Creating supportai queries")
     for filename in supportai_queries:
         logger.info(f"Creating supportai query {filename}")
         with open(f"{filename}", "r") as f:
@@ -331,15 +337,15 @@ def create_ingest(
     conn: TigerGraphConnection,
 ):
     # Check for invalid combination of multi format and non-s3 data source
-    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() not in ["s3", "server"]:
-        raise Exception(
-            "Multi-format file processing is only supported for S3 and server data sources.")
+    if ingest_config.data_source.lower() in ["bda", "server"] and ingest_config.get("file_format", "").lower() != "multi":
+        logger.warning(f"File format {ingest_config.get('file_format', '').lower()} is not supported for data source {ingest_config.data_source.lower()}")
+        ingest_config["file_format"] = "multi"
 
     res_ingest_config = {"data_source": ingest_config.data_source.lower()}
     res_ingest_config["file_format"] = ingest_config.file_format.lower()
 
     # Choose loading job template based on source/format
-    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() == "server"
+    if ingest_config.file_format.lower() == "multi" and ingest_config.data_source.lower() == "server":
         # Server multi can include images; use the WithImages loading job
         load_job_id = "load_documents_content_json_with_images"
     elif ingest_config.file_format.lower() == "json" or ingest_config.file_format.lower() == "multi":
@@ -359,15 +365,12 @@ def create_ingest(
         ingest_template = ingest_template.replace('"\\n"', '"{}"'.format(eol))
         ingest_template = ingest_template.replace('"double"', '"{}"'.format(quote))
 
-        res_ingest_config["loader_config"] = ingest_config.loader_config
-
         logger.debug(f"Ingest template: USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
         load_job_created = conn.gsql(f"USE GRAPH {graphname}\nBEGIN\n{ingest_template}\nEND\n")
         load_job_id = load_job_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
     else:
         raise Exception("File format not implemented")
 
-    res_ingest_config["load_job_id"] = load_job_id
     res = {"load_job_id": load_job_id}
     logger.info(f"Set load job for ingestion: {load_job_id}")
 
@@ -379,7 +382,7 @@ def create_ingest(
 
         # assign unique identifier to the data stream connection
         data_stream_conn = data_stream_conn.replace(
-            "@source_name@", "SupportAI_" + graphname + "_" + str(uuid.uuid4().hex)
+            "@source_name@", "GraphRAG_" + graphname + "_" + str(uuid.uuid4().hex)
         )
 
         if ingest_config.data_source.lower() == "s3":
@@ -390,38 +393,11 @@ def create_ingest(
             if aws_access_key is None or aws_secret_key is None:
                 raise Exception("AWS credentials not provided")
 
-            res_ingest_config["aws_access_key"] = aws_access_key
-            res_ingest_config["aws_secret_key"] = aws_secret_key
-
-            if ingest_config.file_format.lower() == "multi":
-                input_bucket = data_conf.get("input_bucket", None)
-                output_bucket = data_conf.get("output_bucket", None)
-                region_name = data_conf.get("region_name", None)
-
-                if input_bucket is None or output_bucket is None or region_name is None:
-                    raise Exception("Input bucket, output bucket, or region name not provided")
-
-                res_ingest_config["region_name"] = region_name
-
-                try:
-                    amazon_bda_result = trigger_bedrock_bda(
-                        input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_conf)
-                    if amazon_bda_result.get("statusCode") != 200 and amazon_bda_result.get("statusCode") != 300:
-                        raise Exception(f"Amazon BDA failed: {amazon_bda_result}")
-                    else:
-                        logger.info(f"Amazon BDA completed successfully: {amazon_bda_result}")
-                    res_ingest_config["bda_jobs"] = amazon_bda_result.get("jobs")
-                except Exception as e:
-                    raise Exception(f"Error during Amazon BDA preprocessing: {e}")
-            else:
-                connector = {
-                    "type": "s3",
-                    "access.key": aws_access_key,
-                    "secret.key": aws_secret_key,
-                }
-                data_stream_conn = data_stream_conn.replace(
-                    "@source_config@", json.dumps(connector)
-                )
+            connector = {
+                "type": "s3",
+                "access.key": aws_access_key,
+                "secret.key": aws_secret_key,
+            }
         elif ingest_config.data_source.lower() == "azure":
             if ingest_config.data_source_config.get("account_key") is not None:
                 connector = {
@@ -443,9 +419,6 @@ def create_ingest(
                 }
             else:
                 raise Exception("Azure credentials not provided")
-            data_stream_conn = data_stream_conn.replace(
-                "@source_config@", json.dumps(connector)
-            )
         elif ingest_config.data_source.lower() == "gcs":
             # verify that the correct fields are provided
             if ingest_config.data_source_config.get("project_id") is None:
@@ -463,47 +436,77 @@ def create_ingest(
                 "private_key": ingest_config.data_source_config["private_key"],
                 "client_email": ingest_config.data_source_config["client_email"],
             }
-            data_stream_conn = data_stream_conn.replace(
-                "@source_config@", json.dumps(connector)
-            )
-        elif ingest_config.data_source.lower() == "server":
-            folder_path = ingest_config.data_source_config.get("folder_path", None)
-            if folder_path is None:
-                raise Exception("Folder path not provided for server processing")
-            if ingest_config.file_format.lower() == "multi":
-                extractor = TextExtractor()
-                server_processing_result = extractor.process_folder(folder_path, graphname=graphname)
-                if server_processing_result.get("statusCode") != 200:
-                    raise Exception(f"Server folder processing failed: {server_processing_result}")
-                documents = server_processing_result.get("documents", [])
-                res_ingest_config["server_jobs"] = documents
+        data_stream_conn = data_stream_conn.replace(
+            "@source_config@", json.dumps(connector)
+        )
+        data_source_created = conn.gsql(
+            "USE GRAPH {}\n".format(graphname) + data_stream_conn
+        )
+        res_ingest_config["data_source_id"] = data_source_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
+        res["data_source_id"] = res_ingest_config
+    elif ingest_config.data_source.lower() == "bda":
+        data_conf = ingest_config.data_source_config
+        aws_access_key = data_conf.get("aws_access_key", None)
+        aws_secret_key = data_conf.get("aws_secret_key", None)
+
+        if aws_access_key is None or aws_secret_key is None:
+            raise Exception("AWS credentials not provided")
+
+        input_bucket = data_conf.get("input_bucket", None)
+        output_bucket = data_conf.get("output_bucket", None)
+        region_name = data_conf.get("region_name", None)
+
+        if input_bucket is None or output_bucket is None or region_name is None:
+            raise Exception("Input bucket, output bucket, or region name not provided")
+
+        res_ingest_config["aws_access_key"] = aws_access_key
+        res_ingest_config["aws_secret_key"] = aws_secret_key
+        res_ingest_config["input_bucket"] = input_bucket
+        res_ingest_config["output_bucket"] = output_bucket
+        res_ingest_config["region_name"] = region_name
+
+        try:
+            amazon_bda_result = trigger_bedrock_bda(
+                input_bucket, output_bucket, region_name, aws_access_key, aws_secret_key, data_conf)
+            if amazon_bda_result.get("statusCode") != 200 and amazon_bda_result.get("statusCode") != 300:
+                raise Exception(f"Amazon BDA failed: {amazon_bda_result}")
             else:
-                raise Exception("Server data source supports only 'multi' file_format")
-    elif ingest_config.data_source.lower() in ["server", "remote"]:
-        pass
+                logger.info(f"Amazon BDA completed successfully: {amazon_bda_result}")
+
+            res_ingest_config["bda_jobs"] = amazon_bda_result.get("jobs")
+            res_ingest_config["data_source_id"] = "DocumentContent"
+            res["data_path"] = output_bucket
+            # key name to be changed
+            res["data_source_id"] = res_ingest_config
+        except Exception as e:
+            raise Exception(f"Error during Amazon BDA preprocessing: {e}")
+    elif ingest_config.data_source.lower() == "server":
+        data_path = ingest_config.data_source_config.get("data_path", None)
+        if data_path is None:
+            raise Exception("Data path not provided for server processing")
+        try:
+            extractor = TextExtractor()
+            server_processing_result = extractor.process_folder(data_path, graphname=graphname)
+            if server_processing_result.get("statusCode") != 200:
+                raise Exception(f"Server folder processing failed: {server_processing_result}")
+            else:
+                logger.info(f"Server folder processing completed successfully: {server_processing_result}")
+
+            res_ingest_config["server_jobs"] = server_processing_result.get("documents", [])
+            res_ingest_config["data_source_id"] = "DocumentContent"
+            # Use a placeholder path that doesn't start with "/" to avoid pyTigerGraph treating it as a file
+            # The actual folder path is stored in server_jobs, this is just for the API call
+            res["data_path"] = "in_response"
+            res["data_source_id"] = res_ingest_config
+        except Exception as e:
+            raise Exception(f"Error during server folder processing: {e}")
+    elif ingest_config.data_source.lower() == "local":
+        res["data_source_id"] = "DocumentContent"
     else:
         raise Exception("Data source not implemented")
 
     if "data_path" not in res and ingest_config.data_source_config:
         res["data_path"] = ingest_config.data_source_config.get("data_path", "")
-
-    if ingest_config.data_source.lower() == "s3" and ingest_config.file_format.lower() == "multi":
-        res_ingest_config["data_source_id"] = "DocumentContent"
-        res["data_path"] = ingest_config.data_source_config.get("output_bucket", "")
-        # key name to be changed
-        res["data_source_id"] = res_ingest_config
-    elif ingest_config.data_source.lower() == "server" and ingest_config.file_format.lower() == "multi":
-        # Mirror S3 behavior: attach full ingest config (including server_jobs) to response
-        res_ingest_config["data_source_id"] = "DocumentContent"
-        # Use a placeholder path that doesn't start with "/" to avoid pyTigerGraph treating it as a file
-        # The actual folder path is stored in server_jobs, this is just for the API call
-        res["data_path"] = "server_multi"
-        res["data_source_id"] = res_ingest_config
-    else:
-        data_source_created = conn.gsql(
-            "USE GRAPH {}\n".format(graphname) + data_stream_conn
-        )
-        res["data_source_id"] = data_source_created.split(":")[1].strip(" [").strip(" ").strip(".").strip("]")
 
     return res
 
@@ -563,10 +566,9 @@ def ingest(
             "job_id": log_section.split("Jobid: ")[1].split("\n")[0],
             "log_location": log_location,
         }
-    else:
+    elif isinstance(loader_info.data_source_id, dict):
         ingest_config = loader_info.data_source_id
-        loader_config = ingest_config.get("loader_config", {})
-        if ingest_config.get("data_source") == "s3" and ingest_config.get("file_format") == "multi":
+        if ingest_config.get("data_source") == "bda":
             aws_access_key = ingest_config.get("aws_access_key", None)
             aws_secret_key = ingest_config.get("aws_secret_key", None)
             region_name = ingest_config.get("region_name", None)
@@ -625,7 +627,7 @@ def ingest(
                                 content = re.sub(r'!\[([^\]]*)\]\(\./([^)]+)\)', lambda m: f'![{m.group(1)}](s3://{s3_bucket}/{base_path}/{m.group(2)})', content)
                                 doc_id = f"{file_name}"
                                 # Prepare API payload
-                                payload = json.dumps({loader_config.get("doc_id_field", "doc_id"): doc_id, loader_config.get("doc_type_field", "doc_type"): "markdown", loader_config.get("content_field", "content"): content})
+                                payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
 
                                 #CALL API
                                 conn.runLoadingJobWithData(payload, data_source_id, loader_info.load_job_id)
@@ -644,12 +646,14 @@ def ingest(
                 "job_name": loader_info.load_job_id,
                 "summary": processed_files
             }
-        elif ingest_config.get("data_source") == "server" and ingest_config.get("file_format") == "multi":
+        elif ingest_config.get("data_source") == "server":
             try:
                 processed_files = []
                 data_source_id = ingest_config.get("data_source_id", "DocumentContent")
                 if ingest_config.get("server_jobs"):
                     for doc_data in ingest_config.get("server_jobs"):
+                        if not doc_data.get("doc_id") or not doc_data.get("content"):
+                            continue
                         if doc_data.get("image_data"):
                             payload = {
                                 "doc_id": doc_data.get("doc_id", ""),
@@ -680,6 +684,7 @@ def ingest(
                 "job_name": loader_info.load_job_id,
                 "summary": processed_files
             }
-
         else:
             raise Exception("Data source and file format combination not implemented")
+    else:
+        raise Exception("Data source id is not a string or dict")
