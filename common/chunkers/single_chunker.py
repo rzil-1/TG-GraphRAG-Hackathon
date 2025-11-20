@@ -1,10 +1,6 @@
 """
 Single Chunker - Always returns the entire content as ONE chunk.
-<<<<<<< HEAD
-Used for images to preserve ![IMAGE_REF](tg://image_id) markers and prevent splitting.
-=======
 Used for images to preserve markdown image references and prevent splitting.
->>>>>>> upload_files_server_side
 """
 from common.chunkers.base_chunker import BaseChunker
 
