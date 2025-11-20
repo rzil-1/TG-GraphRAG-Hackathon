@@ -141,7 +141,7 @@ Here’s what the folder structure looks like:
 
 ##### Step 3: Adjust configurations
 
-Edit `llm_config` section of `configs/server_config.json` and replace `<YOUR_OPENAI_API_KEY>` to your own OPENAI_API_KEY. 
+Edit `llm_config` section of `configs/server_config.json` and replace `<YOUR_LLM_API_KEY>` to your own LLM_API_KEY for the LLM provider. 
  
 > If desired, you can also change the model to be used for the embedding service and completion service to your preferred models to adjust the output from the LLM service.
 
@@ -418,7 +418,7 @@ In addition to the `OPENAI_API_KEY`, `llm_model` and `model_name` can be edited 
             "model_kwargs": {
                 "temperature": 0
             },
-            "prompt_path": "./app/prompts/openai_gpt4/"
+            "prompt_path": "./common/prompts/openai_gpt4/"
         }
     }
 }
@@ -478,7 +478,7 @@ And your JSON config should follow as:
             "model_kwargs": {
                 "temperature": 0
             },
-            "prompt_path": "./app/prompts/gcp_vertexai_palm/"
+            "prompt_path": "./common/prompts/gcp_vertexai_palm/"
         }
     }
 }
@@ -515,7 +515,7 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
             "model_kwargs": {
                 "temperature": 0
             },
-            "prompt_path": "./app/prompts/azure_open_ai_gpt35_turbo_instruct/"
+            "prompt_path": "./common/prompts/azure_open_ai_gpt35_turbo_instruct/"
         }
     }
 }
@@ -546,7 +546,7 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
             "model_kwargs": {
                 "temperature": 0,
             },
-            "prompt_path": "./app/prompts/aws_bedrock_claude3haiku/"
+            "prompt_path": "./common/prompts/aws_bedrock_claude3haiku/"
         }
     }
 }
@@ -572,7 +572,7 @@ In addition to the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `azure_d
             "model_kwargs": {
                 "temperature": 0.0000001
             },
-            "prompt_path": "./app/prompts/openai_gpt4/"
+            "prompt_path": "./common/prompts/openai_gpt4/"
         }
     }
 }
@@ -602,7 +602,7 @@ Example configuration for a model on Hugging Face with a dedicated endpoint is s
             "model_kwargs": {
                 "temperature": 0.1
             },
-            "prompt_path": "./app/prompts/openai_gpt4/"
+            "prompt_path": "./common/prompts/openai_gpt4/"
         }
     }
 }
@@ -629,7 +629,7 @@ Example configuration for a model on Hugging Face with a serverless endpoint is 
             "model_kwargs": {
                 "temperature": 0.1
             },
-            "prompt_path": "./app/prompts/llama_70b/"
+            "prompt_path": "./common/prompts/llama_70b/"
         }
     }
 }
@@ -656,7 +656,7 @@ Example configuration for a model on Hugging Face with a serverless endpoint is 
             "model_kwargs": {
                 "temperature": 0.1
             },
-            "prompt_path": "./app/prompts/openai_gpt4/"
+            "prompt_path": "./common/prompts/openai_gpt4/"
         }
     }
 }

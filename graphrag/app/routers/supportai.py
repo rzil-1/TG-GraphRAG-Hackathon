@@ -338,7 +338,7 @@ def build_concepts(
 
 
 @router.get("/{graphname}/{method}/forceupdate")
-def supportai_update(
+def graphrag_update(
     graphname: str,
     method: str,
     conn: Request,
@@ -354,10 +354,53 @@ def supportai_update(
 
     ecc = (
         graphrag_config.get("ecc", "http://localhost:8001")
-        + f"/{graphname}/{method}/consistency_status"
+        + f"/{graphname}/{method}/consistency_update"
     )
     LogWriter.info(f"Sending ECC request to: {ecc}")
     bg_tasks.add_task(
         http_get, ecc, headers={"Authorization": conn.headers["authorization"]}
     )
     return {"status": "submitted"}
+
+
+@router.post("/{graphname}/graphrag/create_graph")
+def create_graph(
+    graphname: str,
+    conn: Request,
+):
+    """
+    Create a new TigerGraph knowledge graph.
+    This creates an empty graph with the specified name.
+    The middleware creates the TigerGraph connection and stores it in request.state.conn
+    """
+    try:
+        # Get the connection from request state (created by auth_middleware in main.py)
+        tg_conn = conn.state.conn
+
+        # Create the graph using GSQL
+        LogWriter.info(f"Creating graph: {graphname}")
+        create_query = f"CREATE GRAPH {graphname}()"
+        result = tg_conn.gsql(create_query)
+
+        LogWriter.info(f"Graph creation result: {result}")
+        return {
+            "status": "success",
+            "message": f"Graph '{graphname}' created successfully",
+            "graphname": graphname,
+            "details": result
+        }
+
+    except Exception as e:
+        LogWriter.error(f"Error creating graph {graphname}: {str(e)}")
+        if "conflicts" in str(e).lower() or "existing graph" in str(e).lower():
+            return {
+                "status": "error",
+                "message": f"Graph '{graphname}' already exists",
+                "details": str(e)
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Failed to create graph '{graphname}': {str(e)}",
+                "details": str(e)
+            }
