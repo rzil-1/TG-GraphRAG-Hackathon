@@ -21,7 +21,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from common.logs.logwriter import LogWriter
 from common.logs.log import req_id_cv
-from common.utils.token_calculator import TokenCalculator
+from common.utils.token_calculator import get_token_calculator
 from common.config import completion_config
 from common.py_schemas import GraphRAGAnswerOutput
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 class TigerGraphAgentGenerator:
     def __init__(self, llm_model):
         self.llm = llm_model
-        self.token_calculator = TokenCalculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
+        self.token_calculator = get_token_calculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
 
     def generate_answer(self, question: str, context: str | dict, query: str = "") -> dict:
         """Generate an answer based on the question and context.

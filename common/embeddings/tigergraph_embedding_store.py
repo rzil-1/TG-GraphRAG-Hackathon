@@ -335,7 +335,7 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 }
             )
             end_time = time()
-            logger.info(f"Got {top_k} similar entries: {verts}")
+            # logger.info(f"Got {top_k} similar entries: {verts}")
             similar = []
             for r in verts:
                 if "results" in r:

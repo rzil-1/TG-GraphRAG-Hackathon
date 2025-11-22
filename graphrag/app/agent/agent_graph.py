@@ -112,17 +112,16 @@ class TigerGraphAgentGraph:
         logger.debug_pii(
             f"request_id={req_id_cv.get()} Routing question: {state['question']}"
         )
-        if self.supportai_enabled:
-            source = step.route_question(state["question"])
-            logger.debug_pii(
-                f"request_id={req_id_cv.get()} Routing question to: {source}"
-            )
-            if source.datasource == "vectorstore":
-                return "supportai_lookup"
-            elif source.datasource == "functions":
-                return "inquiryai_lookup"
-        else:
+        source = step.route_question(state["question"], state["conversation"])
+        logger.debug_pii(
+            f"request_id={req_id_cv.get()} Routing question to: {source}"
+        )
+        if self.supportai_enabled and source.datasource == "vectorstore":
+            return "supportai_lookup"
+        elif source.datasource == "functions":
             return "inquiryai_lookup"
+        else:
+            return "history_lookup"
 
     def apologize(self, state):
         """
@@ -363,6 +362,9 @@ class TigerGraphAgentGraph:
             f"request_id={req_id_cv.get()} Generating answer for question: {state['question']}"
         )
 
+        if "lookup_source" not in state:
+            state["lookup_source"] = "history"
+
         if state["lookup_source"] == "supportai":
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
@@ -398,6 +400,20 @@ class TigerGraphAgentGraph:
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["answer"]}"""
             )
             answer = step.generate_answer(state["question"], state["context"]["answer"], state["context"]["cypher"])
+
+        elif state["lookup_source"] == "history":
+            state["context"] = {
+                "result": state["conversation"],
+                "reasoning": "The following conversation history was used to answer the question. {}".format(
+                    state["conversation"]
+                ),
+            }
+
+            logger.debug_pii(
+                f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
+            )
+            answer = step.generate_answer(state["question"], state["context"]["result"])
+
         logger.debug_pii(
             f"request_id={req_id_cv.get()} Generated answer: {answer.generated_answer}"
         )
@@ -629,11 +645,20 @@ class TigerGraphAgentGraph:
                 self.check_state_for_generation_error,
                 {"error": "generate_cypher", "success": "generate_answer"},
             )
-            self.workflow.add_conditional_edges(
-                "generate_cypher",
-                self.check_state_for_generation_error,
-                {"error": "apologize", "success": "generate_answer"},
-            )
+
+            if self.supportai_enabled:
+                self.workflow.add_conditional_edges(
+                    "generate_cypher",
+                    self.check_state_for_generation_error,
+                    {"error": "supportai", "success": "generate_answer"},
+                )
+            else:
+                self.workflow.add_conditional_edges(
+                    "generate_cypher",
+                    self.check_state_for_generation_error,
+                    {"error": "apologize", "success": "generate_answer"},
+                )
+
             # remove hallucination and usefulness check
             if self.supportai_enabled:
                 self.workflow.add_conditional_edges(
@@ -699,6 +724,7 @@ class TigerGraphAgentGraph:
                 {
                     "supportai_lookup": "supportai",
                     "inquiryai_lookup": "map_question_to_schema",
+                    "history_lookup": "generate_answer",
                     "apologize": "apologize",
                 },
             )
@@ -708,6 +734,7 @@ class TigerGraphAgentGraph:
                 self.route_question,
                 {
                     "inquiryai_lookup": "map_question_to_schema",
+                    "history_lookup": "generate_answer",
                     "apologize": "apologize",
                 },
             )
