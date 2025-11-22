@@ -3,7 +3,7 @@ from common.embeddings.base_embedding_store import EmbeddingStore
 from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.llm_services.base_llm import LLM_Model
 from common.py_schemas import CandidateScore, CandidateGenerator, GraphRAGAnswerOutput
-from common.utils.token_calculator import TokenCalculator
+from common.utils.token_calculator import get_token_calculator
 from common.config import completion_config
 
 from langchain_core.output_parsers import StrOutputParser, PydanticOutputParser
@@ -29,7 +29,7 @@ class BaseRetriever:
         self.embedding_store = embedding_store
         self.embedding_store.set_graphname(connection.graphname)
         self.logger = logging.getLogger(__name__)
-        self.token_calculator = TokenCalculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
+        self.token_calculator = get_token_calculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
 
     def _install_query(self, query_name):
         self.logger.info(f"Installing query {query_name}")

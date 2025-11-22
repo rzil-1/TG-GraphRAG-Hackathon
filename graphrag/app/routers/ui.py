@@ -613,7 +613,7 @@ async def run_agent(
 async def load_conversation_history(conversation_id: str, usr_auth: str) -> list[dict[str, str]]:
     """
     Load conversation history from the chat history service.
-    Returns a list of dicts with 'query' and 'response' keys.
+    Returns a list of dicts with 'query', 'response', 'create_ts', and 'update_ts' keys.
     """
     if not conversation_id or conversation_id == "new":
         return []
@@ -642,7 +642,9 @@ async def load_conversation_history(conversation_id: str, usr_auth: str) -> list
                             response_msg.get("parent_id") == msg.get("message_id")):
                             history.append({
                                 "query": msg.get("content", ""),
-                                "response": response_msg.get("content", "")
+                                "response": response_msg.get("content", ""),
+                                "create_ts": response_msg.get("create_ts"),
+                                "update_ts": response_msg.get("update_ts"),
                             })
                             break
             
