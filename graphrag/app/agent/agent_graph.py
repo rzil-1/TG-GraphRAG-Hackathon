@@ -542,10 +542,10 @@ class TigerGraphAgentGraph:
         """
         Check if the query result is empty or contains empty values.
         """
-        if not query_result:
+        if query_result in ("", [], {}, (), set(), range(0), None):
             return True
 
-        if isinstance(query_result, list):
+        if isinstance(query_result, (list, set)):
             return all(self.is_query_result_empty(item) for item in query_result)
 
         if isinstance(query_result, dict):
