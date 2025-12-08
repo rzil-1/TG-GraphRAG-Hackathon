@@ -337,9 +337,9 @@ def create_ingest(
     conn: TigerGraphConnection,
 ):
     # Check for invalid combination of multi format and non-s3 data source
-    if ingest_config.data_source.lower() in ["bda", "server"] and ingest_config.get("file_format", "").lower() != "multi":
-        logger.warning(f"File format {ingest_config.get('file_format', '').lower()} is not supported for data source {ingest_config.data_source.lower()}")
-        ingest_config["file_format"] = "multi"
+    if ingest_config.data_source.lower() in ["bda", "server"] and ingest_config.file_format.lower() != "multi":
+        logger.warning(f"File format {ingest_config.file_format.lower()} is not supported for data source {ingest_config.data_source.lower()}")
+        ingest_config.file_format = "multi"
 
     res_ingest_config = {"data_source": ingest_config.data_source.lower()}
     res_ingest_config["file_format"] = ingest_config.file_format.lower()
@@ -485,18 +485,29 @@ def create_ingest(
         if data_path is None:
             raise Exception("Data path not provided for server processing")
         try:
+            # Create temp folder BEFORE processing so extractor can save directly
+            temp_session_id = str(uuid.uuid4())
+            temp_folder = os.path.join("uploads", "ingestion_temp", graphname, temp_session_id)
+            
+            # Process files and save immediately to temp folder (memory efficient)
             extractor = TextExtractor()
-            server_processing_result = extractor.process_folder(data_path, graphname=graphname)
+            server_processing_result = extractor.process_folder(
+                data_path, 
+                graphname=graphname,
+                temp_folder=temp_folder  # Extractor saves files as it processes
+            )
             if server_processing_result.get("statusCode") != 200:
                 raise Exception(f"Server folder processing failed: {server_processing_result}")
-            else:
-                logger.info(f"Server folder processing completed successfully: {server_processing_result}")
+            
+            doc_count = server_processing_result.get("num_documents", 0)
+            logger.info(f"Server folder processing completed: {server_processing_result.get('message')}")
 
-            res_ingest_config["server_jobs"] = server_processing_result.get("documents", [])
+            res_ingest_config["temp_session_id"] = temp_session_id
+            res_ingest_config["temp_folder"] = temp_folder
+            res_ingest_config["file_count"] = doc_count
             res_ingest_config["data_source_id"] = "DocumentContent"
-            # Use a placeholder path that doesn't start with "/" to avoid pyTigerGraph treating it as a file
-            # The actual folder path is stored in server_jobs, this is just for the API call
-            res["data_path"] = "in_response"
+            # Use a placeholder path to indicate temp storage
+            res["data_path"] = "in_temp_storage"
             res["data_source_id"] = res_ingest_config
         except Exception as e:
             raise Exception(f"Error during server folder processing: {e}")
@@ -648,42 +659,47 @@ def ingest(
             }
         elif ingest_config.get("data_source") == "server":
             try:
-                processed_files = []
                 data_source_id = ingest_config.get("data_source_id", "DocumentContent")
-                if ingest_config.get("server_jobs"):
-                    for doc_data in ingest_config.get("server_jobs"):
-                        if not doc_data.get("doc_id") or not doc_data.get("content"):
-                            continue
-                        if doc_data.get("image_data"):
-                            payload = {
-                                "doc_id": doc_data.get("doc_id", ""),
-                                "doc_type": "image",
-                                "image_data": doc_data.get("image_data", ""),
-                                "image_format": doc_data.get("image_format", "jpg"),
-                                "parent_doc": doc_data.get("parent_doc", ""),
-                                "page_number": doc_data.get("page_number", 0),
-                                "position": doc_data.get("position", 0),
-                                "content": ""
-                            }
-                        else:
-                            payload = {
-                                "doc_id": doc_data.get("doc_id", ""),
-                                "doc_type": doc_data.get("doc_type", "markdown"),
-                                "content": doc_data.get("content", "")
-                            }
-                        payload_json = json.dumps(payload)
-                        conn.runLoadingJobWithData(payload_json, data_source_id, loader_info.load_job_id)
-                        processed_files.append({
-                            'file_path': doc_data.get("doc_id", ""),
-                            'parent_doc': doc_data.get("parent_doc", ""),
-                        })
-                        logger.info(f"Data uploading done for doc_id: {doc_data.get('doc_id', 'unknown')}")
+                
+                # Read from temporary folder's JSONL file
+                temp_folder = ingest_config.get("temp_folder")
+                if not temp_folder or not os.path.exists(temp_folder):
+                    raise Exception(f"Temporary folder not found: {temp_folder}")
+                
+                # Read the entire JSONL file as a string
+                jsonl_file = os.path.join(temp_folder, "processed_documents.jsonl")
+                if not os.path.exists(jsonl_file):
+                    raise Exception(f"JSONL file not found: {jsonl_file}")
+                
+                logger.info(f"Reading JSONL file: {jsonl_file}")
+                
+                # Read entire JSONL content
+                with open(jsonl_file, 'r', encoding='utf-8') as f:
+                    jsonl_content = f.read()
+                
+                # Load all documents in one call - runLoadingJobWithData supports JSONL format
+                conn.runLoadingJobWithData(jsonl_content, data_source_id, loader_info.load_job_id)
+                
+                # Count documents for reporting
+                doc_count = sum(1 for line in jsonl_content.strip().split('\n') if line.strip())
+                logger.info(f"Successfully ingested {doc_count} documents from JSONL")
+                
+                # Clean up temp folder after successful ingestion
+                try:
+                    import shutil
+                    shutil.rmtree(temp_folder)
+                    logger.info(f"Cleaned up temporary folder: {temp_folder}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp folder {temp_folder}: {cleanup_error}")
+                    
             except Exception as e:
                 raise Exception(f"Error during server markdown extraction and TigerGraph loading: {e}")
             return {
                 "job_name": loader_info.load_job_id,
-                "summary": processed_files
+                "summary": f"Successfully ingested {doc_count} documents from JSONL",
+                "document_count": doc_count
             }
+
         else:
             raise Exception("Data source and file format combination not implemented")
     else:
