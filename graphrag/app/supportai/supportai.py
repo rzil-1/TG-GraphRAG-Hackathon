@@ -503,7 +503,7 @@ def create_ingest(
             logger.info(f"Server folder processing completed: {server_processing_result.get('message')}")
 
             res_ingest_config["temp_session_id"] = temp_session_id
-            res_ingest_config["temp_folder"] = temp_folder
+            res_ingest_config["data_path"] = temp_folder
             res_ingest_config["file_count"] = doc_count
             res_ingest_config["data_source_id"] = "DocumentContent"
             # Use a placeholder path to indicate temp storage
@@ -662,12 +662,12 @@ def ingest(
                 data_source_id = ingest_config.get("data_source_id", "DocumentContent")
                 
                 # Read from temporary folder's JSONL file
-                temp_folder = ingest_config.get("temp_folder")
-                if not temp_folder or not os.path.exists(temp_folder):
-                    raise Exception(f"Temporary folder not found: {temp_folder}")
+                data_path = ingest_config.get("data_path")
+                if not data_path or not os.path.exists(data_path):
+                    raise Exception(f"Data path not found: {data_path}")
                 
                 # Read the entire JSONL file as a string
-                jsonl_file = os.path.join(temp_folder, "processed_documents.jsonl")
+                jsonl_file = os.path.join(data_path, "processed_documents.jsonl")
                 if not os.path.exists(jsonl_file):
                     raise Exception(f"JSONL file not found: {jsonl_file}")
                 
@@ -687,10 +687,10 @@ def ingest(
                 # Clean up temp folder after successful ingestion
                 try:
                     import shutil
-                    shutil.rmtree(temp_folder)
-                    logger.info(f"Cleaned up temporary folder: {temp_folder}")
+                    shutil.rmtree(data_path)
+                    logger.info(f"Cleaned up temporary folder: {data_path}")
                 except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup temp folder {temp_folder}: {cleanup_error}")
+                    logger.warning(f"Failed to cleanup temp folder {data_path}: {cleanup_error}")
                     
             except Exception as e:
                 raise Exception(f"Error during server markdown extraction and TigerGraph loading: {e}")
