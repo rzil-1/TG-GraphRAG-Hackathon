@@ -997,7 +997,7 @@ async def clear_uploaded_files(
     Parameters:
     - graphname: The graph name whose files to clear
     - filename: If provided, only delete this specific file. Otherwise, delete all files.
-    - session_id: Optional session ID to delete processed content from temp folder
+    - session_id: Optional session ID to delete corresponding JSONL file from temp folder
     """
     try:
         upload_dir = os.path.join("uploads", graphname)
@@ -1010,19 +1010,25 @@ async def clear_uploaded_files(
             }
         
         deleted_files = []
-        text_extractor = TextExtractor()
         
         if filename:
-            # Delete processed content from JSONL FIRST if session_id provided
+            # Delete corresponding JSONL file FIRST if session_id provided
             if session_id:
                 temp_folder = os.path.join("uploads", "ingestion_temp", graphname, session_id)
                 if os.path.exists(temp_folder):
-                    logger.info(f"Deleting processed content for {filename} from temp folder")
-                    result = text_extractor.delete_file_from_jsonl(temp_folder, filename)
-                    if result.get('success'):
-                        logger.info(f"Removed {result.get('removed_count', 0)} processed documents for {filename}")
-                    else:
-                        logger.warning(f"Failed to remove processed content: {result.get('error', 'Unknown error')}")
+                    # Delete the JSONL file named after the original file
+                    from pathlib import Path
+                    file_stem = Path(filename).stem
+                    jsonl_file = os.path.join(temp_folder, f"{file_stem}.jsonl")
+                    
+                    if os.path.exists(jsonl_file):
+                        os.remove(jsonl_file)
+                        logger.info(f"Deleted corresponding JSONL file: {file_stem}.jsonl")
+                        
+                        # If temp folder is now empty, remove it
+                        if not os.listdir(temp_folder):
+                            os.rmdir(temp_folder)
+                            logger.info(f"Removed empty temp folder for session {session_id}")
             
             # Then delete the original file
             file_path = os.path.join(upload_dir, filename)
@@ -1343,7 +1349,7 @@ async def delete_cloud_downloads(
     Parameters:
     - graphname: The graph name whose downloaded files to clear
     - filename: If provided, only delete this specific file. Otherwise, delete all files.
-    - session_id: Optional session ID to delete processed content from temp folder
+    - session_id: Optional session ID to delete corresponding JSONL file from temp folder
     """
     try:
         download_dir = os.path.join("downloaded_files_cloud", graphname)
@@ -1356,19 +1362,25 @@ async def delete_cloud_downloads(
             }
         
         deleted_files = []
-        text_extractor = TextExtractor()
         
         if filename:
-            # Delete processed content from JSONL FIRST if session_id provided
+            # Delete corresponding JSONL file FIRST if session_id provided
             if session_id:
                 temp_folder = os.path.join("uploads", "ingestion_temp", graphname, session_id)
                 if os.path.exists(temp_folder):
-                    logger.info(f"Deleting processed content for {filename} from temp folder")
-                    result = text_extractor.delete_file_from_jsonl(temp_folder, filename)
-                    if result.get('success'):
-                        logger.info(f"Removed {result.get('removed_count', 0)} processed documents for {filename}")
-                    else:
-                        logger.warning(f"Failed to remove processed content: {result.get('error', 'Unknown error')}")
+                    # Delete the JSONL file named after the original file
+                    from pathlib import Path
+                    file_stem = Path(filename).stem
+                    jsonl_file = os.path.join(temp_folder, f"{file_stem}.jsonl")
+                    
+                    if os.path.exists(jsonl_file):
+                        os.remove(jsonl_file)
+                        logger.info(f"Deleted corresponding JSONL file: {file_stem}.jsonl")
+                        
+                        # If temp folder is now empty, remove it
+                        if not os.listdir(temp_folder):
+                            os.rmdir(temp_folder)
+                            logger.info(f"Removed empty temp folder for session {session_id}")
             
             # Then delete the original file
             file_path = os.path.join(download_dir, filename)
@@ -1413,10 +1425,11 @@ async def delete_ingestion_temp_files(
     graphname: str,
     credentials: Annotated[HTTPBase, Depends(security)],
     session_id: str = None,
-    filename: str = None,
 ):
     """
-    Delete files from ingestion temp folder.
+    Delete entire temp session folder (useful for cleanup if ingestion is cancelled).
+    Individual JSONL files are automatically deleted when raw files are deleted.
+    The entire session folder is automatically deleted after successful ingestion.
     """
     try:
         base_temp_dir = os.path.join("uploads", "ingestion_temp", graphname)
@@ -1433,35 +1446,19 @@ async def delete_ingestion_temp_files(
                 "deleted_files": [],
             }
         
+        # Delete entire session folder
+        import shutil
         deleted_files = []
-        
-        if filename:
-            # Delete specific file
-            file_path = os.path.join(session_dir, filename)
-            if os.path.exists(file_path) and os.path.isfile(file_path):
-                os.remove(file_path)
+        for filename in os.listdir(session_dir):
+            if os.path.isfile(os.path.join(session_dir, filename)):
                 deleted_files.append(filename)
-                logger.info(f"Deleted temp file {filename} from session {session_id}")
-                
-                # If session folder is now empty, remove it
-                if not os.listdir(session_dir):
-                    os.rmdir(session_dir)
-                    logger.info(f"Removed empty session folder {session_id}")
-            else:
-                raise HTTPException(status_code=404, detail=f"File {filename} not found")
-        else:
-            # Delete entire session folder
-            import shutil
-            for filename in os.listdir(session_dir):
-                if os.path.isfile(os.path.join(session_dir, filename)):
-                    deleted_files.append(filename)
-            
-            shutil.rmtree(session_dir)
-            logger.info(f"Deleted session folder {session_id} for graph {graphname}")
+        
+        shutil.rmtree(session_dir)
+        logger.info(f"Deleted session folder {session_id} for graph {graphname}")
         
         return {
             "status": "success",
-            "message": f"Successfully deleted {len(deleted_files)} file(s)",
+            "message": f"Successfully deleted session folder with {len(deleted_files)} file(s)",
             "deleted_files": deleted_files,
             "session_id": session_id,
         }

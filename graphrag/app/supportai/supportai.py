@@ -661,28 +661,54 @@ def ingest(
             try:
                 data_source_id = ingest_config.get("data_source_id", "DocumentContent")
                 
-                # Read from temporary folder's JSONL file
+                # Read from temporary folder containing JSONL files (one per input file)
                 data_path = ingest_config.get("data_path")
                 if not data_path or not os.path.exists(data_path):
                     raise Exception(f"Data path not found: {data_path}")
                 
-                # Read the entire JSONL file as a string
-                jsonl_file = os.path.join(data_path, "processed_documents.jsonl")
-                if not os.path.exists(jsonl_file):
-                    raise Exception(f"JSONL file not found: {jsonl_file}")
+                # Get all JSONL files from temp folder
+                jsonl_files = [f for f in os.listdir(data_path) if f.endswith('.jsonl')]
                 
-                logger.info(f"Reading JSONL file: {jsonl_file}")
+                if not jsonl_files:
+                    raise Exception(f"No JSONL files found in: {data_path}")
                 
-                # Read entire JSONL content
-                with open(jsonl_file, 'r', encoding='utf-8') as f:
-                    jsonl_content = f.read()
+                logger.info(f"Found {len(jsonl_files)} JSONL files to ingest from: {data_path}")
                 
-                # Load all documents in one call - runLoadingJobWithData supports JSONL format
-                conn.runLoadingJobWithData(jsonl_content, data_source_id, loader_info.load_job_id)
+                total_doc_count = 0
+                ingested_files = []
                 
-                # Count documents for reporting
-                doc_count = sum(1 for line in jsonl_content.strip().split('\n') if line.strip())
-                logger.info(f"Successfully ingested {doc_count} documents from JSONL")
+                # Process each JSONL file separately
+                for jsonl_filename in jsonl_files:
+                    jsonl_file = os.path.join(data_path, jsonl_filename)
+                    logger.info(f"Processing JSONL file: {jsonl_filename}")
+                    
+                    try:
+                        # Read entire JSONL content
+                        with open(jsonl_file, 'r', encoding='utf-8') as f:
+                            jsonl_content = f.read()
+                        
+                        # Load documents - runLoadingJobWithData supports JSONL format
+                        conn.runLoadingJobWithData(jsonl_content, data_source_id, loader_info.load_job_id)
+                        
+                        # Count documents for reporting
+                        doc_count = sum(1 for line in jsonl_content.strip().split('\n') if line.strip())
+                        total_doc_count += doc_count
+                        
+                        ingested_files.append({
+                            'jsonl_file': jsonl_filename,
+                            'document_count': doc_count,
+                            'status': 'success'
+                        })
+                        
+                        logger.info(f"Successfully ingested {doc_count} documents from {jsonl_filename}")
+                        
+                    except Exception as file_error:
+                        logger.error(f"Failed to ingest {jsonl_filename}: {file_error}")
+                        ingested_files.append({
+                            'jsonl_file': jsonl_filename,
+                            'status': 'failed',
+                            'error': str(file_error)
+                        })
                 
                 # Clean up temp folder after successful ingestion
                 try:
@@ -696,8 +722,9 @@ def ingest(
                 raise Exception(f"Error during server markdown extraction and TigerGraph loading: {e}")
             return {
                 "job_name": loader_info.load_job_id,
-                "summary": f"Successfully ingested {doc_count} documents from JSONL",
-                "document_count": doc_count
+                "summary": f"Successfully ingested {total_doc_count} documents from {len(jsonl_files)} JSONL files",
+                "document_count": total_doc_count,
+                "ingested_files": ingested_files
             }
 
         else:

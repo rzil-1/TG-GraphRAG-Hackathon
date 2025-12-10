@@ -263,7 +263,7 @@ const [activeTab, setActiveTab] = useState("upload");
     try {
       const creds = localStorage.getItem("creds");
 
-      // Delete original file (backend will also delete processed content from JSONL if session_id is provided)
+      // Delete original file (backend will also delete corresponding JSONL if session_id is provided)
       const url = tempSessionId
         ? `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}&session_id=${tempSessionId}`
         : `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}`;
@@ -280,6 +280,9 @@ const [activeTab, setActiveTab] = useState("upload");
       if (tempSessionId) {
         await fetchTempFiles(tempSessionId);
       }
+      
+      // Clear ingest message when deleting files
+      setIngestMessage("");
     } catch (error: any) {
       console.error("Delete error:", error);
       setUploadMessage(`❌ Error: ${error.message}`);
@@ -300,10 +303,29 @@ const [activeTab, setActiveTab] = useState("upload");
         headers: { Authorization: `Basic ${creds}` },
       });
       const data = await response.json();
-      // Also clear temp session
+      
+      // Also clear temp session if it exists
       if (tempSessionId) {
-        await handleDeleteAllTempFiles();
+        try {
+          await fetch(
+            `/ui/${ingestGraphName}/ingestion_temp/delete?session_id=${tempSessionId}`,
+            {
+              method: "DELETE",
+              headers: { Authorization: `Basic ${creds}` },
+            }
+          );
+        } catch (error) {
+          console.error("Error deleting temp files:", error);
+        }
       }
+      
+      // Clear all temp state
+      setTempSessionId(null);
+      setIngestJobData(null);
+      setTempFiles([]);
+      setShowTempFiles(false);
+      setIngestMessage("");  // Clear any previous ingestion messages
+      
       setUploadMessage(`✅ ${data.message}`);
       await fetchUploadedFiles();
     } catch (error: any) {

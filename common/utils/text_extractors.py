@@ -93,11 +93,11 @@ class TextExtractor:
             '.jpg': 'image/jpeg'
         }
 
-    async def _process_file_async(self, file_path, folder_path_obj, graphname, temp_folder, jsonl_file, jsonl_lock):
+    async def _process_file_async(self, file_path, folder_path_obj, graphname, temp_folder):
         """
         Async helper to process a single file.
         Runs in thread pool to avoid blocking on I/O operations.
-        Appends documents immediately to JSONL file.
+        Creates one JSONL file per input file.
         """
         try:
             loop = asyncio.get_event_loop()
@@ -109,22 +109,25 @@ class TextExtractor:
                 graphname
             )
 
-            # Append each document to JSONL file immediately
+            # Create one JSONL file per input file
             if doc_entries:
-                # Use lock to ensure thread-safe writing to JSONL file
-                async with jsonl_lock:
-                    await loop.run_in_executor(
-                        None,
-                        self._append_to_jsonl,
-                        jsonl_file,
-                        doc_entries
-                    )
+                # Use the original filename (stem) for the JSONL file
+                file_stem = Path(file_path).stem
+                jsonl_file = os.path.join(temp_folder, f"{file_stem}.jsonl")
+                
+                await loop.run_in_executor(
+                    None,
+                    self._write_to_jsonl,
+                    jsonl_file,
+                    doc_entries
+                )
             
             # Return metadata only, documents already saved to JSONL
             return {
                 'success': True,
                 'file_path': str(file_path),
-                'num_documents': len(doc_entries)
+                'num_documents': len(doc_entries),
+                'jsonl_file': f"{Path(file_path).stem}.jsonl"
             }
 
         except FileNotFoundError:
@@ -135,12 +138,12 @@ class TextExtractor:
             logger.warning(f"Failed to process file {file_path}: {e}")
             return {'success': False, 'file_path': str(file_path), 'error': str(e)}
     
-    def _append_to_jsonl(self, jsonl_file, doc_entries):
+    def _write_to_jsonl(self, jsonl_file, doc_entries):
         """
-        Append document entries to JSONL file.
+        Write document entries to a JSONL file (one file per input file).
         Each document is written as a separate line.
         """
-        with open(jsonl_file, 'a', encoding='utf-8') as f:
+        with open(jsonl_file, 'w', encoding='utf-8') as f:
             for doc_data in doc_entries:
                 json_line = json.dumps(doc_data, ensure_ascii=False)
                 f.write(json_line + '\n')
@@ -148,7 +151,7 @@ class TextExtractor:
     async def _process_folder_async(self, folder_path, graphname, temp_folder, max_concurrent=10):
         """
         Async version of process_folder for parallel file processing.
-        Saves all documents immediately to a single JSONL file as they are processed.
+        Creates one JSONL file per input file.
         """
         logger.info(f"Processing local folder ASYNC: {folder_path} for graph: {graphname} (max_concurrent={max_concurrent})")
 
@@ -160,12 +163,9 @@ class TextExtractor:
         if not folder_path_obj.is_dir():
             raise Exception(f"Path is not a directory: {folder_path}")
 
-        # Create temp folder and JSONL file
+        # Create temp folder for JSONL files
         os.makedirs(temp_folder, exist_ok=True)
-        jsonl_file = os.path.join(temp_folder, "processed_documents.jsonl")
-        # Create async lock for thread-safe JSONL writing
-        jsonl_lock = asyncio.Lock()
-        logger.info(f"Saving processed documents to: {jsonl_file}")
+        logger.info(f"Saving processed documents to: {temp_folder}")
 
         def safe_walk(path):
             try:
@@ -194,7 +194,7 @@ class TextExtractor:
 
         async def process_with_semaphore(file_path):
             async with semaphore:
-                return await self._process_file_async(file_path, folder_path_obj, graphname, temp_folder, jsonl_file, jsonl_lock)
+                return await self._process_file_async(file_path, folder_path_obj, graphname, temp_folder)
 
         tasks = [process_with_semaphore(fp) for fp in files_to_process]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -214,6 +214,7 @@ class TextExtractor:
                 processed_files_info.append({
                     'file_path': result['file_path'],
                     'num_documents': num_docs,
+                    'jsonl_file': result.get('jsonl_file'),
                     'status': 'success'
                 })
             else:
@@ -224,117 +225,29 @@ class TextExtractor:
                 })
 
         logger.info(f"Processed {len(processed_files_info)} files, extracted {total_docs} total documents")
+        logger.info(f"Created {len([f for f in processed_files_info if f.get('status') == 'success'])} JSONL files in {temp_folder}")
 
         return {
             'statusCode': 200,
             'message': f'Processed {len(processed_files_info)} files, {total_docs} documents',
             'files': processed_files_info,
             'num_documents': total_docs,
-            'temp_folder': temp_folder,
-            'jsonl_file': jsonl_file
+            'temp_folder': temp_folder
         }
 
     def process_folder(self, folder_path, graphname, temp_folder):
         """
         Process local folder with multiple file formats and extract text content.
         Uses async processing internally for parallel file handling.
-        Saves all documents to JSONL file immediately as they are processed.
+        Creates one JSONL file per input file.
         
         Args:
             folder_path: Path to the folder containing files to process
             graphname: Name of the graph (for context)
-            temp_folder: Path to save processed documents as JSONL file
+            temp_folder: Path to save processed documents as JSONL files (one per input file)
         """
         logger.info(f"Processing local folder: {folder_path} for graph: {graphname}")
         return asyncio.run(self._process_folder_async(folder_path, graphname, temp_folder))
-    
-    def delete_file_from_jsonl(self, temp_folder, filename):
-        """
-        Delete all documents related to a specific file from the JSONL file.
-        
-        Args:
-            temp_folder: Path to the temp folder containing processed_documents.jsonl
-            filename: Original filename (e.g., "report.pdf", "stock_gs200.jpg")
-        
-        Returns:
-            dict with status and number of documents removed
-        """
-        jsonl_file = os.path.join(temp_folder, "processed_documents.jsonl")
-        
-        if not os.path.exists(jsonl_file):
-            logger.warning(f"JSONL file not found: {jsonl_file}")
-            return {'success': False, 'error': 'JSONL file not found'}
-        
-        # Get base name without extension to match doc_id
-        base_name = Path(filename).stem
-        logger.info(f"Deleting documents for file: {filename} (base_name: '{base_name}')")
-        
-        # Read all lines and filter out ones matching this file
-        remaining_lines = []
-        removed_count = 0
-        removed_doc_ids = []
-        
-        try:
-            with open(jsonl_file, 'r', encoding='utf-8') as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    try:
-                        doc_data = json.loads(line)
-                        doc_id = doc_data.get('doc_id', '')
-                        
-                        # Check if doc_id matches the base_name or starts with base_name_
-                        # Handles: "stock_gs200" == "stock_gs200" or "stock_gs200_image_1".startswith("stock_gs200_")
-                        if doc_id == base_name or doc_id.startswith(f"{base_name}_"):
-                            removed_count += 1
-                            removed_doc_ids.append(doc_id)
-                            logger.info(f"Removing document: {doc_id}")
-                        else:
-                            remaining_lines.append(line)
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"Skipping invalid JSON at line {line_num}: {e}")
-                        # Keep invalid lines in case they're important
-                        remaining_lines.append(line)
-            
-            if removed_count == 0:
-                logger.warning(f"No documents found matching base_name: '{base_name}'")
-                return {
-                    'success': False,
-                    'error': f'No documents found for {filename}',
-                    'removed_count': 0
-                }
-            
-            # If no lines remain, delete the entire temp folder
-            if not remaining_lines:
-                logger.info(f"No documents remaining, deleting temp folder: {temp_folder}")
-                import shutil
-                shutil.rmtree(temp_folder, ignore_errors=True)
-                return {
-                    'success': True,
-                    'removed_count': removed_count,
-                    'removed_doc_ids': removed_doc_ids,
-                    'temp_folder_deleted': True
-                }
-            
-            # Write remaining lines back to JSONL
-            with open(jsonl_file, 'w', encoding='utf-8') as f:
-                for line in remaining_lines:
-                    f.write(line + '\n')
-            
-            logger.info(f"Removed {removed_count} documents ({', '.join(removed_doc_ids)}), {len(remaining_lines)} remaining")
-            return {
-                'success': True,
-                'removed_count': removed_count,
-                'removed_doc_ids': removed_doc_ids,
-                'remaining_count': len(remaining_lines),
-                'temp_folder_deleted': False
-            }
-            
-        except Exception as e:
-            logger.error(f"Error deleting from JSONL: {e}")
-            return {'success': False, 'error': str(e)}
 
 
 def extract_text_from_file_with_images_as_docs(file_path, graphname=None):
