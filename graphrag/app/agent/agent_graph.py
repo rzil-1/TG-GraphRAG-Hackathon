@@ -118,10 +118,10 @@ class TigerGraphAgentGraph:
         )
         if self.supportai_enabled and source.datasource == "vectorstore":
             return "supportai_lookup"
-        elif source.datasource == "functions":
-            return "inquiryai_lookup"
-        else:
+        elif source.datasource == "history":
             return "history_lookup"
+        else:
+            return "inquiryai_lookup"
 
     def apologize(self, state):
         """
@@ -134,6 +134,20 @@ class TigerGraphAgentGraph:
             response_type="error",
             query_sources={"error": True, "error_history": state["error_history"]},
         )
+        return state
+
+    def lookup_history(self, state):
+        """
+        Run the agent history lookup.
+        """
+        self.emit_progress("Looking up the conversation history")
+        state["lookup_source"] = "history"
+        state["context"] = {
+            "result": state["conversation"],
+            "reasoning": "The following conversation history was used to answer the question. {}".format(
+                state["conversation"]
+            ),
+        }
         return state
 
     def map_question_to_schema(self, state):
@@ -186,8 +200,6 @@ class TigerGraphAgentGraph:
 
         for i in range(3):
             cypher = self.cypher_gen._run(state["question"], gen_history)
-            logger.info(f"cypher: {cypher}")
-
             response = self.db_connection.gsql(cypher)
             response_lines = response.split("\n")
             json_str = "\n".join(response_lines[1:])
@@ -362,9 +374,6 @@ class TigerGraphAgentGraph:
             f"request_id={req_id_cv.get()} Generating answer for question: {state['question']}"
         )
 
-        if "lookup_source" not in state:
-            state["lookup_source"] = "history"
-
         if state["lookup_source"] == "supportai":
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
@@ -402,13 +411,6 @@ class TigerGraphAgentGraph:
             answer = step.generate_answer(state["question"], state["context"]["result"], state["context"]["cypher"])
 
         elif state["lookup_source"] == "history":
-            state["context"] = {
-                "result": state["conversation"],
-                "reasoning": "The following conversation history was used to answer the question. {}".format(
-                    state["conversation"]
-                ),
-            }
-
             logger.debug_pii(
                 f"""request_id={req_id_cv.get()} Got result: {state["context"]["result"]}"""
             )
@@ -643,6 +645,7 @@ class TigerGraphAgentGraph:
         self.workflow.set_entry_point("entry")
         self.workflow.add_node("entry", self.entry)
         self.workflow.add_node("generate_answer", self.generate_answer)
+        self.workflow.add_node("lookup_history", self.lookup_history)
         self.workflow.add_node("map_question_to_schema", self.map_question_to_schema)
         self.workflow.add_node("generate_function", self.generate_function)
         if self.supportai_enabled:
@@ -736,7 +739,7 @@ class TigerGraphAgentGraph:
                 {
                     "supportai_lookup": "supportai",
                     "inquiryai_lookup": "map_question_to_schema",
-                    "history_lookup": "generate_answer",
+                    "history_lookup": "lookup_history",
                     "apologize": "apologize",
                 },
             )
@@ -746,11 +749,12 @@ class TigerGraphAgentGraph:
                 self.route_question,
                 {
                     "inquiryai_lookup": "map_question_to_schema",
-                    "history_lookup": "generate_answer",
+                    "history_lookup": "lookup_history",
                     "apologize": "apologize",
                 },
             )
 
+        self.workflow.add_edge("lookup_history", "generate_answer")
         self.workflow.add_edge("map_question_to_schema", "generate_function")
         if self.supportai_enabled:
             self.workflow.add_edge("supportai", "generate_answer")

@@ -21,6 +21,8 @@ from langchain.tools import BaseTool
 from langchain.llms.base import LLM
 from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.db.connections import get_schema_ver
+from common.logs.logwriter import LogWriter
+from common.logs.log import req_id_cv
 
 logger = logging.getLogger(__name__)
 
@@ -115,8 +117,8 @@ Edge Types:
             ]
         )
 
+        LogWriter.info(f"request_id={req_id_cv.get()} ENTRY generate_cypher with {question}")
         schema = self._generate_schema_rep()
-    
         logger.debug_pii("Prompt to LLM:\n" + PROMPT.invoke({"question": question, "schema": schema, "history": history}).to_string())
 
         chain = PROMPT | self.llm.model | StrOutputParser()
@@ -132,8 +134,10 @@ Edge Types:
 
         query_header = "USE GRAPH " + self.conn.graphname + " "+ "\n" + "INTERPRET OPENCYPHER QUERY () {" + "\n"
         query_footer = "\n}"
-        return query_header + out + query_footer
-    
+        cypher = query_header + out + query_footer
+        LogWriter.info(f"request_id={req_id_cv.get()} EXIT generate_cypher with:\n{cypher}")
+        return cypher
+
     def _run(self, question: str, history: Iterable[str]):
         """Run the GenerateCypher tool.
         Args:
@@ -144,6 +148,6 @@ Edge Types:
                 Cypher query for the question.
         """
         return self.generate_cypher(question, history)
-    
+
     def _arun(self, question: str, history: Iterable[str]):
         raise NotImplementedError("Asynchronous execution is not supported for this tool.")
