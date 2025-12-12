@@ -485,9 +485,9 @@ def create_ingest(
         if data_path is None:
             raise Exception("Data path not provided for server processing")
         try:
-            # Create temp folder BEFORE processing so extractor can save directly
-            temp_session_id = str(uuid.uuid4())
-            temp_folder = os.path.join("uploads", "ingestion_temp", graphname, temp_session_id)
+            #create temp folder
+            base_dir = os.path.dirname(data_path) 
+            temp_folder = os.path.join(base_dir, "ingestion_temp", graphname)
             
             # Process files and save immediately to temp folder (memory efficient)
             extractor = TextExtractor()
@@ -502,7 +502,6 @@ def create_ingest(
             doc_count = server_processing_result.get("num_documents", 0)
             logger.info(f"Server folder processing completed: {server_processing_result.get('message')}")
 
-            res_ingest_config["temp_session_id"] = temp_session_id
             res_ingest_config["data_path"] = temp_folder
             res_ingest_config["file_count"] = doc_count
             res_ingest_config["data_source_id"] = "DocumentContent"

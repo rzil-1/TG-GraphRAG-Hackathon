@@ -56,10 +56,7 @@ const Setup = () => {
   const [uploadMessage, setUploadMessage] = useState("");
   const [isIngesting, setIsIngesting] = useState(false);
   const [ingestMessage, setIngestMessage] = useState("");
-  // Ingestion temp files state
-  const [tempSessionId, setTempSessionId] = useState<string | null>(null);
-  const [tempFiles, setTempFiles] = useState<any[]>([]);
-  const [showTempFiles, setShowTempFiles] = useState(false);
+  // Ingestion job data state
   const [ingestJobData, setIngestJobData] = useState<any>(null);
   const [directIngestion, setDirectIngestion] = useState(false);
 
@@ -165,15 +162,17 @@ const [activeTab, setActiveTab] = useState("upload");
 
       const data = await response.json();
       if (data.status === "success") {
-        setUploadMessage("✅ Successfully uploaded the files. Wait for file processing");
+        const uploadedCount = selectedFiles?.length || 0;
+        setUploadMessage("✅ Successfully uploaded the files. Processing...");
         setSelectedFiles(null);
         await fetchUploadedFiles();
         setIsUploading(false);
 
         // Step 2: Call create_ingest to process uploaded files in background
         console.log("Calling handleCreateIngestAfterUpload from main upload...");
-        handleCreateIngestAfterUpload("uploaded").catch((err) => {
+        handleCreateIngestAfterUpload("uploaded", uploadedCount).catch((err) => {
           console.error("Error in background processing:", err);
+          setUploadMessage(`❌ Processing error: ${err.message}`);
         });
       } else {
         setUploadMessage(`⚠️ ${data.message}`);
@@ -243,7 +242,7 @@ const [activeTab, setActiveTab] = useState("upload");
 
       // Step 2: Call create_ingest to process uploaded files
       console.log("Calling handleCreateIngestAfterUpload...");
-      await handleCreateIngestAfterUpload("uploaded");
+      await handleCreateIngestAfterUpload("uploaded", uploadedCount);
       console.log("handleCreateIngestAfterUpload completed");
     } catch (error: any) {
       console.error("Upload error:", error);
@@ -258,15 +257,12 @@ const [activeTab, setActiveTab] = useState("upload");
     if (!ingestGraphName) return;
     
     console.log("Deleting file:", filename);
-    console.log("tempSessionId:", tempSessionId);
 
     try {
       const creds = localStorage.getItem("creds");
 
-      // Delete original file (backend will also delete corresponding JSONL if session_id is provided)
-      const url = tempSessionId
-        ? `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}&session_id=${tempSessionId}`
-        : `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}`;
+      // Delete original file
+      const url = `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}`;
 
       const response = await fetch(url, {
           method: "DELETE",
@@ -275,11 +271,6 @@ const [activeTab, setActiveTab] = useState("upload");
       const data = await response.json();
       setUploadMessage(`✅ ${data.message}`);
       await fetchUploadedFiles();
-
-      // Refresh temp files list if session exists
-      if (tempSessionId) {
-        await fetchTempFiles(tempSessionId);
-      }
       
       // Clear ingest message when deleting files
       setIngestMessage("");
@@ -304,11 +295,11 @@ const [activeTab, setActiveTab] = useState("upload");
       });
       const data = await response.json();
       
-      // Also clear temp session if it exists
-      if (tempSessionId) {
+      // Also clear temp folder if it exists
+      if (ingestJobData?.data_path) {
         try {
           await fetch(
-            `/ui/${ingestGraphName}/ingestion_temp/delete?session_id=${tempSessionId}`,
+            `/ui/${ingestGraphName}/ingestion_temp/delete?data_path=${encodeURIComponent(ingestJobData.data_path)}`,
             {
               method: "DELETE",
               headers: { Authorization: `Basic ${creds}` },
@@ -320,10 +311,7 @@ const [activeTab, setActiveTab] = useState("upload");
       }
       
       // Clear all temp state
-      setTempSessionId(null);
       setIngestJobData(null);
-      setTempFiles([]);
-      setShowTempFiles(false);
       setIngestMessage("");  // Clear any previous ingestion messages
       
       setUploadMessage(`✅ ${data.message}`);
@@ -418,12 +406,14 @@ const [activeTab, setActiveTab] = useState("upload");
 
       const data = await response.json();
       if (data.status === "success") {
-        setDownloadMessage("✅ Successfully downloaded the files. Wait for file processing");
+        const downloadCount = data.downloaded_files?.length || downloadedFiles.length;
+        setDownloadMessage("✅ Successfully downloaded the files. Processing...");
         await fetchDownloadedFiles();
         setIsDownloading(false);
         // Step 2: Call create_ingest to process downloaded files in background
-        handleCreateIngestAfterUpload("downloaded").catch((err) => {
+        handleCreateIngestAfterUpload("downloaded", downloadCount).catch((err) => {
           console.error("Error in background processing:", err);
+          setDownloadMessage(`❌ Processing error: ${err.message}`);
         });
       } else if (data.status === "warning") {
         setDownloadMessage(`⚠️ ${data.message}`);
@@ -446,10 +436,8 @@ const [activeTab, setActiveTab] = useState("upload");
     try {
       const creds = localStorage.getItem("creds");
       
-      // Delete original file (backend will also delete processed content from JSONL if session_id is provided)
-      const url = tempSessionId
-        ? `/ui/${ingestGraphName}/cloud/delete?filename=${encodeURIComponent(filename)}&session_id=${tempSessionId}`
-        : `/ui/${ingestGraphName}/cloud/delete?filename=${encodeURIComponent(filename)}`;
+      // Delete original file
+      const url = `/ui/${ingestGraphName}/cloud/delete?filename=${encodeURIComponent(filename)}`;
 
       const response = await fetch(url, {
           method: "DELETE",
@@ -458,30 +446,8 @@ const [activeTab, setActiveTab] = useState("upload");
       const data = await response.json();
       setDownloadMessage(`✅ ${data.message}`);
       await fetchDownloadedFiles();
-      // Refresh temp files list if session exists
-      if (tempSessionId) {
-        await fetchTempFiles(tempSessionId);
-      }
     } catch (error: any) {
       setDownloadMessage(`❌ Error: ${error.message}`);
-    }
-  };
-
-  const fetchTempFiles = async (sessionId: string) => {
-    if (!ingestGraphName || !sessionId) return;
-
-    try {
-      const creds = localStorage.getItem("creds");
-      const response = await fetch(`/ui/${ingestGraphName}/ingestion_temp/list?session_id=${sessionId}`, {
-        headers: { Authorization: `Basic ${creds}` },
-      });
-      const data = await response.json();
-      if (data.status === "success" && data.sessions.length > 0) {
-        setTempFiles(data.sessions[0].files || []);
-        setShowTempFiles(true);
-      }
-    } catch (error) {
-      console.error("Error fetching temp files:", error);
     }
   };
 
@@ -507,14 +473,14 @@ const [activeTab, setActiveTab] = useState("upload");
   };
 
 
-  // Delete all temp files for session
+  // Delete all temp files for current ingest job
   const handleDeleteAllTempFiles = async () => {
-    if (!ingestGraphName || !tempSessionId) return;
+    if (!ingestGraphName || !ingestJobData?.data_path) return;
 
     try {
       const creds = localStorage.getItem("creds");
       const response = await fetch(
-        `/ui/${ingestGraphName}/ingestion_temp/delete?session_id=${tempSessionId}`,
+        `/ui/${ingestGraphName}/ingestion_temp/delete?data_path=${encodeURIComponent(ingestJobData.data_path)}`,
         {
           method: "DELETE",
           headers: { Authorization: `Basic ${creds}` },
@@ -523,9 +489,7 @@ const [activeTab, setActiveTab] = useState("upload");
       const data = await response.json();
       if (data.status === "success") {
         setIngestMessage(`✅ ${data.message}`);
-        setTempFiles([]);
-        setShowTempFiles(false);
-        setTempSessionId(null);
+        setIngestJobData(null);
       }
     } catch (error: any) {
       setIngestMessage(`❌ Error: ${error.message}`);
@@ -572,10 +536,7 @@ const [activeTab, setActiveTab] = useState("upload");
       setIngestMessage(`✅ Ingestion completed successfully!`);
       setUploadMessage("");  // Clear the "Ready for ingestion" message
 
-      // Clear temp state
-      setTempFiles([]);
-      setShowTempFiles(false);
-      setTempSessionId(null);
+      // Clear ingest job data
       setIngestJobData(null);
     } catch (error: any) {
       console.error("Error running ingest:", error);
@@ -593,6 +554,7 @@ const [activeTab, setActiveTab] = useState("upload");
     }
 
     const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
+    const fileCount = sourceType === "uploaded" ? uploadedFiles.length : downloadedFiles.length;
 
     setIsIngesting(true);
     setIngestMessage("Step 1/2: Creating ingest job...");
@@ -627,22 +589,19 @@ const [activeTab, setActiveTab] = useState("upload");
       const createData = await createResponse.json();
       console.log("Create ingest response:", createData);
 
-      // Check if temp files were created (for server data source)
-      const sessionId = createData.data_source_id?.temp_session_id;
+      // Store ingest job data for later use (store folderPath as source_data_path for temp folder deletion)
+      setIngestJobData({
+        load_job_id: createData.load_job_id,
+        data_source_id: createData.data_source_id,
+        data_path: folderPath,  // Use the source folderPath, not the backend's "in_temp_storage"
+      });
 
-      if (sessionId && !directIngestion) {
-        // Files are saved to temp storage - show them for review (only if not direct ingestion)
-        setTempSessionId(sessionId);
-        setIngestJobData({
-          load_job_id: createData.load_job_id,
-          data_source_id: createData.data_source_id,
-          data_path: createData.data_path || createData.file_path,
-        });
-        setIngestMessage(`✅ Processed ${createData.data_source_id.file_count} files. Review them below before ingesting.`);
-        await fetchTempFiles(sessionId);
+      if (!directIngestion) {
+        // Files are saved to temp storage - show message for review (only if not direct ingestion)
+        setIngestMessage(`✅ ${fileCount} file(s) ready for ingestion.`);
         setIsIngesting(false);
       } else {
-        // No temp files (e.g., S3 Bedrock) OR direct ingestion enabled - proceed directly to ingest
+        // Direct ingestion enabled - proceed directly to ingest
       setIngestMessage("Step 2/2: Running document ingest...");
 
       const loadingInfo = {
@@ -678,8 +637,8 @@ const [activeTab, setActiveTab] = useState("upload");
     }
   };
   // Called automatically after upload or cloud download finishes.
-  // Creates an ingest job that processes files into a temp session (JSONL) and stores session id in client.
-  const handleCreateIngestAfterUpload = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
+  // Creates an ingest job that processes files into JSONL format in temp folder.
+  const handleCreateIngestAfterUpload = async (sourceType: "uploaded" | "downloaded" = "uploaded", fileCountParam?: number) => {
     console.log("handleCreateIngestAfterUpload called with sourceType:", sourceType);
     console.log("ingestGraphName:", ingestGraphName);
 
@@ -689,8 +648,11 @@ const [activeTab, setActiveTab] = useState("upload");
     }
 
     const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
+    // Use passed file count or fallback to state arrays
+    const fileCount = fileCountParam || (sourceType === "uploaded" ? uploadedFiles.length : downloadedFiles.length);
 
     console.log("folderPath:", folderPath);
+    console.log("fileCount:", fileCount);
 
     try {
       const creds = localStorage.getItem("creds");
@@ -727,30 +689,22 @@ const [activeTab, setActiveTab] = useState("upload");
       const createData = await createResponse.json();
       console.log("create_ingest response data:", createData);
 
-      const sessionId = createData.data_source_id?.temp_session_id;
-      console.log("Session ID:", sessionId);
+      // Save ingest job data for later (store folderPath as data_path for temp folder deletion)
+      setIngestJobData({
+        load_job_id: createData.load_job_id,
+        data_source_id: createData.data_source_id,
+        data_path: folderPath,  // Use the source folderPath, not the backend's "in_temp_storage"
+      });
 
-      if (sessionId) {
-        // Save session ID for later ingest
-        setTempSessionId(sessionId);
-        setIngestJobData({
-          load_job_id: createData.load_job_id,
-          data_source_id: createData.data_source_id,
-          data_path: createData.data_path || createData.file_path,
-        });
+      console.log("Direct ingestion enabled:", directIngestion);
 
-        console.log("Direct ingestion enabled:", directIngestion);
-
-        if (directIngestion) {
-          // Direct ingestion - proceed to ingest immediately
-          setUploadMessage("Running direct ingestion...");
-          await handleRunIngest();
-        } else {
-          // Save for later - files ready for ingestion
-          setUploadMessage(`✅ Successfully processed ${createData.data_source_id.file_count} files. Ready for ingestion.`);
-        }
+      if (directIngestion) {
+        // Direct ingestion - proceed to ingest immediately
+        setUploadMessage("Running direct ingestion...");
+        await handleRunIngest();
       } else {
-        console.warn("No session ID returned from create_ingest");
+        // Save for later - files ready for ingestion
+        setUploadMessage(`✅ ${fileCount} file(s) ready for ingestion.`);
       }
     } catch (error: any) {
       console.error("Error in create_ingest:", error);
@@ -1527,7 +1481,7 @@ const [activeTab, setActiveTab] = useState("upload");
                   )}
 
                   {/* Ingest Data Section */}
-                  {uploadedFiles.length > 0 && tempSessionId && ingestJobData && (
+                  {uploadedFiles.length > 0 && ingestJobData && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
                         Ingest Documents into Knowledge Graph
@@ -1537,7 +1491,7 @@ const [activeTab, setActiveTab] = useState("upload");
                       </p>
                       <Button
                         onClick={() => handleRunIngest()}
-                        disabled={isIngesting || !tempSessionId || !ingestJobData}
+                        disabled={isIngesting || !ingestJobData}
                         className="gradient text-white w-full"
                       >
                         {isIngesting ? (
@@ -1831,7 +1785,7 @@ const [activeTab, setActiveTab] = useState("upload");
                   )}
 
                   {/* Ingest Downloaded Data Section */}
-                  {downloadedFiles.length > 0 && tempSessionId && ingestJobData && (
+                  {downloadedFiles.length > 0 && ingestJobData && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
                         Ingest Documents into Knowledge Graph
@@ -1841,7 +1795,7 @@ const [activeTab, setActiveTab] = useState("upload");
                       </p>
                       <Button
                         onClick={() => handleRunIngest()}
-                        disabled={isIngesting || !tempSessionId || !ingestJobData}
+                        disabled={isIngesting || !ingestJobData}
                         className="gradient text-white w-full"
                       >
                         {isIngesting ? (
