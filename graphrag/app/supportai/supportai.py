@@ -337,8 +337,8 @@ def create_ingest(
     conn: TigerGraphConnection,
 ):
     # Check for invalid combination of multi format and non-s3 data source
-    if ingest_config.data_source.lower() in ["bda", "server"] and ingest_config.file_format.lower() != "multi":
-        logger.warning(f"File format {ingest_config.file_format.lower()} is not supported for data source {ingest_config.data_source.lower()}")
+    if ingest_config.data_source.lower() in ["bda", "server"] and getattr(ingest_config, "file_format", "").lower() != "multi":
+        logger.warning(f"File format {getattr(ingest_config, 'file_format', '')} is not supported for data source {ingest_config.data_source.lower()}")
         ingest_config.file_format = "multi"
 
     res_ingest_config = {"data_source": ingest_config.data_source.lower()}
