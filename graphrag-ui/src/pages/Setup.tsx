@@ -295,21 +295,6 @@ const [activeTab, setActiveTab] = useState("upload");
       });
       const data = await response.json();
       
-      // Also clear temp folder if it exists
-      if (ingestJobData?.data_path) {
-        try {
-          await fetch(
-            `/ui/${ingestGraphName}/ingestion_temp/delete?data_path=${encodeURIComponent(ingestJobData.data_path)}`,
-            {
-              method: "DELETE",
-              headers: { Authorization: `Basic ${creds}` },
-            }
-          );
-        } catch (error) {
-          console.error("Error deleting temp files:", error);
-        }
-      }
-      
       // Clear all temp state
       setIngestJobData(null);
       setIngestMessage("");  // Clear any previous ingestion messages
@@ -472,29 +457,6 @@ const [activeTab, setActiveTab] = useState("upload");
     }
   };
 
-
-  // Delete all temp files for current ingest job
-  const handleDeleteAllTempFiles = async () => {
-    if (!ingestGraphName || !ingestJobData?.data_path) return;
-
-    try {
-      const creds = localStorage.getItem("creds");
-      const response = await fetch(
-        `/ui/${ingestGraphName}/ingestion_temp/delete?data_path=${encodeURIComponent(ingestJobData.data_path)}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Basic ${creds}` },
-        }
-      );
-      const data = await response.json();
-      if (data.status === "success") {
-        setIngestMessage(`✅ ${data.message}`);
-        setIngestJobData(null);
-      }
-    } catch (error: any) {
-      setIngestMessage(`❌ Error: ${error.message}`);
-    }
-  };
 
   // Ingest flows (create ingest, run ingest)
   // -------------------------

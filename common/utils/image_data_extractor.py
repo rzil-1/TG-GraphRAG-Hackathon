@@ -38,6 +38,7 @@ def describe_image_with_llm(file_path):
                             "Please describe what you see in this image and "
                             "if the image has scanned text then extract all the text. "
                             "If the image has any graph, chart, table, or other diagram, describe it. "
+                            "If the image has any logo, identify and describe the logo."
                         ),
                     },
                     {

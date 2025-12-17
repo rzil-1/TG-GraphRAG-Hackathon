@@ -682,15 +682,12 @@ def ingest(
                     logger.info(f"Processing JSONL file: {jsonl_filename}")
                     
                     try:
-                        # Read entire JSONL content
-                        with open(jsonl_file, 'r', encoding='utf-8') as f:
-                            jsonl_content = f.read()
-                        
-                        # Load documents - runLoadingJobWithData supports JSONL format
-                        conn.runLoadingJobWithData(jsonl_content, data_source_id, loader_info.load_job_id)
+                        # Load documents directly from file - more memory efficient
+                        conn.runLoadingJobWithFile(jsonl_file, data_source_id, loader_info.load_job_id)
                         
                         # Count documents for reporting
-                        doc_count = sum(1 for line in jsonl_content.strip().split('\n') if line.strip())
+                        with open(jsonl_file, 'r', encoding='utf-8') as f:
+                            doc_count = sum(1 for line in f if line.strip())
                         total_doc_count += doc_count
                         
                         ingested_files.append({
@@ -709,13 +706,9 @@ def ingest(
                             'error': str(file_error)
                         })
                 
-                # Clean up temp folder after successful ingestion
-                try:
-                    import shutil
-                    shutil.rmtree(data_path)
-                    logger.info(f"Cleaned up temporary folder: {data_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup temp folder {data_path}: {cleanup_error}")
+                # Keep temp files for potential re-ingestion (faster, no need to re-process PDFs/images)
+                # Files will be cleaned up when user deletes source files via delete endpoints
+                logger.info(f"Ingestion complete. Temp files preserved at: {data_path}")
                     
             except Exception as e:
                 raise Exception(f"Error during server markdown extraction and TigerGraph loading: {e}")

@@ -93,11 +93,16 @@ class TextExtractor:
             '.jpg': 'image/jpeg'
         }
 
-    async def _process_file_async(self, file_path, folder_path_obj, graphname, temp_folder):
+    async def _process_file_async(self, file_path, graphname, temp_folder):
         """
         Async helper to process a single file.
         Runs in thread pool to avoid blocking on I/O operations.
         Creates one JSONL file per input file.
+
+        Args:
+            file_path: Absolute path to the input file to be processed (e.g., "C:/data/docs/report.pdf").
+            graphname: Name of the knowledge graph this file belongs to, used for metadata tagging.
+            temp_folder: Absolute path to the temporary directory where output JSONL files are written.
         """
         try:
             loop = asyncio.get_event_loop()
@@ -194,7 +199,7 @@ class TextExtractor:
 
         async def process_with_semaphore(file_path):
             async with semaphore:
-                return await self._process_file_async(file_path, folder_path_obj, graphname, temp_folder)
+                return await self._process_file_async(file_path, graphname, temp_folder)
 
         tasks = [process_with_semaphore(fp) for fp in files_to_process]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -450,12 +455,6 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
             pass
 
         description = describe_image_with_llm(str(Path(file_path).absolute()))
-        description_lower = description.lower()
-        logo_indicators = ['logo:', 'icon:', 'logo', 'icon', 'branding',
-                           'watermark', 'trademark', 'stylized letter',
-                           'stylized text', 'word "', "word '"]
-        if any(indicator in description_lower for indicator in logo_indicators):
-            return []
 
         buffer = io.BytesIO()
         if pil_image.mode != 'RGB':

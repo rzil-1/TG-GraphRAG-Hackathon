@@ -1046,6 +1046,13 @@ async def clear_uploaded_files(
             if not os.listdir(upload_dir):
                 os.rmdir(upload_dir)
             
+            # Also delete the entire temp folder for this graph
+            temp_folder = os.path.join("uploads", "ingestion_temp", graphname)
+            if os.path.exists(temp_folder):
+                import shutil
+                shutil.rmtree(temp_folder)
+                logger.info(f"Deleted temp folder for graph {graphname}")
+            
             logger.info(f"Deleted {len(deleted_files)} file(s) for graph {graphname}")
         
         return {
@@ -1394,6 +1401,13 @@ async def delete_cloud_downloads(
             if not os.listdir(download_dir):
                 os.rmdir(download_dir)
             
+            # Also delete the entire temp folder for this graph
+            temp_folder = os.path.join("downloaded_files_cloud", "ingestion_temp", graphname)
+            if os.path.exists(temp_folder):
+                import shutil
+                shutil.rmtree(temp_folder)
+                logger.info(f"Deleted temp folder for graph {graphname}")
+            
             logger.info(f"Deleted {len(deleted_files)} cloud download(s) for graph {graphname}")
         
         return {
@@ -1410,59 +1424,3 @@ async def delete_cloud_downloads(
         logger.error(f"Error deleting cloud downloads for graph {graphname}: {e}")
         logger.debug_pii(f"Delete error trace:\n{exc}")
         raise HTTPException(status_code=500, detail=f"Error deleting files: {str(e)}")
-
-
-@router.delete(route_prefix + "/{graphname}/ingestion_temp/delete")
-async def delete_ingestion_temp_files(
-    graphname: str,
-    credentials: Annotated[HTTPBase, Depends(security)],
-    data_path: str = None,
-):
-    """
-    Delete entire temp folder for a graph (useful for cleanup if ingestion is cancelled).
-    The entire temp folder is automatically deleted after successful ingestion.
-    
-    Parameters:
-    - graphname: The graph name
-    - data_path: The data source path (e.g., "uploads/MyGraph" or "downloaded_files_cloud/MyGraph")
-    """
-    try:
-        import shutil
-        
-        if not data_path:
-            raise HTTPException(status_code=400, detail="data_path is required")
-        
-        # Extract base directory from data_path, same logic as in supportai.py
-        base_dir = os.path.dirname(data_path)
-        temp_dir = os.path.join(base_dir, "ingestion_temp", graphname)
-        
-        if not os.path.exists(temp_dir):
-            return {
-                "status": "success",
-                "message": f"No temp files found at {temp_dir}",
-                "deleted_files": [],
-            }
-        
-        # Delete entire temp folder
-        deleted_files = []
-        for filename in os.listdir(temp_dir):
-            if os.path.isfile(os.path.join(temp_dir, filename)):
-                deleted_files.append(filename)
-        
-        shutil.rmtree(temp_dir)
-        logger.info(f"Deleted temp folder: {temp_dir}")
-        
-        return {
-            "status": "success",
-            "message": f"Successfully deleted temp folder with {len(deleted_files)} file(s)",
-            "deleted_files": deleted_files,
-            "deleted_from": temp_dir,
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        exc = traceback.format_exc()
-        logger.error(f"Error deleting ingestion temp files for graph {graphname}: {e}")
-        logger.debug_pii(f"Delete error trace:\n{exc}")
-        raise HTTPException(status_code=500, detail=f"Error deleting temp files: {str(e)}")
