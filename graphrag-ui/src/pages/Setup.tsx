@@ -677,7 +677,7 @@ const [activeTab, setActiveTab] = useState("upload");
         setIngestJobData({
           load_job_id: createData.load_job_id,
           data_source_id: createData.data_source_id,
-        data_path: folderPath,  // Use the source folderPath, not the backend's "in_temp_storage"
+        data_path: folderPath,
         });
 
         console.log("Direct ingestion enabled:", directIngestion);
@@ -879,8 +879,7 @@ const [activeTab, setActiveTab] = useState("upload");
           } else if (statusData.status === "failed") {
             setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
           } else {
-            // Clear message only if we're not showing loading message AND there's no existing warning/error message
-            // Don't clear lock conflict messages from 409 errors
+            // Clear message only if we're not showing loading message
             if (!showLoadingMessage) {
               setRefreshMessage((prevMessage) => {
                 // Keep the message if it's a lock conflict warning (starts with ⚠️)
