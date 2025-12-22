@@ -51,6 +51,7 @@ from common.db.connections import get_db_connection_pwd_manual
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
 from common.metrics.prometheus_metrics import metrics as pmetrics
+from common.utils.graph_locks import acquire_graph_lock, release_graph_lock, acquire_rebuild_lock, release_rebuild_lock, get_rebuilding_graph
 from supportai import supportai
 from common.py_schemas.schemas import (
     AgentProgess,
@@ -241,22 +242,102 @@ def forceupdate(
     """
     Force update/refresh of a GraphRAG knowledge graph.
     This triggers the ECC (Eventual Consistency Checker) service to rebuild the graph.
+    Only ONE rebuild can run at a time across all graphs (resource-intensive operation).
     Uses HTTP Basic Authentication to get credentials.
+    
+    The lock is held until ALL 4 stages complete:
+    1. Doc Processing (chunk, embed, extract)
+    2. Type Processing
+    3. Entity Processing (resolution)
+    4. Community Processing (detection & summarization)
     """
+    # Check if another graph is already rebuilding
+    currently_rebuilding = get_rebuilding_graph()
+    if currently_rebuilding and currently_rebuilding != graphname:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{currently_rebuilding}' is currently being rebuilt. Only one rebuild allowed at a time."
+        )
+    
+    # Try to acquire global rebuild lock
+    if not acquire_rebuild_lock(graphname, timeout=0.1):
+        currently_rebuilding = get_rebuilding_graph()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{currently_rebuilding}' is currently being rebuilt. Only one rebuild allowed at a time."
+        )
+    
     # Extract credentials from the dependency
     creds = creds[1]
     auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
 
-    from httpx import get as http_get
-
-    ecc = (
-        graphrag_config.get("ecc", "http://localhost:8001")
-        + f"/{graphname}/graphrag/consistency_update"
-    )
-    LogWriter.info(f"Sending ECC request to: {ecc}")
-    bg_tasks.add_task(
-        http_get, ecc, headers={"Authorization": f"Basic {auth}"}
-    )
+    ecc_base = graphrag_config.get("ecc", "http://localhost:8001")
+    ecc_update_url = f"{ecc_base}/{graphname}/graphrag/consistency_update"
+    ecc_status_url = f"{ecc_base}/{graphname}/graphrag/rebuild_status"
+    
+    LogWriter.info(f"Sending ECC rebuild request to: {ecc_update_url}")
+    
+    # Background task to trigger rebuild, monitor completion, and release lock
+    def rebuild_and_monitor():
+        try:
+            # Step 1: Trigger the ECC rebuild
+            import requests
+            response = requests.get(ecc_update_url, headers={"Authorization": f"Basic {auth}"})
+            if response.status_code not in [200, 202]:
+                LogWriter.error(f"ECC rebuild trigger failed for {graphname}: {response.status_code} - {response.text}")
+                return
+            
+            LogWriter.info(f"ECC rebuild triggered for {graphname}, now monitoring status...")
+            
+            # Step 2: Poll ECC status until all 4 stages complete
+            max_wait_time = 7200  # 2 hours max
+            poll_interval = 5  # Check every 5 seconds
+            elapsed = 0
+            
+            while elapsed < max_wait_time:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+                
+                try:
+                    status_response = requests.get(
+                        ecc_status_url, 
+                        headers={"Authorization": f"Basic {auth}"}, 
+                        timeout=10.0
+                    )
+                    
+                    if status_response.status_code == 200:
+                        status_data = status_response.json()
+                        is_running = status_data.get("is_running", False)
+                        status = status_data.get("status", "unknown")
+                        
+                        # Log every minute to avoid spam
+                        if elapsed % 60 == 0:
+                            LogWriter.info(f"ECC status for {graphname}: {status} (running={is_running}) - elapsed {elapsed}s")
+                        
+                        # Check if ALL stages are complete
+                        if not is_running and status in ["completed", "failed", "idle"]:
+                            LogWriter.info(f"ECC rebuild finished for {graphname} with status: {status} after {elapsed}s")
+                            break
+                    else:
+                        LogWriter.warning(f"ECC status check returned {status_response.status_code} for {graphname}")
+                        
+                except Exception as e:
+                    LogWriter.warning(f"Failed to check ECC status for {graphname}: {e}")
+                    # Continue polling - ECC might still be working
+            
+            if elapsed >= max_wait_time:
+                LogWriter.error(f"ECC rebuild monitoring timed out for {graphname} after {max_wait_time}s")
+                
+        except Exception as e:
+            LogWriter.error(f"Error during ECC rebuild monitoring for {graphname}: {e}")
+            import traceback
+            LogWriter.error(traceback.format_exc())
+        finally:
+            # Release lock only after ALL stages complete (or timeout/error)
+            release_rebuild_lock(graphname)
+            LogWriter.info(f"Released global rebuild lock for {graphname}")
+    
+    bg_tasks.add_task(rebuild_and_monitor)
     return {"status": "submitted"}
 
 
@@ -318,6 +399,13 @@ def create_ingest(
     This sets up the data source and load job configuration for document ingestion.
     Uses HTTP Basic Authentication to get credentials and create a connection.
     """
+    # Acquire graph lock
+    if not acquire_graph_lock(graphname, "create_ingest"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{graphname}' is currently being processed by another operation. Please wait and try again."
+        )
+    
     try:
         # Extract credentials from the dependency (same pattern as other endpoints)
         creds = creds[1]
@@ -330,12 +418,16 @@ def create_ingest(
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
         LogWriter.error(f"Error creating ingest configuration for graph {graphname}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create ingest configuration: {str(e)}"
         )
+    finally:
+        release_graph_lock(graphname, "create_ingest")
 
 
 @router.post(route_prefix + "/{graphname}/ingest")
@@ -349,6 +441,13 @@ def ingest(
     This processes documents from the configured data source and loads them into the graph.
     Uses HTTP Basic Authentication to get credentials and create a connection.
     """
+    # Acquire graph lock
+    if not acquire_graph_lock(graphname, "ingest"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{graphname}' is currently being processed by another operation. Please wait and try again."
+        )
+    
     try:
         # Extract credentials from the dependency (same pattern as other endpoints)
         creds = creds[1]
@@ -361,12 +460,16 @@ def ingest(
 
         return result
 
+    except HTTPException:
+        raise
     except Exception as e:
         LogWriter.error(f"Error running ingestion for graph {graphname}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to run ingestion: {str(e)}"
         )
+    finally:
+        release_graph_lock(graphname, "ingest")
 
 
 @router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
@@ -928,6 +1031,14 @@ async def upload_files(
     - files: List of files to upload
     - overwrite: If False (default), will reject if files already exist
     """
+    # Acquire graph lock
+    acquired = await asyncio.to_thread(acquire_graph_lock, graphname, "upload_files")
+    if not acquired:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{graphname}' is currently being processed by another operation. Please wait and try again."
+        )
+    
     try:
         upload_dir = os.path.join("uploads", graphname)
         os.makedirs(upload_dir, exist_ok=True)
@@ -977,11 +1088,15 @@ async def upload_files(
             "total_size": total_size,
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         exc = traceback.format_exc()
         logger.error(f"Error uploading files for graph {graphname}: {e}")
         logger.debug_pii(f"Upload error trace:\n{exc}")
         raise HTTPException(status_code=500, detail=f"Error uploading files: {str(e)}")
+    finally:
+        await asyncio.to_thread(release_graph_lock, graphname, "upload_files")
 
 
 @router.delete(route_prefix + "/{graphname}/uploads")
@@ -1090,6 +1205,14 @@ async def download_from_cloud(
       - For GCS: project_id, gcs_credentials_json, bucket, prefix
       - For Azure: account_name, account_key, container, prefix
     """
+    # Acquire graph lock
+    acquired = await asyncio.to_thread(acquire_graph_lock, graphname, "download_from_cloud")
+    if not acquired:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{graphname}' is currently being processed by another operation. Please wait and try again."
+        )
+    
     try:
         # Extract parameters from request body
         provider = request_body.get("provider")
@@ -1290,6 +1413,8 @@ async def download_from_cloud(
         logger.error(f"Error downloading from cloud for graph {graphname}: {e}")
         logger.debug_pii(f"Cloud download error trace:\n{exc}")
         raise HTTPException(status_code=500, detail=f"Error downloading from cloud: {str(e)}")
+    finally:
+        await asyncio.to_thread(release_graph_lock, graphname, "download_from_cloud")
 
 
 @router.get(route_prefix + "/{graphname}/cloud/list")

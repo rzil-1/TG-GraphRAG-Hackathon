@@ -160,6 +160,11 @@ const [activeTab, setActiveTab] = useState("upload");
         body: formData,
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Upload failed: ${response.statusText}`);
+      }
+
       const data = await response.json();
       if (data.status === "success") {
         const uploadedCount = selectedFiles?.length || 0;
@@ -180,7 +185,9 @@ const [activeTab, setActiveTab] = useState("upload");
       }
     } catch (error: any) {
       console.error("Upload error:", error);
-      setUploadMessage(`❌ Error: ${error.message}`);
+      // Show warning icon for lock conflicts, error icon for actual errors
+      const isLockConflict = error.message?.includes("currently being processed");
+      setUploadMessage(isLockConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
       setIsUploading(false);
     }
   };
@@ -214,7 +221,8 @@ const [activeTab, setActiveTab] = useState("upload");
           });
 
           if (!response.ok) {
-            throw new Error(`Upload failed with status ${response.status}`);
+            const errorData = await response.json();
+            throw new Error(errorData.detail || `Upload failed with status ${response.status}`);
           }
 
           const data = await response.json();
@@ -389,6 +397,11 @@ const [activeTab, setActiveTab] = useState("upload");
         body: JSON.stringify(requestBody),
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Download failed: ${response.statusText}`);
+      }
+
       const data = await response.json();
       if (data.status === "success") {
         const downloadCount = data.downloaded_files?.length || downloadedFiles.length;
@@ -408,7 +421,8 @@ const [activeTab, setActiveTab] = useState("upload");
         setIsDownloading(false);
       }
     } catch (error: any) {
-      setDownloadMessage(`❌ Error: ${error.message}`);
+      const isLockConflict = error.message?.includes("currently being processed");
+      setDownloadMessage(isLockConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
     } finally {
       setIsDownloading(false);
     }
@@ -460,14 +474,17 @@ const [activeTab, setActiveTab] = useState("upload");
 
   // Ingest flows (create ingest, run ingest)
   // -------------------------
-  const handleRunIngest = async () => {
+  const handleRunIngest = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
+    // If no ingest job data, create it first (reuse existing function)
     if (!ingestJobData) {
-      setIngestMessage("❌ No ingest job data available");
+      await handleCreateIngestAfterUpload(sourceType);
+      // handleCreateIngestAfterUpload will call this function again if directIngestion is true
+      // So we return here to avoid double execution
       return;
     }
 
     setIsIngesting(true);
-    setIngestMessage("Running final document ingest...");
+    setIngestMessage("Running document ingest...");
 
     try {
       const creds = localStorage.getItem("creds");
@@ -498,8 +515,8 @@ const [activeTab, setActiveTab] = useState("upload");
       setIngestMessage(`✅ Ingestion completed successfully!`);
       setUploadMessage("");  // Clear the "Ready for ingestion" message
 
-      // Clear ingest job data
-      setIngestJobData(null);
+      // Don't clear ingest job data - allow re-ingesting the same files
+      // setIngestJobData(null);
     } catch (error: any) {
       console.error("Error running ingest:", error);
       setIngestMessage(`❌ Error: ${error.message}`);
@@ -552,9 +569,9 @@ const [activeTab, setActiveTab] = useState("upload");
       console.log("Create ingest response:", createData);
 
       // Store ingest job data for later use (store folderPath as source_data_path for temp folder deletion)
-      setIngestJobData({
-        load_job_id: createData.load_job_id,
-        data_source_id: createData.data_source_id,
+        setIngestJobData({
+          load_job_id: createData.load_job_id,
+          data_source_id: createData.data_source_id,
         data_path: folderPath,  // Use the source folderPath, not the backend's "in_temp_storage"
       });
 
@@ -652,20 +669,20 @@ const [activeTab, setActiveTab] = useState("upload");
       console.log("create_ingest response data:", createData);
 
       // Save ingest job data for later (store folderPath as data_path for temp folder deletion)
-      setIngestJobData({
-        load_job_id: createData.load_job_id,
-        data_source_id: createData.data_source_id,
+        setIngestJobData({
+          load_job_id: createData.load_job_id,
+          data_source_id: createData.data_source_id,
         data_path: folderPath,  // Use the source folderPath, not the backend's "in_temp_storage"
-      });
+        });
 
-      console.log("Direct ingestion enabled:", directIngestion);
+        console.log("Direct ingestion enabled:", directIngestion);
 
-      if (directIngestion) {
-        // Direct ingestion - proceed to ingest immediately
-        setUploadMessage("Running direct ingestion...");
-        await handleRunIngest();
-      } else {
-        // Save for later - files ready for ingestion
+        if (directIngestion) {
+          // Direct ingestion - proceed to ingest immediately
+          setUploadMessage("Running direct ingestion...");
+          await handleRunIngest(sourceType);
+        } else {
+          // Save for later - files ready for ingestion
         setUploadMessage(`✅ ${fileCount} file(s) ready for ingestion.`);
       }
     } catch (error: any) {
@@ -857,9 +874,16 @@ const [activeTab, setActiveTab] = useState("upload");
           } else if (statusData.status === "failed") {
             setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
           } else {
-            // Clear message only if we're not showing loading message
+            // Clear message only if we're not showing loading message AND there's no existing warning/error message
+            // Don't clear lock conflict messages from 409 errors
             if (!showLoadingMessage) {
-              setRefreshMessage("");
+              setRefreshMessage((prevMessage) => {
+                // Keep the message if it's a lock conflict warning (starts with ⚠️)
+                if (prevMessage.startsWith("⚠️ A rebuild is already in progress")) {
+                  return prevMessage;
+                }
+                return "";
+              });
             }
           }
         }
@@ -868,7 +892,7 @@ const [activeTab, setActiveTab] = useState("upload");
       console.error("Error checking rebuild status:", error);
       // On error, assume it's safe to proceed
       setIsRebuildRunning(false);
-      setRefreshMessage("");
+      // Don't clear existing messages on error
     } finally {
       setIsCheckingStatus(false);
     }
@@ -911,6 +935,12 @@ const [activeTab, setActiveTab] = useState("upload");
 
       if (!response.ok) {
         const errorData = await response.json();
+        // For 409 (lock conflict), show message as-is without "Error:" prefix
+        if (response.status === 409) {
+          setRefreshMessage(`⚠️ ${errorData.detail || errorData.message}`);
+          setIsRefreshing(false);
+          return;
+        }
         throw new Error(errorData.detail || `Failed to refresh graph: ${response.statusText}`);
       }
 
@@ -1443,7 +1473,7 @@ const [activeTab, setActiveTab] = useState("upload");
                   )}
 
                   {/* Ingest Data Section */}
-                  {uploadedFiles.length > 0 && ingestJobData && (
+                  {uploadedFiles.length > 0 && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
                         Ingest Documents into Knowledge Graph
@@ -1452,8 +1482,8 @@ const [activeTab, setActiveTab] = useState("upload");
                         Process uploaded files and add them to the knowledge graph
                       </p>
                       <Button
-                        onClick={() => handleRunIngest()}
-                        disabled={isIngesting || !ingestJobData}
+                        onClick={() => handleRunIngest("uploaded")}
+                        disabled={isIngesting}
                         className="gradient text-white w-full"
                       >
                         {isIngesting ? (
@@ -1747,7 +1777,7 @@ const [activeTab, setActiveTab] = useState("upload");
                   )}
 
                   {/* Ingest Downloaded Data Section */}
-                  {downloadedFiles.length > 0 && ingestJobData && (
+                  {downloadedFiles.length > 0 && (
                     <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
                       <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
                         Ingest Documents into Knowledge Graph
@@ -1756,8 +1786,8 @@ const [activeTab, setActiveTab] = useState("upload");
                         Process downloaded files and add them to the knowledge graph
                       </p>
                       <Button
-                        onClick={() => handleRunIngest()}
-                        disabled={isIngesting || !ingestJobData}
+                        onClick={() => handleRunIngest("downloaded")}
+                        disabled={isIngesting}
                         className="gradient text-white w-full"
                       >
                         {isIngesting ? (
