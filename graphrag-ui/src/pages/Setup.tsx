@@ -475,24 +475,28 @@ const [activeTab, setActiveTab] = useState("upload");
   // Ingest flows (create ingest, run ingest)
   // -------------------------
   const handleRunIngest = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
-    // If no ingest job data, create it first (reuse existing function)
-    if (!ingestJobData) {
-      await handleCreateIngestAfterUpload(sourceType);
-      // handleCreateIngestAfterUpload will call this function again if directIngestion is true
-      // So we return here to avoid double execution
+    if (!ingestGraphName) {
+      setIngestMessage("❌ Please select a graph");
       return;
     }
 
     setIsIngesting(true);
-    setIngestMessage("Running document ingest...");
+    setIngestMessage("Ingesting documents into knowledge graph...");
 
     try {
       const creds = localStorage.getItem("creds");
-
-      const loadingInfo = {
-        load_job_id: ingestJobData.load_job_id,
-        data_source_id: ingestJobData.data_source_id,
-        file_path: ingestJobData.data_path,
+      const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
+      
+      // Use existing ingestJobData if available, otherwise construct from folder path
+      const jobData = ingestJobData || {
+        load_job_id: "load_documents_content_json",
+        data_source_id: {
+          data_source: "server",
+          data_source_config: { data_path: folderPath },
+          loader_config: {},
+          file_format: "multi"
+        },
+        data_path: folderPath,
       };
 
       const ingestResponse = await fetch(`/ui/${ingestGraphName}/ingest`, {
@@ -501,24 +505,25 @@ const [activeTab, setActiveTab] = useState("upload");
           "Content-Type": "application/json",
           Authorization: `Basic ${creds}`,
         },
-        body: JSON.stringify(loadingInfo),
+        body: JSON.stringify({
+          load_job_id: jobData.load_job_id,
+          data_source_id: jobData.data_source_id,
+          file_path: jobData.data_path,
+        }),
       });
 
       if (!ingestResponse.ok) {
         const errorData = await ingestResponse.json();
-        throw new Error(errorData.detail || `Failed to run ingest: ${ingestResponse.statusText}`);
+        throw new Error(errorData.detail || `Failed to ingest: ${ingestResponse.statusText}`);
       }
 
       const ingestData = await ingestResponse.json();
       console.log("Ingest response:", ingestData);
 
       setIngestMessage(`✅ Ingestion completed successfully!`);
-      setUploadMessage("");  // Clear the "Ready for ingestion" message
-
-      // Don't clear ingest job data - allow re-ingesting the same files
-      // setIngestJobData(null);
+      setUploadMessage("");
     } catch (error: any) {
-      console.error("Error running ingest:", error);
+      console.error("Error during ingestion:", error);
       setIngestMessage(`❌ Error: ${error.message}`);
     } finally {
       setIsIngesting(false);
