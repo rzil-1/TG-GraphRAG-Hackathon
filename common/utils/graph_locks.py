@@ -1,10 +1,11 @@
 """
 Graph-level locking mechanism to prevent concurrent operations on the same graph.
-Uses threading.Lock which works for both sync and async contexts.
+Uses threading.Lock for sync operations and asyncio.Lock for async rebuild operations.
 """
+import asyncio
 import threading
 import logging
-from typing import Dict
+from typing import Dict, Optional
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
@@ -14,9 +15,18 @@ _graph_locks: Dict[str, threading.Lock] = {}
 _locks_dict_lock = threading.Lock()
 
 # Global rebuild lock (only one rebuild at a time across all graphs)
-_rebuild_lock = threading.Lock()
+# Use asyncio.Lock for async operations
+_rebuild_lock: Optional[asyncio.Lock] = None
 _currently_rebuilding_graph: str = None
 _rebuild_graph_lock = threading.Lock()  # Protects _currently_rebuilding_graph
+
+
+def _get_rebuild_lock() -> asyncio.Lock:
+    """Get or create the async rebuild lock."""
+    global _rebuild_lock
+    if _rebuild_lock is None:
+        _rebuild_lock = asyncio.Lock()
+    return _rebuild_lock
 
 
 def get_graph_lock(graphname: str) -> threading.Lock:
@@ -83,27 +93,35 @@ def raise_if_locked(graphname: str, operation: str = "operation"):
 # Global Rebuild Lock Functions
 # =====================================================
 
-def acquire_rebuild_lock(graphname: str, timeout: float = 0.1) -> bool:
+async def acquire_rebuild_lock(graphname: str) -> bool:
     """
     Try to acquire the global rebuild lock (only one rebuild at a time across all graphs).
-    Returns True if acquired, False if another rebuild is in progress.
+    Returns True if acquired immediately, False if another rebuild is in progress.
+    Non-blocking operation - returns instantly.
     
     Args:
         graphname: Name of the graph requesting rebuild
-        timeout: Timeout in seconds (default 0.1)
     """
     global _currently_rebuilding_graph
     
-    acquired = _rebuild_lock.acquire(blocking=True, timeout=timeout)
+    lock = _get_rebuild_lock()
     
-    if acquired:
+    # Non-blocking check: return immediately if lock is busy
+    if lock.locked():
+        logger.warning(f"Rebuild lock busy - another graph is rebuilding. Request from: {graphname}")
+        return False
+    
+    # Try to acquire the lock (should be instant since we checked it's not locked)
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=0.01)  # 10ms safety timeout
         with _rebuild_graph_lock:
             _currently_rebuilding_graph = graphname
         logger.info(f"Global rebuild lock acquired for graph: {graphname}")
-    else:
+        return True
+    except asyncio.TimeoutError:
+        # Race condition: lock was acquired between check and acquire
         logger.warning(f"Rebuild lock busy - another graph is rebuilding. Request from: {graphname}")
-    
-    return acquired
+        return False
 
 
 def release_rebuild_lock(graphname: str):
@@ -115,10 +133,11 @@ def release_rebuild_lock(graphname: str):
     """
     global _currently_rebuilding_graph
     
-    if _rebuild_lock.locked():
+    lock = _get_rebuild_lock()
+    if lock.locked():
         with _rebuild_graph_lock:
             _currently_rebuilding_graph = None
-        _rebuild_lock.release()
+        lock.release()
         logger.info(f"Global rebuild lock released for graph: {graphname}")
 
 

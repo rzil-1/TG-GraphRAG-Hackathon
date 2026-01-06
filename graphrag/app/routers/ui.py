@@ -62,7 +62,7 @@ from common.py_schemas.schemas import (
     ResponseType,
     Role,
 )
-from common.utils.text_extractors import TextExtractor
+
 logger = logging.getLogger(__name__)
 
 use_cypher = os.getenv("USE_CYPHER", "false").lower() == "true"
@@ -234,7 +234,7 @@ def init_graph(
 
 
 @router.post(route_prefix + "/{graphname}/rebuild_graph")
-def forceupdate(
+async def forceupdate(
     graphname: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     bg_tasks: BackgroundTasks,
@@ -259,8 +259,8 @@ def forceupdate(
             detail=f"Graph '{currently_rebuilding}' is currently being rebuilt. Only one rebuild allowed at a time."
         )
     
-    # Try to acquire global rebuild lock
-    if not acquire_rebuild_lock(graphname, timeout=0.1):
+    # Try to acquire global rebuild lock (async, non-blocking)
+    if not await acquire_rebuild_lock(graphname):
         currently_rebuilding = get_rebuilding_graph()
         raise HTTPException(
             status_code=409,
@@ -278,32 +278,32 @@ def forceupdate(
     LogWriter.info(f"Sending ECC rebuild request to: {ecc_update_url}")
     
     # Background task to trigger rebuild, monitor completion, and release lock
-    def rebuild_and_monitor():
+    async def rebuild_and_monitor():
         try:
-            # Step 1: Trigger the ECC rebuild
-            import requests
-            response = requests.get(ecc_update_url, headers={"Authorization": f"Basic {auth}"})
-            if response.status_code not in [200, 202]:
-                LogWriter.error(f"ECC rebuild trigger failed for {graphname}: {response.status_code} - {response.text}")
-                return
+            # Step 1: Trigger the ECC rebuild (non-blocking)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(ecc_update_url, headers={"Authorization": f"Basic {auth}"})
+                if response.status_code not in [200, 202]:
+                    LogWriter.error(f"ECC rebuild trigger failed for {graphname}: {response.status_code} - {response.text}")
+                    return
             
             LogWriter.info(f"ECC rebuild triggered for {graphname}, now monitoring status...")
             
-            # Step 2: Poll ECC status until all 4 stages complete
+            # Step 2: Poll ECC status until all 4 stages complete (non-blocking)
             max_wait_time = 7200  # 2 hours max
             poll_interval = 5  # Check every 5 seconds
             elapsed = 0
             
             while elapsed < max_wait_time:
-                time.sleep(poll_interval)
+                await asyncio.sleep(poll_interval)  # Non-blocking sleep
                 elapsed += poll_interval
                 
                 try:
-                    status_response = requests.get(
-                        ecc_status_url, 
-                        headers={"Authorization": f"Basic {auth}"}, 
-                        timeout=10.0
-                    )
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        status_response = await client.get(
+                            ecc_status_url, 
+                            headers={"Authorization": f"Basic {auth}"}
+                        )
                     
                     if status_response.status_code == 200:
                         status_data = status_response.json()

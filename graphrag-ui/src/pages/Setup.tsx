@@ -872,22 +872,16 @@ const [activeTab, setActiveTab] = useState("upload");
           const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
           setRefreshMessage(`⚠️ A rebuild is already in progress for "${graphName}" (started at ${startTime}). Please wait for it to complete.`);
         } else {
-          // Rebuild is not running anymore
+          // Rebuild is not running anymore - clear warning messages
           if (wasRunning && statusData.status === "completed") {
-            // Just finished
+            // Just finished successfully
             setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
           } else if (statusData.status === "failed") {
             setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
           } else {
-            // Clear message only if we're not showing loading message
+            // Clear any messages (including old warnings) when rebuild is idle
             if (!showLoadingMessage) {
-              setRefreshMessage((prevMessage) => {
-                // Keep the message if it's a lock conflict warning (starts with ⚠️)
-                if (prevMessage.startsWith("⚠️ A rebuild is already in progress")) {
-                  return prevMessage;
-                }
-                return "";
-              });
+              setRefreshMessage("");
             }
           }
         }
@@ -1966,6 +1960,10 @@ const [activeTab, setActiveTab] = useState("upload");
               return;
             }
             setRefreshOpen(open);
+            // Clear message when closing dialog
+            if (!open) {
+              setRefreshMessage("");
+            }
           }}
         >
           <DialogContent 
