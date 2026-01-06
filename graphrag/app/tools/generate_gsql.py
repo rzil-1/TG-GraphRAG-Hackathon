@@ -21,6 +21,8 @@ from langchain.tools import BaseTool
 from langchain.llms.base import LLM
 from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.db.connections import get_schema_ver
+from common.logs.logwriter import LogWriter
+from common.logs.log import req_id_cv
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +89,7 @@ class GenerateGSQL(BaseTool):
                 edge_info = f"""From Vertex: {from_vertex}\n\tTo Vertex: {to_vertex}"""
                 edge_schema.append(f"""{edge}\n\t{edge_info}\n\tEdge direction: {direction}\n\tAttributes: \n\t\t{attributes}""")
 
-        self.schema_rep = f"""The schema of the graph is as follows:
+        self.schema_rep = f"""The schema of the graph {self.conn.graphname} is as follows:
 Vertex Types:
 {chr(10).join(vertex_schema)}
 
@@ -117,8 +119,9 @@ Edge Types:
             ]
         )
 
+        LogWriter.info(f"request_id={req_id_cv.get()} ENTRY generate_gsql with {question}")
         schema = self._generate_schema_rep()
-    
+
         logger.debug_pii("Prompt to LLM:\n" + PROMPT.invoke({"question": question, "schema": schema, "history": history}).to_string())
 
         chain = PROMPT | self.llm.model | StrOutputParser()
@@ -132,10 +135,10 @@ Edge Types:
             usage_data["cost"] = cb.total_cost
             logger.info(f"generate_gsql usage: {usage_data}")
 
-        query_header = "USE GRAPH " + self.conn.graphname + " "+ "\n" + "INTERPRET QUERY () FOR GRAPH " + self.conn.graphname + " {" + "\n"
-        query_footer = "\n}"
-        return query_header + out + query_footer
-    
+        gsql = "USE GRAPH " + self.conn.graphname + " "+ "\n" + out + "\n"
+        LogWriter.info(f"request_id={req_id_cv.get()} EXIT generate_gsql with:\n{gsql}")
+        return gsql
+
     def _run(self, question: str, history: Iterable[str]):
         """Run the GenerateGSQL tool.
         Args:
@@ -148,6 +151,6 @@ Edge Types:
                 GSQL query for the question.
         """
         return self.generate_gsql(question, history)
-    
+
     def _arun(self, question: str, history: Iterable[str]):
         raise NotImplementedError("Asynchronous execution is not supported for this tool.") 
