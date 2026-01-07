@@ -524,7 +524,9 @@ const [activeTab, setActiveTab] = useState("upload");
       setUploadMessage("");
     } catch (error: any) {
       console.error("Error during ingestion:", error);
-      setIngestMessage(`❌ Error: ${error.message}`);
+      // Show warning icon for rebuild conflicts, error icon for actual errors
+      const isRebuildConflict = error.message?.includes("currently being rebuilt");
+      setIngestMessage(isRebuildConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
     } finally {
       setIsIngesting(false);
     }
@@ -616,7 +618,9 @@ const [activeTab, setActiveTab] = useState("upload");
       }
     } catch (error: any) {
       console.error("Error ingesting data:", error);
-      setIngestMessage(`❌ Error: ${error.message}`);
+      // Show warning icon for rebuild conflicts, error icon for actual errors
+      const isRebuildConflict = error.message?.includes("currently being rebuilt");
+      setIngestMessage(isRebuildConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
       setIsIngesting(false);
     }
   };
@@ -837,7 +841,9 @@ const [activeTab, setActiveTab] = useState("upload");
 
     } catch (error: any) {
       console.error("Error ingesting files:", error);
-      setIngestMessage(`❌ Error: ${error.message}`);
+      // Show warning icon for rebuild conflicts, error icon for actual errors
+      const isRebuildConflict = error.message?.includes("currently being rebuilt");
+      setIngestMessage(isRebuildConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
     } finally {
       setIsIngesting(false);
     }
@@ -868,28 +874,24 @@ const [activeTab, setActiveTab] = useState("upload");
         
         setIsRebuildRunning(isCurrentlyRunning);
         
+        if (statusData.status === "error" || statusData.status === "unknown") {
+          return;
+        }
+        
         if (isCurrentlyRunning) {
           const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
           setRefreshMessage(`⚠️ A rebuild is already in progress for "${graphName}" (started at ${startTime}). Please wait for it to complete.`);
-        } else {
-          // Rebuild is not running anymore - clear warning messages
-          if (wasRunning && statusData.status === "completed") {
-            // Just finished successfully
-            setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
-          } else if (statusData.status === "failed") {
-            setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
-          } else {
-            // Clear any messages (including old warnings) when rebuild is idle
-            if (!showLoadingMessage) {
-              setRefreshMessage("");
-            }
-          }
+        } else if (wasRunning && statusData.status === "completed") {
+          setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
+        } else if (statusData.status === "failed") {
+          setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
+        } else if (statusData.status === "idle") {
+          setRefreshMessage("");
         }
       }
     } catch (error: any) {
       console.error("Error checking rebuild status:", error);
-      // On error, assume it's safe to proceed
-      setIsRebuildRunning(false);
+      // On error, don't change state - keep existing message
       // Don't clear existing messages on error
     } finally {
       setIsCheckingStatus(false);
@@ -918,11 +920,32 @@ const [activeTab, setActiveTab] = useState("upload");
       return;
     }
 
+    // Check status one final time RIGHT before submitting (to catch any race conditions)
     setIsRefreshing(true);
-    setRefreshMessage("Submitting rebuild request...");
-
+    setRefreshMessage("Verifying rebuild status...");
+    
     try {
       const creds = localStorage.getItem("creds");
+      
+      // Final status check to prevent race conditions
+      const statusCheckResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${creds}`,
+        },
+      });
+      
+      if (statusCheckResponse.ok) {
+        const statusData = await statusCheckResponse.json();
+        if (statusData.is_running) {
+          setRefreshMessage(`⚠️ A rebuild is already in progress for "${refreshGraphName}". Please wait for it to complete.`);
+          setIsRebuildRunning(true);
+          setIsRefreshing(false);
+          return;
+        }
+      }
+      
+      setRefreshMessage("Submitting rebuild request...");
       
       const response = await fetch(`/ui/${refreshGraphName}/rebuild_graph`, {
         method: "POST",

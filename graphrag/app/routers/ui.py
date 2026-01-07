@@ -399,6 +399,14 @@ def create_ingest(
     This sets up the data source and load job configuration for document ingestion.
     Uses HTTP Basic Authentication to get credentials and create a connection.
     """
+    # Check if this graph is currently being rebuilt
+    currently_rebuilding = get_rebuilding_graph()
+    if currently_rebuilding == graphname:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{graphname}' is currently being rebuilt. Please wait for the rebuild to complete before ingesting documents."
+        )
+    
     # Acquire graph lock
     if not acquire_graph_lock(graphname, "create_ingest"):
         raise HTTPException(
@@ -441,6 +449,14 @@ def ingest(
     This processes documents from the configured data source and loads them into the graph.
     Uses HTTP Basic Authentication to get credentials and create a connection.
     """
+    # Check if this graph is currently being rebuilt
+    currently_rebuilding = get_rebuilding_graph()
+    if currently_rebuilding == graphname:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Graph '{graphname}' is currently being rebuilt. Please wait for the rebuild to complete before ingesting documents."
+        )
+    
     # Acquire graph lock
     if not acquire_graph_lock(graphname, "ingest"):
         raise HTTPException(
