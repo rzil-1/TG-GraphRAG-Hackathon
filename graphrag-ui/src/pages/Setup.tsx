@@ -40,7 +40,7 @@ const Setup = () => {
   const navigate = useNavigate();
   const [confirm, confirmDialog, isConfirmDialogOpen] = useConfirm();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
-  
+
   const [initializeGraphOpen, setInitializeGraphOpen] = useState(false);
   const [graphName, setGraphName] = useState("");
   const [isInitializing, setIsInitializing] = useState(false);
@@ -923,10 +923,10 @@ const [activeTab, setActiveTab] = useState("upload");
     // Check status one final time RIGHT before submitting (to catch any race conditions)
     setIsRefreshing(true);
     setRefreshMessage("Verifying rebuild status...");
-    
+
     try {
       const creds = localStorage.getItem("creds");
-      
+
       // Final status check to prevent race conditions
       const statusCheckResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
         method: "GET",
@@ -934,7 +934,7 @@ const [activeTab, setActiveTab] = useState("upload");
           Authorization: `Basic ${creds}`,
         },
       });
-      
+
       if (statusCheckResponse.ok) {
         const statusData = await statusCheckResponse.json();
         if (statusData.is_running) {
@@ -944,9 +944,9 @@ const [activeTab, setActiveTab] = useState("upload");
           return;
         }
       }
-      
+
       setRefreshMessage("Submitting rebuild request...");
-      
+
       const response = await fetch(`/ui/${refreshGraphName}/rebuild_graph`, {
         method: "POST",
         headers: {
