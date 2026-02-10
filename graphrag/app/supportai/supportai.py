@@ -637,6 +637,7 @@ def ingest(
                                 doc_id = f"{file_name}"
                                 # Prepare API payload
                                 payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
+
                                 #CALL API
                                 conn.runLoadingJobWithData(payload, data_source_id, loader_info.load_job_id)
                                 processed_files.append({
@@ -649,6 +650,7 @@ def ingest(
                 # --- End: S3 markdown extraction and TigerGraph loading ---
             except Exception as e:
                 raise Exception(f"Error during S3 markdown extraction and TigerGraph loading: {e}")
+
             return {
                 "job_name": loader_info.load_job_id,
                 "summary": processed_files

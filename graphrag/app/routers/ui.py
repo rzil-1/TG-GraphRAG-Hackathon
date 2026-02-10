@@ -1565,3 +1565,4 @@ async def delete_cloud_downloads(
         logger.error(f"Error deleting cloud downloads for graph {graphname}: {e}")
         logger.debug_pii(f"Delete error trace:\n{exc}")
         raise HTTPException(status_code=500, detail=f"Error deleting files: {str(e)}")
+

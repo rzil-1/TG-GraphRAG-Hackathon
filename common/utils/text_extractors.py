@@ -553,4 +553,3 @@ def is_supported_file(file_path):
     """Check if a file is supported for text extraction."""
     extension = Path(file_path).suffix.lower()
     return extension in get_supported_extensions()
-    

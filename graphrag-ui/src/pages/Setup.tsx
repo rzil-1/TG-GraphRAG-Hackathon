@@ -40,6 +40,7 @@ const Setup = () => {
   const navigate = useNavigate();
   const [confirm, confirmDialog, isConfirmDialogOpen] = useConfirm();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
+
   const [initializeGraphOpen, setInitializeGraphOpen] = useState(false);
   const [graphName, setGraphName] = useState("");
   const [isInitializing, setIsInitializing] = useState(false);
@@ -97,6 +98,7 @@ const [activeTab, setActiveTab] = useState("upload");
   // Fetch uploaded files
   const fetchUploadedFiles = async () => {
     if (!ingestGraphName) return;
+
     try {
       const creds = localStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/uploads/list`, {
@@ -433,7 +435,8 @@ const [activeTab, setActiveTab] = useState("upload");
       const response = await fetch(url, {
           method: "DELETE",
           headers: { Authorization: `Basic ${creds}` },
-        });
+        }
+      );
       const data = await response.json();
       setDownloadMessage(`✅ ${data.message}`);
       await fetchDownloadedFiles();
