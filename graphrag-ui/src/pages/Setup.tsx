@@ -40,7 +40,6 @@ const Setup = () => {
   const navigate = useNavigate();
   const [confirm, confirmDialog, isConfirmDialogOpen] = useConfirm();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
-
   const [initializeGraphOpen, setInitializeGraphOpen] = useState(false);
   const [graphName, setGraphName] = useState("");
   const [isInitializing, setIsInitializing] = useState(false);
@@ -69,7 +68,6 @@ const Setup = () => {
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   
   // S3 state
-  
   const [awsAccessKey, setAwsAccessKey] = useState("");
   const [awsSecretKey, setAwsSecretKey] = useState("");
   const [inputBucket, setInputBucket] = useState("");
@@ -99,7 +97,6 @@ const [activeTab, setActiveTab] = useState("upload");
   // Fetch uploaded files
   const fetchUploadedFiles = async () => {
     if (!ingestGraphName) return;
-
     try {
       const creds = localStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/uploads/list`, {
@@ -263,7 +260,6 @@ const [activeTab, setActiveTab] = useState("upload");
   // Delete a specific file
   const handleDeleteFile = async (filename: string) => {
     if (!ingestGraphName) return;
-    
     console.log("Deleting file:", filename);
 
     try {
@@ -271,7 +267,6 @@ const [activeTab, setActiveTab] = useState("upload");
 
       // Delete original file
       const url = `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}`;
-
       const response = await fetch(url, {
           method: "DELETE",
           headers: { Authorization: `Basic ${creds}` },
@@ -306,7 +301,6 @@ const [activeTab, setActiveTab] = useState("upload");
       // Clear all temp state
       setIngestJobData(null);
       setIngestMessage("");  // Clear any previous ingestion messages
-      
       setUploadMessage(`✅ ${data.message}`);
       await fetchUploadedFiles();
     } catch (error: any) {
@@ -401,7 +395,6 @@ const [activeTab, setActiveTab] = useState("upload");
         const errorData = await response.json();
         throw new Error(errorData.detail || `Download failed: ${response.statusText}`);
       }
-
       const data = await response.json();
       if (data.status === "success") {
         const downloadCount = data.downloaded_files?.length || downloadedFiles.length;
@@ -437,7 +430,6 @@ const [activeTab, setActiveTab] = useState("upload");
       
       // Delete original file
       const url = `/ui/${ingestGraphName}/cloud/delete?filename=${encodeURIComponent(filename)}`;
-
       const response = await fetch(url, {
           method: "DELETE",
           headers: { Authorization: `Basic ${creds}` },
@@ -471,7 +463,6 @@ const [activeTab, setActiveTab] = useState("upload");
     }
   };
 
-
   // Ingest flows (create ingest, run ingest)
   // -------------------------
   const handleRunIngest = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
@@ -479,10 +470,8 @@ const [activeTab, setActiveTab] = useState("upload");
       setIngestMessage("❌ Please select a graph");
       return;
     }
-
     setIsIngesting(true);
     setIngestMessage("Ingesting documents into knowledge graph...");
-
     try {
       const creds = localStorage.getItem("creds");
       const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
@@ -638,7 +627,6 @@ const [activeTab, setActiveTab] = useState("upload");
     const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
     // Use passed file count or fallback to state arrays
     const fileCount = fileCountParam || (sourceType === "uploaded" ? uploadedFiles.length : downloadedFiles.length);
-
     console.log("folderPath:", folderPath);
     console.log("fileCount:", fileCount);
 
@@ -877,7 +865,6 @@ const [activeTab, setActiveTab] = useState("upload");
         if (statusData.status === "error" || statusData.status === "unknown") {
           return;
         }
-        
         if (isCurrentlyRunning) {
           const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
           setRefreshMessage(`⚠️ A rebuild is already in progress for "${graphName}" (started at ${startTime}). Please wait for it to complete.`);

@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 # Global lock for pymupdf4llm calls (not thread-safe)
 _pymupdf4llm_lock = threading.Lock()
 
-
 # regex for markdown images: ![alt](path)
 _md_pattern = re.compile(r'!\[([^\]]*)\]\(([^)\s]+)\)')
 
@@ -37,7 +36,6 @@ def extract_images(md_text):
         images.append({"path": path, "image_id": image_id})
     return images
 
-
 def insert_description_by_id(md_text, image_id, description):
     """
     Replace the description for an image whose basename == image_id.
@@ -50,7 +48,6 @@ def insert_description_by_id(md_text, image_id, description):
             return f'![{description}]({old_path})'
 
         return m.group(0)
-
     return _md_pattern.sub(repl, md_text)
 
 
@@ -279,7 +276,6 @@ def extract_text_from_file_with_images_as_docs(file_path, graphname=None):
             "position": 0
         }]
 
-
 def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
     """
     Extract PDF as ONE markdown document with inline image references using pymupdf4llm.
@@ -351,24 +347,19 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
                 "content": markdown_content,
                 "position": 0
             }]
-
         image_entries = []
         image_counter = 0
-
         for img_ref in image_refs:
             try:
                 img_path = Path(img_ref["path"])  # convert to Path
                 image_id = img_ref["image_id"]
-
                 # Image description
                 description = describe_image_with_llm(str(img_path))
-
                 markdown_content = insert_description_by_id(
                     markdown_content,
                     image_id,
                     description
                 )
-
                 # Convert image to base64
                 pil_image = PILImage.open(img_path)
                 buffer = io.BytesIO()
@@ -421,7 +412,6 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
             "position": 0
         }]
         result.extend(image_entries)
-
         return result
 
     except ImportError as import_err:
@@ -453,9 +443,7 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
         pil_image = PILImage.open(file_path)
         if pil_image.width < 100 or pil_image.height < 100:
             pass
-
         description = describe_image_with_llm(str(Path(file_path).absolute()))
-
         buffer = io.BytesIO()
         if pil_image.mode != 'RGB':
             pil_image = pil_image.convert('RGB')
@@ -557,13 +545,12 @@ def get_doc_type_from_extension(extension):
     else:
         return 'markdown'
 
-
 def get_supported_extensions():
     """Get list of supported file extensions."""
     return {'.txt', '.md', '.html', '.htm', '.csv', '.json', '.pdf', '.docx', '.xml', '.jpeg', '.jpg', '.png', '.gif'}
-
 
 def is_supported_file(file_path):
     """Check if a file is supported for text extraction."""
     extension = Path(file_path).suffix.lower()
     return extension in get_supported_extensions()
+    

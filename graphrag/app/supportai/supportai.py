@@ -488,7 +488,6 @@ def create_ingest(
             #create temp folder
             base_dir = os.path.dirname(data_path) 
             temp_folder = os.path.join(base_dir, "ingestion_temp", graphname)
-            
             # Process files and save immediately to temp folder (memory efficient)
             extractor = TextExtractor()
             server_processing_result = extractor.process_folder(
@@ -638,7 +637,6 @@ def ingest(
                                 doc_id = f"{file_name}"
                                 # Prepare API payload
                                 payload = json.dumps({"doc_id": doc_id, "doc_type": "markdown", "content": content})
-
                                 #CALL API
                                 conn.runLoadingJobWithData(payload, data_source_id, loader_info.load_job_id)
                                 processed_files.append({
@@ -651,7 +649,6 @@ def ingest(
                 # --- End: S3 markdown extraction and TigerGraph loading ---
             except Exception as e:
                 raise Exception(f"Error during S3 markdown extraction and TigerGraph loading: {e}")
-
             return {
                 "job_name": loader_info.load_job_id,
                 "summary": processed_files
@@ -664,13 +661,10 @@ def ingest(
                 data_path = ingest_config.get("data_path")
                 if not data_path or not os.path.exists(data_path):
                     raise Exception(f"Data path not found: {data_path}")
-                
                 # Get all JSONL files from temp folder
                 jsonl_files = [f for f in os.listdir(data_path) if f.endswith('.jsonl')]
-                
                 if not jsonl_files:
                     raise Exception(f"No JSONL files found in: {data_path}")
-                
                 logger.info(f"Found {len(jsonl_files)} JSONL files to ingest from: {data_path}")
                 
                 total_doc_count = 0
@@ -684,18 +678,16 @@ def ingest(
                     try:
                         # Load documents directly from file - more memory efficient
                         conn.runLoadingJobWithFile(jsonl_file, data_source_id, loader_info.load_job_id)
-                        
+                    
                         # Count documents for reporting
                         with open(jsonl_file, 'r', encoding='utf-8') as f:
                             doc_count = sum(1 for line in f if line.strip())
                         total_doc_count += doc_count
-                        
                         ingested_files.append({
                             'jsonl_file': jsonl_filename,
                             'document_count': doc_count,
                             'status': 'success'
                         })
-                        
                         logger.info(f"Successfully ingested {doc_count} documents from {jsonl_filename}")
                         
                     except Exception as file_error:
@@ -705,7 +697,6 @@ def ingest(
                             'status': 'failed',
                             'error': str(file_error)
                         })
-                
                 # Keep temp files for potential re-ingestion (faster, no need to re-process PDFs/images)
                 # Files will be cleaned up when user deletes source files via delete endpoints
                 logger.info(f"Ingestion complete. Temp files preserved at: {data_path}")
@@ -718,7 +709,6 @@ def ingest(
                 "document_count": total_doc_count,
                 "ingested_files": ingested_files
             }
-
         else:
             raise Exception("Data source and file format combination not implemented")
     else:
