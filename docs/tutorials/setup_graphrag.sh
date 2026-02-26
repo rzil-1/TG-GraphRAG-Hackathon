@@ -16,7 +16,7 @@ if ! docker images | grep tigergraph/community >/dev/null; then
   exit 3
 fi
 
-tg_version=$(docker images | grep tigergraph/community | awk '{print $2}' | sort -Vr | head -1)
+tg_version=$(docker images --format "{{.Tag}}" tigergraph/community 2>/dev/null | grep -E '^4\.[23]\.' | sort -Vr | head -1)
 if [[ -z "$tg_version" || ! "$tg_version" =~ ^4\.[23]\. ]]; then
   echo "TigerGraph version is not compatible, please use 4.2.0+"
   exit 4

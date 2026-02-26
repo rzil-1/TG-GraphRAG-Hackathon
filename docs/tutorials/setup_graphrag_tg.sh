@@ -55,7 +55,6 @@ curl -sk "https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/
     "password": "'${tg_password}'",
 ' | sed "s#http://tigergraph#${tg_host}#g; s/14240/${tg_port}/g" | sed "s/YOUR_LLM_API_KEY_HERE/${LLM_API_KEY}/g"> configs/server_config.json
 
-exit
 echo "Starting GraphRAG sevices.."
 docker compose pull --ignore-pull-failures
 docker compose up -d

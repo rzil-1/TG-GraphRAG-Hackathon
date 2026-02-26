@@ -87,7 +87,8 @@ class TextExtractor:
             '.xls': 'application/vnd.ms-excel',
             '.xml': 'application/xml',
             '.jpeg': 'image/jpeg',
-            '.jpg': 'image/jpeg'
+            '.jpg': 'image/jpeg',
+            '.jsonl': 'application/x-jsonlines'
         }
 
     async def _process_file_async(self, file_path, graphname, temp_folder):
@@ -182,15 +183,27 @@ class TextExtractor:
                 logger.warning(f"Cannot access directory {path}: {e}")
 
         files_to_process = []
+        jsonl_files_copied = []
         for file_path in safe_walk(folder_path_obj):
             if file_path.is_file():
                 if file_path.name.startswith(('.', '~', '$')) or 'BROMIUM' in file_path.name.upper():
                     continue
                 file_ext = file_path.suffix.lower()
-                if file_ext in self.supported_extensions:
+                if file_ext == '.jsonl':
+                    dest = os.path.join(temp_folder, file_path.name)
+                    shutil.copy2(str(file_path), dest)
+                    num_lines = sum(1 for _ in open(dest, 'r', encoding='utf-8'))
+                    jsonl_files_copied.append({
+                        'file_path': str(file_path),
+                        'num_documents': num_lines,
+                        'jsonl_file': file_path.name,
+                        'status': 'success'
+                    })
+                    logger.info(f"Copied JSONL file directly: {file_path.name} ({num_lines} documents)")
+                elif file_ext in self.supported_extensions:
                     files_to_process.append(file_path)
 
-        logger.info(f"Found {len(files_to_process)} files to process")
+        logger.info(f"Found {len(files_to_process)} files to process, {len(jsonl_files_copied)} JSONL files copied directly")
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -201,8 +214,8 @@ class TextExtractor:
         tasks = [process_with_semaphore(fp) for fp in files_to_process]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        processed_files_info = []
-        total_docs = 0
+        processed_files_info = list(jsonl_files_copied)
+        total_docs = sum(f['num_documents'] for f in jsonl_files_copied)
 
         for result in results:
             if isinstance(result, Exception):
