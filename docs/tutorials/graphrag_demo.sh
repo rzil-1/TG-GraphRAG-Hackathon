@@ -19,7 +19,7 @@ while :; do
   if [[ -n "$stage" && ! "$stage" == "$current_stage" ]]; then
     if [[ "$stage" =~ Processing ]]; then
       echo $stage | cut -d ' ' -f5-7
-    elif [[ "$stage" =~ Done ]]; then
+    elif [[ "$stage" =~ DONE ]]; then
       echo "GraphRAG initialization is done."
       break
     fi

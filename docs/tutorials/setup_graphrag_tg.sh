@@ -41,31 +41,43 @@ if ! [[ "$tg_host" =~ ^http[s]?://tigergraph ]]; then
 fi
 
 mkdir -p $root_dir || true
-[[ -d $root_dir ]] || (echo "Target dir $root_dir is not found!" && exit 5)
+[[ -d $root_dir ]] || { echo "Target dir $root_dir is not found!"; exit 5; }
 
 echo "Entering GraphRAG root dir: $root_dir"
-cd $root_dir || (echo "Cannot switch to $root_dir!" && exit 5)
+cd $root_dir || { echo "Cannot switch to $root_dir!"; exit 5; }
 
-echo "Downloading GraphRAG sevice config..."
+echo "Downloading GraphRAG service config..."
 mkdir -p configs || true
-curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/docker-compose-tg.yml | sed "s/community:4.2.1/community:${tg_version}/g" > docker-compose.yml
+curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/docker-compose-tg.yml > docker-compose.yml
 curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/nginx.conf -o configs/nginx.conf
 curl -sk "https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/server_config.json.${llm_provider}" | sed '/"gsPort": "14240"/a\
     "username": "'${tg_username}'",\
     "password": "'${tg_password}'",
 ' | sed "s#http://tigergraph#${tg_host}#g; s/14240/${tg_port}/g" | sed "s/YOUR_LLM_API_KEY_HERE/${LLM_API_KEY}/g"> configs/server_config.json
 
-echo "Starting GraphRAG sevices.."
+echo "Starting GraphRAG services..."
 docker compose pull --ignore-pull-failures
 docker compose up -d
 sleep 5
 
 echo "Checking service status..."
-if ! curl -s http://localhost:14240/restpp/version >/dev/null; then
-  docker exec tigergraph /home/tigergraph/tigergraph/app/cmd/gadmin start all >/dev/null
-  docker compose up -d >/dev/null
+if ! curl -s ${tg_host}:${tg_port}/api/ping 2>/dev/null | grep "pong" >/dev/null; then
+  echo "Waiting for TigerGraph instance to be ready..."
   sleep 5
 fi
+
+time_out=300
+while [[ $time_out -gt 0 ]]; do
+  if ! curl -s ${tg_host}:${tg_port}/api/ping 2>/dev/null | grep "pong" >/dev/null; then
+    echo "Waiting for TigerGraph instance to be ready... (${time_out}s remaining)"
+    sleep 5
+    time_out=$((time_out-5))
+  else
+    echo "TigerGraph is ready. Starting GraphRAG service..."
+    docker compose up -d graphrag >/dev/null
+    break
+  fi
+done
 
 if ! docker ps | grep "tigergraph/graphrag:latest" >/dev/null; then
   echo "Failed to start GraphRAG service."
