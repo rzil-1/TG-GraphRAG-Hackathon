@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -131,26 +131,6 @@ class EventualConsistencyChecker:
                 for x in entities
             ],
         )
-        self.conn.upsertVertices(
-            "Concept",
-            [
-                (
-                    x["type"],
-                    {
-                        "description": "",
-                        "concept_type": "EntityType",
-                        "epoch_added": date_added,
-                    },
-                )
-                for x in entities
-            ],
-        )
-        self.conn.upsertEdges(
-            "Concept",
-            "DESCRIBES_ENTITY",
-            "Entity",
-            [(x["type"], x["id"], {}) for x in entities],
-        )
         self.conn.upsertEdges(
             src_type,
             "CONTAINS_ENTITY",
@@ -162,7 +142,7 @@ class EventualConsistencyChecker:
     def _upsert_rels(self, src_id, src_type, relationships):
         date_added = int(time.time())
         self.conn.upsertVertices(
-            "Relationship",
+            "RelationshipType",
             [
                 (
                     x["source"] + ":" + x["type"] + ":" + x["target"],
@@ -178,14 +158,14 @@ class EventualConsistencyChecker:
         self.conn.upsertEdges(
             "Entity",
             "IS_HEAD_OF",
-            "Relationship",
+            "RelationshipType",
             [
                 (x["source"], x["source"] + ":" + x["type"] + ":" + x["target"], {})
                 for x in relationships
             ],
         )
         self.conn.upsertEdges(
-            "Relationship",
+            "RelationshipType",
             "HAS_TAIL",
             "Entity",
             [
@@ -196,7 +176,7 @@ class EventualConsistencyChecker:
         self.conn.upsertEdges(
             src_type,
             "MENTIONS_RELATIONSHIP",
-            "Relationship",
+            "RelationshipType",
             [
                 (src_id, x["source"] + ":" + x["type"] + ":" + x["target"], {})
                 for x in relationships

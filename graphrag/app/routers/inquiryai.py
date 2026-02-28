@@ -74,13 +74,17 @@ def retrieve_answer(
         logger.debug_pii(
             f"/{graphname}/query request_id={req_id_cv.get()} Exception Trace:\n{exc}"
         )
-    except Exception:
-        resp.natural_language_response = "GraphRAG had an issue answering your question. Please try again, or rephrase your prompt."
+    except Exception as e:
+        error_msg = str(e)
+        if "does not exist" in error_msg or "not found" in error_msg.lower():
+            resp.natural_language_response = f"Error: {error_msg}. Please check the knowledge graph name and try again."
+        else:
+            resp.natural_language_response = "GraphRAG had an issue answering your question. Please try again, or rephrase your prompt."
         exc = traceback.format_exc()
         resp.query_sources = {"error_traceback": exc}
         resp.answered_question = False
         LogWriter.warning(
-            f"/{graphname}/query request_id={req_id_cv.get()} agent execution failed due to unknown exception"
+            f"/{graphname}/query request_id={req_id_cv.get()} agent execution failed due to exception: {e}"
         )
         logger.debug_pii(
             f"/{graphname}/query request_id={req_id_cv.get()} Exception Trace:\n{exc}"
@@ -164,13 +168,17 @@ def retrieve_answer_with_chathistory(
         logger.debug_pii(
             f"/{graphname}/query_with_history request_id={req_id_cv.get()} Exception Trace:\n{exc}"
         )
-    except Exception:
-        resp.natural_language_response = "GraphRAG had an issue answering your question. Please try again, or rephrase your prompt."
+    except Exception as e:
+        error_msg = str(e)
+        if "does not exist" in error_msg or "not found" in error_msg.lower():
+            resp.natural_language_response = f"Error: {error_msg}. Please check the knowledge graph name and try again."
+        else:
+            resp.natural_language_response = "GraphRAG had an issue answering your question. Please try again, or rephrase your prompt."
 
         resp.query_sources = {}
         resp.answered_question = False
         LogWriter.warning(
-            f"/{graphname}/query_with_history request_id={req_id_cv.get()} agent execution failed due to unknown exception"
+            f"/{graphname}/query_with_history request_id={req_id_cv.get()} agent execution failed due to exception: {e}"
         )
         exc = traceback.format_exc()
         logger.debug_pii(

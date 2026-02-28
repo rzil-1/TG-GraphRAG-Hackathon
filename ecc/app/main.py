@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -99,7 +99,7 @@ def initialize_eventual_consistency_checker(
             )
         index_names = graphrag_config.get(
             "indexes",
-            ["Document", "DocumentChunk", "Entity", "Relationship", "Concept"],
+            ["DocumentChunk", "Community"],
         )
 
         if graphrag_config.get("extractor") == "llm":

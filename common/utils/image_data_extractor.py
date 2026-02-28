@@ -6,6 +6,14 @@ from common.config import get_multimodal_service
 
 logger = logging.getLogger(__name__)
 
+_multimodal_client = None
+
+def _get_client():
+    global _multimodal_client
+    if _multimodal_client is None:
+        _multimodal_client = get_multimodal_service()
+    return _multimodal_client
+
 def describe_image_with_llm(file_path):
     """
     Read image file and convert to base64 to send to LLM.
@@ -13,9 +21,9 @@ def describe_image_with_llm(file_path):
     try:
         from PIL import Image as PILImage
         
-        client = get_multimodal_service()
+        client = _get_client()
         if not client:
-            return "[Image: Failed to create multimodal LLM client]"
+            return "Image: Failed to create multimodal LLM client"
         # Read image and convert to base64
         pil_image = PILImage.open(file_path)
         buffer = io.BytesIO()
@@ -51,5 +59,4 @@ def describe_image_with_llm(file_path):
         return response.content if hasattr(response, "content") else str(response)
     except Exception as e:
         logger.error(f"Failed to describe image with LLM: {str(e)}")
-        return "[Image: Error processing image description]"
-
+        return "Image: Error processing image description"

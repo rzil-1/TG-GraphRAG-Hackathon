@@ -27,7 +27,7 @@ resp = conn.ai.answerQuestion(
     query,
     method="hybrid",
     method_parameters = {
-        "indices": ["Document", "DocumentChunk", "Entity", "Relationship"],
+        "indices": ["DocumentChunk", "Community"],
         "top_k": 2,
         "num_hops": 2,
         "num_seen_min": 2,

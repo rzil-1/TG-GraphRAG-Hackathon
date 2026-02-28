@@ -5,7 +5,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY get_community_children(Vertex<Community> com
         Comms = SELECT t FROM Comms:c -(<HAS_PARENT)- Community:t;
         PRINT Comms[Comms.description as description] as children;
     ELSE
-        Ents = SELECT t FROM Comms:c -(_>)- ResolvedEntity -(_>)- Entity:t;
+        Ents = SELECT t FROM Comms:c -(<IN_COMMUNITY)- Entity:t;
 
         PRINT Ents[Ents.description as description] as children;
     END;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,7 @@ const Setup = () => {
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
+  const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [isIngesting, setIsIngesting] = useState(false);
   const [ingestMessage, setIngestMessage] = useState("");
   // Ingestion job data state
@@ -66,6 +67,7 @@ const Setup = () => {
   const [refreshMessage, setRefreshMessage] = useState("");
   const [refreshGraphName, setRefreshGraphName] = useState("");
   const [isRebuildRunning, setIsRebuildRunning] = useState(false);
+  const isRebuildRunningRef = useRef(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   
   // S3 state
@@ -174,10 +176,11 @@ const [activeTab, setActiveTab] = useState("upload");
 
         // Step 2: Call create_ingest to process uploaded files in background
         console.log("Calling handleCreateIngestAfterUpload from main upload...");
+        setIsProcessingFiles(true);
         handleCreateIngestAfterUpload("uploaded", uploadedCount).catch((err) => {
           console.error("Error in background processing:", err);
           setUploadMessage(`❌ Processing error: ${err.message}`);
-        });
+        }).finally(() => setIsProcessingFiles(false));
       } else {
         setUploadMessage(`⚠️ ${data.message}`);
         setIsUploading(false);
@@ -249,8 +252,13 @@ const [activeTab, setActiveTab] = useState("upload");
 
       // Step 2: Call create_ingest to process uploaded files
       console.log("Calling handleCreateIngestAfterUpload...");
-      await handleCreateIngestAfterUpload("uploaded", uploadedCount);
-      console.log("handleCreateIngestAfterUpload completed");
+      setIsProcessingFiles(true);
+      try {
+        await handleCreateIngestAfterUpload("uploaded", uploadedCount);
+        console.log("handleCreateIngestAfterUpload completed");
+      } finally {
+        setIsProcessingFiles(false);
+      }
     } catch (error: any) {
       console.error("Upload error:", error);
       setUploadMessage(`❌ Batch upload error: ${error.message}`);
@@ -404,10 +412,11 @@ const [activeTab, setActiveTab] = useState("upload");
         await fetchDownloadedFiles();
         setIsDownloading(false);
         // Step 2: Call create_ingest to process downloaded files in background
+        setIsProcessingFiles(true);
         handleCreateIngestAfterUpload("downloaded", downloadCount).catch((err) => {
           console.error("Error in background processing:", err);
           setDownloadMessage(`❌ Processing error: ${err.message}`);
-        });
+        }).finally(() => setIsProcessingFiles(false));
       } else if (data.status === "warning") {
         setDownloadMessage(`⚠️ ${data.message}`);
         setIsDownloading(false);
@@ -860,14 +869,12 @@ const [activeTab, setActiveTab] = useState("upload");
 
       if (statusResponse.ok) {
         const statusData = await statusResponse.json();
-        const wasRunning = isRebuildRunning;
+        const wasRunning = isRebuildRunningRef.current;
         const isCurrentlyRunning = statusData.is_running || false;
         
         setIsRebuildRunning(isCurrentlyRunning);
+        isRebuildRunningRef.current = isCurrentlyRunning;
         
-        if (statusData.status === "error" || statusData.status === "unknown") {
-          return;
-        }
         if (isCurrentlyRunning) {
           const startTime = statusData.started_at ? new Date(statusData.started_at * 1000).toLocaleString() : "unknown time";
           setRefreshMessage(`⚠️ A rebuild is already in progress for "${graphName}" (started at ${startTime}). Please wait for it to complete.`);
@@ -875,14 +882,21 @@ const [activeTab, setActiveTab] = useState("upload");
           setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
         } else if (statusData.status === "failed") {
           setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
-        } else if (statusData.status === "idle") {
+        } else if (statusData.status === "error") {
+          setRefreshMessage(`❌ Failed to check rebuild status: ${statusData.error || "Unknown error"}`);
+        } else if (statusData.status === "unknown") {
+          setRefreshMessage(`⚠️ ECC service returned unknown status. It may be unavailable.`);
+        } else {
           setRefreshMessage("");
         }
+      } else {
+        setRefreshMessage(`❌ Failed to check rebuild status (HTTP ${statusResponse.status}).`);
       }
     } catch (error: any) {
       console.error("Error checking rebuild status:", error);
-      // On error, don't change state - keep existing message
-      // Don't clear existing messages on error
+      if (showLoadingMessage) {
+        setRefreshMessage(`❌ Unable to reach ECC service: ${error.message || "Connection failed"}`);
+      }
     } finally {
       setIsCheckingStatus(false);
     }
@@ -901,17 +915,18 @@ const [activeTab, setActiveTab] = useState("upload");
       return;
     }
 
+    setIsRefreshing(true);
+
     // Ask user to confirm before proceeding with refresh
     const shouldRefresh = await confirm(
       `Are you sure you want to refresh the knowledge graph "${refreshGraphName}"? This will rebuild the graph content.`
     );
     if (!shouldRefresh) {
       setRefreshMessage("Operation cancelled by user.");
+      setIsRefreshing(false);
       return;
     }
 
-    // Check status one final time RIGHT before submitting (to catch any race conditions)
-    setIsRefreshing(true);
     setRefreshMessage("Verifying rebuild status...");
 
     try {
@@ -930,6 +945,7 @@ const [activeTab, setActiveTab] = useState("upload");
         if (statusData.is_running) {
           setRefreshMessage(`⚠️ A rebuild is already in progress for "${refreshGraphName}". Please wait for it to complete.`);
           setIsRebuildRunning(true);
+          isRebuildRunningRef.current = true;
           setIsRefreshing(false);
           return;
         }
@@ -960,6 +976,7 @@ const [activeTab, setActiveTab] = useState("upload");
 
       setRefreshMessage(`✅ Refresh submitted successfully! The knowledge graph "${refreshGraphName}" is being rebuilt.`);
       setIsRebuildRunning(true);
+      isRebuildRunningRef.current = true;
     } catch (error: any) {
       console.error("Error refreshing graph:", error);
       setRefreshMessage(`❌ Error: ${error.message}`);
@@ -1441,19 +1458,6 @@ const [activeTab, setActiveTab] = useState("upload");
                     </div>
                   )}
 
-                  {/* Ingestion Status Message */}
-                  {ingestMessage && (
-                    <div className={`p-3 rounded-lg text-sm ${
-                      ingestMessage.includes("✅")
-                        ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
-                        : ingestMessage.includes("❌")
-                        ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
-                        : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                    }`}>
-                      {ingestMessage}
-                    </div>
-                  )}
-
                   {/* Uploaded Files List */}
                   {uploadedFiles.length > 0 && (
                     <div className="border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-4">
@@ -1494,13 +1498,18 @@ const [activeTab, setActiveTab] = useState("upload");
                       </p>
                       <Button
                         onClick={() => handleRunIngest("uploaded")}
-                        disabled={isIngesting}
+                        disabled={isIngesting || isProcessingFiles}
                         className="gradient text-white w-full"
                       >
                         {isIngesting ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Ingesting...
+                          </>
+                        ) : isProcessingFiles ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing files...
                           </>
                         ) : (
                           <>
@@ -1509,6 +1518,17 @@ const [activeTab, setActiveTab] = useState("upload");
                           </>
                         )}
                       </Button>
+                      {ingestMessage && (
+                        <div className={`p-3 rounded-lg text-sm mt-3 ${
+                          ingestMessage.includes("✅")
+                            ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
+                            : ingestMessage.includes("❌")
+                            ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
+                            : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                        }`}>
+                          {ingestMessage}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1798,13 +1818,18 @@ const [activeTab, setActiveTab] = useState("upload");
                       </p>
                       <Button
                         onClick={() => handleRunIngest("downloaded")}
-                        disabled={isIngesting}
+                        disabled={isIngesting || isProcessingFiles}
                         className="gradient text-white w-full"
                       >
                         {isIngesting ? (
                           <>
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Ingesting...
+                          </>
+                        ) : isProcessingFiles ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing files...
                           </>
                         ) : (
                           <>

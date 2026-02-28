@@ -36,7 +36,7 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
     ]
 
     logger.info(f"Checking if schema needs to be created")
-    if "- VERTEX ResolvedEntity" in current_schema:
+    if "- VERTEX EntityType" in current_schema:
         schema_res="Schema already exists, skipped."
     else:
         file_path = "common/gsql/supportai/SupportAI_Schema.gsql"
@@ -77,7 +77,7 @@ def init_supportai(conn: TigerGraphConnection, graphname: str) -> tuple[dict, di
                 )
             schema_res += " "
             schema_res += conn.gsql(
-                """USE GRAPH {}\n{}\nRUN SCHEMA_CHANGE JOB add_supportai_vector""".format(
+                """USE GRAPH {}\n{}\nRUN SCHEMA_CHANGE JOB add_graphrag_vector""".format(
                     graphname, schema
                 )
             )

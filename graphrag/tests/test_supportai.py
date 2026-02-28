@@ -34,12 +34,6 @@ class TestSupportAI(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-        concept_vertex = self.conn.getVertexType("Concept")
-        print(concept_vertex)
-        self.assertIsNotNone(concept_vertex)
-        self.assertEqual(concept_vertex["Name"], "Concept")
-        self.assertEqual(concept_vertex["PrimaryId"]["PrimaryIdAsAttribute"], True)
-
 
 if __name__ == "__main__":
     unittest.main()

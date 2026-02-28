@@ -2,17 +2,17 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
     /*
      * Initialize GraphRAG's hierarchical communities.
      */
-    TYPEDEF TUPLE <DOUBLE delta_q, VERTEX<ResolvedEntity> community, STRING ext_vid> Move;
+    TYPEDEF TUPLE <DOUBLE delta_q, VERTEX<Entity> community, STRING ext_vid> Move;
     SumAccum<DOUBLE> @@m; // the sum of the weights of all the links in the network
-    MinAccum<VERTEX<ResolvedEntity>> @community_id; // the community ID of the node
+    MinAccum<VERTEX<Entity>> @community_id; // the community ID of the node
     MinAccum<STRING> @community_vid; // the community ID of the node
     SumAccum<DOUBLE> @k; // the sum of the weights of the links incident to the node
     SumAccum<DOUBLE> @k_in; // the sum of the weights of the links inside the previous community of the node
     SumAccum<DOUBLE> @k_self_loop; // the weight of the self-loop link
-    MapAccum<VERTEX<ResolvedEntity>, SumAccum<DOUBLE>> @community_k_in_map; // the community of the neighbors of the nodes -> the sum of the weights of the links inside the community
-    MapAccum<VERTEX<ResolvedEntity>, SumAccum<DOUBLE>> @@community_sum_total_map; // community ID C -> the sum of the weights of the links incident to nodes in C
+    MapAccum<VERTEX<Entity>, SumAccum<DOUBLE>> @community_k_in_map; // the community of the neighbors of the nodes -> the sum of the weights of the links inside the community
+    MapAccum<VERTEX<Entity>, SumAccum<DOUBLE>> @@community_sum_total_map; // community ID C -> the sum of the weights of the links incident to nodes in C
     SumAccum<DOUBLE> @community_sum_total; // the sum of the weights of the links incident to nodes in the community of the node
-    MapAccum<VERTEX<ResolvedEntity>, SumAccum<DOUBLE>> @@community_sum_in_map; // community ID -> the sum of the weights of the links inside the community
+    MapAccum<VERTEX<Entity>, SumAccum<DOUBLE>> @@community_sum_in_map; // community ID -> the sum of the weights of the links inside the community
     MapAccum<STRING, MapAccum<STRING, SumAccum<DOUBLE>>> @@source_target_k_in_map; // source community ID -> (target community ID -> the sum of the weights of the links from the source community to the target community)
     SumAccum<DOUBLE> @delta_Q_remove; // delta Q to remove the node from the previous community
     MaxAccum<Move> @best_move; // best move of the node with the highest delta Q to move the isolated node into the new community
@@ -22,7 +22,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
     SumAccum<INT> @batch_id;
     MinAccum<INT> @vid;
 
-    AllNodes = {ResolvedEntity.*};
+    AllNodes = {Entity.*};
     DOUBLE wt = 1.0;
 
     // prevent multiple init runs
@@ -39,7 +39,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
             s.@community_vid = s.id, // external id
             s.@vid = getvid(s), // internal id (used in batching)
             s.@batch_id = s.@vid % n_batches; // get batch number
-    z = SELECT s FROM AllNodes:s -(_)-> ResolvedEntity:t
+    z = SELECT s FROM AllNodes:s -(_)-> Entity:t
         ACCUM s.@k += wt,
               @@m += 1;
 
@@ -52,7 +52,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
     WHILE Candidates.size() > 0 AND hop < max_hop DO
         hop += 1; 
         IF hop == 1 THEN // first iteration
-            ChangedNodes = SELECT s FROM Candidates:s -(_:e)-> ResolvedEntity:t
+            ChangedNodes = SELECT s FROM Candidates:s -(_:e)-> Entity:t
                            WHERE s.@community_id != t.@community_id // can't move within the same community
                            ACCUM 
                                DOUBLE dq = 1 - s.@k * t.@k / (2 * @@m),
@@ -79,7 +79,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
 
             // process nodes in batch
             FOREACH batch_id IN RANGE[0, n_batches-1] DO
-                Nodes = SELECT s FROM Candidates:s -(_:e)-> ResolvedEntity:t
+                Nodes = SELECT s FROM Candidates:s -(_:e)-> Entity:t
                         WHERE s.@batch_id == batch_id
                         ACCUM
                             IF s.@community_id == t.@community_id THEN 
@@ -96,7 +96,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
                             s.@best_move = Move(@@min_double, s, to_string(s.id)); // reset best move
 
                 // find the best move
-                Nodes = SELECT s FROM Nodes:s -(_:e)-> ResolvedEntity:t
+                Nodes = SELECT s FROM Nodes:s -(_:e)-> Entity:t
                         WHERE s.@community_id != t.@community_id
                         ACCUM 
                             DOUBLE dq = 2 * s.@community_k_in_map.get(t.@community_id) - s.@k * t.@community_sum_total / @@m,
@@ -113,7 +113,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
             END;
         END;
         // If two nodes swap, only change the community of one of them
-        SwapNodes = SELECT s FROM ChangedNodes:s -(_:e)-> ResolvedEntity:t
+        SwapNodes = SELECT s FROM ChangedNodes:s -(_:e)-> Entity:t
                     WHERE s.@best_move.community == t.@community_id
                       AND t.@to_change_community
                       AND t.@best_move.community == s.@community_id
@@ -143,14 +143,14 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
         @@move_cnt += ChangedNodes.size();
 
         // Get all neighbours of the changed node that do not belong to the node’s new community
-        Candidates = SELECT t FROM ChangedNodes:s -(_:e)-> ResolvedEntity:t
+        Candidates = SELECT t FROM ChangedNodes:s -(_:e)-> Entity:t
                      WHERE t.@community_id != s.@community_id;
     END;
 
     // Coarsening
     UINT new_layer = 0;
     @@community_sum_total_map.clear();
-    Tmp = SELECT s FROM AllNodes:s -(_:e)-> ResolvedEntity:t
+    Tmp = SELECT s FROM AllNodes:s -(_:e)-> Entity:t
           ACCUM
               s.@has_relations += TRUE,
               t.@has_relations += TRUE,
@@ -178,7 +178,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY graphrag_louvain_init(UINT max_hop = 10, UIN
 
     @@community_sum_total_map.clear();
     // link communities
-    Tmp = SELECT s FROM AllNodes:s -(_:e)-> ResolvedEntity:t
+    Tmp = SELECT s FROM AllNodes:s -(_:e)-> Entity:t
           WHERE s.@community_vid != t.@community_vid
           ACCUM
               DOUBLE w = @@source_target_k_in_map.get(s.@community_vid).get(t.@community_vid),
