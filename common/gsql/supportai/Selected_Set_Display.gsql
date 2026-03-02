@@ -18,7 +18,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY Selected_Set_Display(STRING json_list_vts) {
 
   res = SELECT s FROM start:s
         POST-ACCUM
-          IF s.type == "Relationship" THEN
+          IF s.type == "RelationshipType" THEN
             s.@context += s.definition
           ELSE IF s.type == "Entity" THEN
             STRING tmp_dsc = s.id + " " + s.definition,

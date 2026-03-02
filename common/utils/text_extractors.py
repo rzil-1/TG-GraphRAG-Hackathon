@@ -40,12 +40,14 @@ def insert_description_by_id(md_text, image_id, description):
     """
     Replace the description for an image whose basename == image_id.
     """
+    safe_desc = description.replace("[", "(").replace("]", ")")
+
     def repl(m):
         old_path = m.group(2)
         candidate_id = os.path.splitext(os.path.basename(old_path))[0]
 
         if candidate_id == image_id:
-            return f'![{description}]({old_path})'
+            return f'![{safe_desc}]({old_path})'
 
         return m.group(0)
     return _md_pattern.sub(repl, md_text)
@@ -384,7 +386,7 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
                 image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
                 image_counter += 1
-                image_doc_id = f"{base_doc_id}_image_{image_counter}"
+                image_doc_id = f"{base_doc_id}_image_{image_counter}".lower()
 
                 # Replace file path with tg:// protocol reference in markdown
                 markdown_content = replace_path_with_tg_protocol(
@@ -408,6 +410,13 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
 
             except Exception as img_error:
                 logger.warning(f"Failed to process image {img_ref.get('path')}: {img_error}")
+                failed_path = img_ref.get("path", "")
+                if failed_path:
+                    markdown_content = re.sub(
+                        r'!\[.*?\]\(' + re.escape(failed_path) + r'\)',
+                        "",
+                        markdown_content,
+                    )
 
         # FINAL CLEANUP — delete folder after processing everything
         if image_output_folder.exists() and image_output_folder.is_dir():
@@ -463,8 +472,7 @@ def _extract_standalone_image_as_doc(file_path, base_doc_id, graphname=None):
         pil_image.save(buffer, format="JPEG", quality=95)
         image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-        image_id = f"{base_doc_id}_image_1"
-        # Put description as text, then markdown image reference with short alt text
+        image_id = f"{base_doc_id}_image_1".lower()
         content = f"![{description}](tg://{image_id})"
         return [
             {

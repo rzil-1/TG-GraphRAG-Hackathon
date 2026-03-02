@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 TigerGraph, Inc.
+ * Copyright (c) 2024-2026 TigerGraph, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,8 +41,8 @@ CREATE OR REPLACE DISTRIBUTED QUERY GraphRAG_Community_Search_Display(STRING jso
               WHERE s.iteration == i
               ACCUM s.@children += c, @@edges += e;
       END;
-      related_chunks = SELECT c FROM Content:c -(<HAS_CONTENT:e1)- DocumentChunk:d -(CONTAINS_ENTITY>:e2)- Entity:v -(RESOLVES_TO>:e3)- ResolvedEntity:r -(IN_COMMUNITY>:e4)- selected_comms:m
-          ACCUM m.@context += c.text, m.@children += d, @@edges += e1, @@edges += e2, @@edges += e3, @@edges += e4;
+      related_chunks = SELECT c FROM Content:c -(<HAS_CONTENT:e1)- DocumentChunk:d -(CONTAINS_ENTITY>:e2)- Entity:v -(IN_COMMUNITY>:e3)- selected_comms:m
+          ACCUM m.@context += c.text, m.@children += d, @@edges += e1, @@edges += e2, @@edges += e3;
   END;
 
   selected_comms = SELECT c FROM selected_comms:c WHERE c.type == "Community"

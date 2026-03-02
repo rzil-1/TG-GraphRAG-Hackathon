@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ from agent.agent_rewrite import TigerGraphAgentRewriter
 from agent.agent_router import TigerGraphAgentRouter
 from agent.agent_usefulness_check import TigerGraphAgentUsefulnessCheck
 from agent.Q import DONE, Q
+from langchain.prompts import PromptTemplate
 from langgraph.graph import END, StateGraph
 from pyTigerGraph.common.exception import TigerGraphException
 from supportai.retrievers import (HybridRetriever, SimilarityRetriever,
@@ -136,16 +137,88 @@ class TigerGraphAgentGraph:
         )
         return state
 
+    def contextualize_question(self, question: str, conversation) -> str:
+        """Rewrite *question* into a self-contained search query by
+        incorporating relevant context from *conversation*.  Falls back to
+        the original question on any error."""
+        if not conversation:
+            return question
+        try:
+            history_lines = []
+            for turn in conversation[-4:]:
+                if isinstance(turn, dict):
+                    q = turn.get("query", "")
+                    a = turn.get("response", "")
+                    if q:
+                        history_lines.append(f"User: {q}")
+                    if a:
+                        history_lines.append(f"Assistant: {a}")
+            if not history_lines:
+                return question
+
+            history_text = "\n".join(history_lines)
+            prompt = PromptTemplate(
+                template=self.llm_provider.contextualize_question_prompt,
+                input_variables=["history", "question"],
+            )
+            chain = prompt | self.llm_provider.model
+            result = chain.invoke({"history": history_text, "question": question})
+            standalone = result.content.strip() if hasattr(result, "content") else str(result).strip()
+            logger.info(f"Contextualized question for KG search: {standalone}")
+            return standalone or question
+        except Exception as e:
+            logger.warning(f"Failed to contextualize question, using original: {e}")
+            return question
+
     def lookup_history(self, state):
         """
-        Run the agent history lookup.
+        Prepare for a history-based answer.  Contextualizes the question
+        using conversation history so the downstream ``supportai`` node can
+        perform a meaningful KG search.  The original question and a
+        ``history_mode`` flag are stashed in state for
+        ``merge_history_context`` to use later.
         """
         self.emit_progress("Looking up the conversation history")
+        state["history_mode"] = True
+        state["original_question"] = state["question"]
+
+        if self.supportai_enabled:
+            state["question"] = self.contextualize_question(
+                state["question"], state["conversation"]
+            )
+        else:
+            state["lookup_source"] = "history"
+            state["context"] = {
+                "result": state["conversation"],
+                "reasoning": (
+                    "The conversation history was used to answer the question."
+                ),
+            }
+        return state
+
+    def merge_history_context(self, state):
+        """
+        Merge the KG search results produced by the ``supportai`` node with
+        the original conversation history, then restore the original question
+        for answer generation.
+        """
+        kg_result = {}
+        if state.get("context") and state["context"].get("result"):
+            kg_result = state["context"]["result"].get("final_retrieval", {})
+
+        combined = {
+            "conversation_history": state["conversation"],
+            "knowledge_graph": kg_result,
+        }
+
+        state["question"] = state.pop("original_question", state["question"])
+        state.pop("history_mode", None)
         state["lookup_source"] = "history"
         state["context"] = {
-            "result": state["conversation"],
-            "reasoning": "The following conversation history was used to answer the question. {}".format(
-                state["conversation"]
+            "result": combined,
+            "reasoning": (
+                "The conversation history and knowledge graph search results "
+                "were combined to answer the question."
             ),
         }
         return state
@@ -244,7 +317,7 @@ class TigerGraphAgentGraph:
         chunk_only=graphrag_config.get("chunk_only", True)
         step = retriever.search(
             state["question"],
-            indices=["DocumentChunk", "Entity"],
+            indices=["DocumentChunk"],
             top_k=graphrag_config.get("top_k", 5),
             num_seen_min=graphrag_config.get("num_seen_min", 2),
             num_hops=graphrag_config.get("num_hops", 2),
@@ -638,6 +711,13 @@ class TigerGraphAgentGraph:
         else:
             return "success"
 
+    def route_after_supportai(self, state):
+        """Route after supportai: if we came from history lookup, merge
+        the KG results with history; otherwise proceed to answer generation."""
+        if state.get("history_mode"):
+            return "merge_history"
+        return "generate"
+
     def create_graph(self):
         """
         Create a graph of the agent.
@@ -650,6 +730,7 @@ class TigerGraphAgentGraph:
         self.workflow.add_node("generate_function", self.generate_function)
         if self.supportai_enabled:
             self.workflow.add_node("supportai", self.supportai_search)
+            self.workflow.add_node("merge_history_context", self.merge_history_context)
         self.workflow.add_node("rewrite_question", self.rewrite_question)
         self.workflow.add_node("apologize", self.apologize)
 
@@ -754,10 +835,20 @@ class TigerGraphAgentGraph:
                 },
             )
 
-        self.workflow.add_edge("lookup_history", "generate_answer")
-        self.workflow.add_edge("map_question_to_schema", "generate_function")
         if self.supportai_enabled:
-            self.workflow.add_edge("supportai", "generate_answer")
+            self.workflow.add_edge("lookup_history", "supportai")
+            self.workflow.add_conditional_edges(
+                "supportai",
+                self.route_after_supportai,
+                {
+                    "merge_history": "merge_history_context",
+                    "generate": "generate_answer",
+                },
+            )
+            self.workflow.add_edge("merge_history_context", "generate_answer")
+        else:
+            self.workflow.add_edge("lookup_history", "generate_answer")
+        self.workflow.add_edge("map_question_to_schema", "generate_function")
         self.workflow.add_edge("rewrite_question", "entry")
         self.workflow.add_edge("apologize", END)
 

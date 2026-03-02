@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,10 +39,13 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
         self,
         conn: TigerGraphConnection,
         embedding_service: EmbeddingModel,
-        support_ai_instance: bool = False
+        support_ai_instance: bool = False,
+        default_vector_attribute: str = "embedding",
     ):
         self.embedding_service = embedding_service
         self.support_ai_instance = support_ai_instance
+        self.default_vector_attribute = default_vector_attribute
+        self.vector_attr_cache = {}
 
         if isinstance(conn.apiToken, tuple):
             token = conn.apiToken[0]
@@ -73,7 +76,7 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
             logger.info(f"Done installing GDS library with status {q_res}")
             if self.conn.graphname and not self.conn.graphname == "MyGraph":
                 current_schema = self.conn.gsql(f"USE GRAPH {self.conn.graphname}\n ls")
-                if "- embedding(Dimension=" in current_schema:
+                if "(Dimension=" in current_schema:
                     self.install_vector_queries()
             logger.info(f"TigerGraph embedding store is initialized with graph {self.conn.graphname}")
         else:
@@ -96,31 +99,31 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 with open(f"common/gsql/vector/{q_name}.gsql", "r") as f:
                     q_body = f.read()
                 q_res = self.conn.gsql(
-                    """USE GRAPH {}\nBEGIN\n{}\nEND\ninstall query {}\n""".format(
-                        self.conn.graphname, q_body, q_name
+                    """USE GRAPH {}\nBEGIN\n{}\nEND\n""".format(
+                        self.conn.graphname, q_body
                     )
                 )
                 need_install = True
                 logger.info(f"Done creating vector query {q_name} with status {q_res}")
-        #TBD
         if need_install:
-            logger.info(f"Installing supportai queries all together")
+            logger.info(f"Installing vector queries all together")
             query_res = self.conn.gsql(
                 """USE GRAPH {}\nINSTALL QUERY ALL\n""".format(
                     self.conn.graphname
                 )
             )
-            logger.info(f"Done installing supportai query all with status {query_res}")
+            logger.info(f"Done installing vector queries with status {query_res}")
         else:
-            logger.info(f"Query installation is not needed for supportai")
+            logger.info(f"All vector queries already installed, skipping.")
 
     def set_graphname(self, graphname):
         self.conn.graphname = graphname
+        self.vector_attr_cache = {}
         if self.conn.apiToken or self.conn.jwtToken:
             self.conn.getToken()
         if self.conn.graphname and not self.conn.graphname == "MyGraph":
             current_schema = self.conn.gsql(f"USE GRAPH {self.conn.graphname}\n ls")
-            if "- embedding(Dimension=" in current_schema:
+            if "(Dimension=" in current_schema:
                 self.install_vector_queries()
 
     def set_connection(self, conn):
@@ -143,10 +146,63 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 apiToken = token,
              )
 
+        self.vector_attr_cache = {}
         self.install_vector_queries()
 
+    def refreshvector_attr_cache(self):
+        """Parse the graph schema to discover which vertex types have which
+        vector attributes.  Populates ``self.vector_attr_cache`` as
+        ``{vertex_type: {attr_name, ...}, ...}``.
+
+        The ``ls`` output contains a section like::
+
+            Vector Embeddings:
+            - Person:
+              - embedding(Dimension=1536, ...)
+            - DocumentChunk:
+              - embedding(Dimension=1536, ...)
+              - summary_vec(Dimension=768, ...)
+        """
+        self.vector_attr_cache = {}
+        try:
+            schema = self.conn.gsql(
+                f"USE GRAPH {self.conn.graphname}\n ls"
+            )
+            in_vector_section = False
+            current_vtype = None
+            for line in schema.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("Vector Embeddings:"):
+                    in_vector_section = True
+                    continue
+                if in_vector_section:
+                    if stripped == "" or (
+                        not stripped.startswith("-") and ":" not in stripped
+                    ):
+                        break
+                    if stripped.startswith("- ") and stripped.endswith(":"):
+                        current_vtype = stripped[2:-1].strip()
+                        self.vector_attr_cache.setdefault(current_vtype, set())
+                    elif current_vtype and "(" in stripped:
+                        attr_name = stripped.lstrip("- ").split("(")[0].strip()
+                        if attr_name:
+                            self.vector_attr_cache[current_vtype].add(attr_name)
+        except Exception as e:
+            logger.warning(f"Failed to refresh vector attribute cache: {e}")
+
+    def has_vector_attribute(self, vertex_type: str, vector_attribute: str) -> bool:
+        """Check whether *vertex_type* has a vector attribute named
+        *vector_attribute* according to the cached schema.  The cache is
+        refreshed automatically on the first call or after
+        ``set_graphname`` / ``set_connection``."""
+        if not self.vector_attr_cache:
+            self.refreshvector_attr_cache()
+        attrs = self.vector_attr_cache.get(vertex_type)
+        if attrs is None:
+            return False
+        return vector_attribute in attrs
+
     def map_attrs(self, attributes: Iterable[Tuple[str, List[float]]]):
-        # map attrs
         attrs = {}
         for (k, v) in attributes:
             attrs[k] = {"value": v}
@@ -163,6 +219,7 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
             embeddings (Iterable[Tuple[str, List[float]]]):
                 Iterable of content and embedding of the document.
         """
+        batch = None
         try:
             LogWriter.info(
                 f"request_id={req_id_cv.get()} TigerGraph ENTRY add_embeddings()"
@@ -173,15 +230,34 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 "vertices": defaultdict(dict[str, any]),
             }
 
+            skipped = []
+            vec_attrs_used = set()
             for i, (text, _) in enumerate(embeddings):
                 (v_id, v_type) = metadatas[i].get("vertex_id")
+                vec_attr = metadatas[i].get(
+                    "vector_attribute", self.default_vector_attribute
+                )
+                if not self.has_vector_attribute(v_type, vec_attr):
+                    if (v_type, vec_attr) not in skipped:
+                        LogWriter.warning(
+                            f"Skipping vertex type '{v_type}': "
+                            f"no vector attribute '{vec_attr}' in schema."
+                        )
+                        skipped.append((v_type, vec_attr))
+                    continue
+                vec_attrs_used.add(vec_attr)
                 try:
                     embedding = self.embedding_service.embed_query(text)
                 except Exception as e:
                     LogWriter.error(f"Failed to embed {v_id}: {e}")
                     return
-                attr = self.map_attrs([("embedding", embedding)])
+                attr = self.map_attrs([(vec_attr, embedding)])
                 batch["vertices"][v_type][v_id] = attr
+
+            if not any(batch["vertices"].values()):
+                LogWriter.warning("No embeddings to upsert after vector attribute checks.")
+                return
+
             data = json.dumps(batch)
             added = self.conn.upsertData(data)
 
@@ -189,7 +265,6 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
 
             LogWriter.info(f"request_id={req_id_cv.get()} TigerGraph EXIT add_embeddings()")
 
-            # Check if registration was successful
             if added:
                 success_message = f"Document registered with id: {added[0]}"
                 LogWriter.info(success_message)
@@ -200,7 +275,14 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 raise Exception(error_message)
 
         except Exception as e:
-            error_message = f"An error occurred while registering document: {str(e)}"
+            v_types = list(batch["vertices"].keys()) if batch else "unknown"
+            vec_names = vec_attrs_used if vec_attrs_used else {self.default_vector_attribute}
+            error_message = (
+                f"An error occurred while registering document: {str(e)}. "
+                f"Vertex type(s) in batch: {v_types}. "
+                f"Vector attribute(s) used: {vec_names}. "
+                f"Ensure these vertex types have the expected vector attribute."
+            )
             LogWriter.error(error_message)
 
     async def aadd_embeddings(
@@ -214,6 +296,7 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
             embeddings (Iterable[Tuple[str, List[float]]]):
                 Iterable of content and embedding of the document.
         """
+        batch = None
         try:
             LogWriter.info(
                 f"request_id={req_id_cv.get()} TigerGraph ENTRY aadd_embeddings()"
@@ -224,15 +307,34 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 "vertices": defaultdict(dict[str, any]),
             }
 
+            skipped = []
+            vec_attrs_used = set()
             for i, (text, _) in enumerate(embeddings):
                 (v_id, v_type) = metadatas[i].get("vertex_id")
+                vec_attr = metadatas[i].get(
+                    "vector_attribute", self.default_vector_attribute
+                )
+                if not self.has_vector_attribute(v_type, vec_attr):
+                    if (v_type, vec_attr) not in skipped:
+                        LogWriter.warning(
+                            f"Skipping vertex type '{v_type}': "
+                            f"no vector attribute '{vec_attr}' in schema."
+                        )
+                        skipped.append((v_type, vec_attr))
+                    continue
+                vec_attrs_used.add(vec_attr)
                 try:
                     embedding = await self.embedding_service.aembed_query(text)
                 except Exception as e:
                     LogWriter.error(f"Failed to embed {v_id}: {e}")
                     return
-                attr = self.map_attrs([("embedding", embedding)])
+                attr = self.map_attrs([(vec_attr, embedding)])
                 batch["vertices"][v_type][v_id] = attr
+
+            if not any(batch["vertices"].values()):
+                LogWriter.warning("No embeddings to upsert after vector attribute checks.")
+                return
+
             data = json.dumps(batch)
             added = self.conn.upsertData(data)
 
@@ -240,7 +342,6 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
 
             LogWriter.info(f"request_id={req_id_cv.get()} TigerGraph EXIT aadd_embeddings()")
 
-            # Check if registration was successful
             if added:
                 success_message = f"Document {metadatas} registered with status: {added}"
                 LogWriter.info(success_message)
@@ -251,7 +352,14 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
                 raise Exception(error_message)
 
         except Exception as e:
-            error_message = f"An error occurred while registering document: {str(e)}"
+            v_types = list(batch["vertices"].keys()) if batch else "unknown"
+            vec_names = vec_attrs_used if vec_attrs_used else {self.default_vector_attribute}
+            error_message = (
+                f"An error occurred while registering document: {str(e)}. "
+                f"Vertex type(s) in batch: {v_types}. "
+                f"Vector attribute(s) used: {vec_names}. "
+                f"Ensure these vertex types have the expected vector attribute."
+            )
             LogWriter.error(error_message)
 
     def has_embeddings(
@@ -261,6 +369,12 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
         ret = True
         try:
             for (v_id, v_type) in v_ids:
+                if not self.has_vector_attribute(v_type, self.default_vector_attribute):
+                    logger.info(
+                        f"Vertex type '{v_type}' has no vector attribute "
+                        f"'{self.default_vector_attribute}', treating as no embedding."
+                    )
+                    return False
                 res = self.conn.runInstalledQuery(
                     "check_embedding_exists",
                     params={
@@ -285,6 +399,12 @@ class TigerGraphEmbeddingStore(EmbeddingStore):
         self,
         v_type: str
     ):
+        if not self.has_vector_attribute(v_type, self.default_vector_attribute):
+            logger.info(
+                f"Vertex type '{v_type}' has no vector attribute "
+                f"'{self.default_vector_attribute}', skipping rebuild check."
+            )
+            return False
         try:
             res = self.conn.runInstalledQuery(
                 "vertices_have_embedding",

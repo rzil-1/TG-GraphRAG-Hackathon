@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import traceback
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 http_timeout = httpx.Timeout(15.0)
 
-tg_sem = asyncio.Semaphore(2)
+tg_sem = asyncio.Semaphore(graphrag_config.get("tg_concurrency", 10))
 load_q = reusable_channel.ReuseableChannel()
 
 # will pause workers until the event is false
@@ -50,44 +51,72 @@ async def install_queries(
     requried_queries: list[str],
     conn: AsyncTigerGraphConnection,
 ):
-    # queries that are currently installed
     installed_queries = [q.split("/")[-1] for q in await conn.getEndpoints(dynamic=True) if f"/{conn.graphname}/" in q]
 
-    # doesn't need to be parallel since tg only does it one at a time
+    required_names = set()
     for q in requried_queries:
-        # only install n queries at a time (n=n_workers)
         q_name = q.split("/")[-1]
-        # if the query is not installed, install it
+        required_names.add(q_name)
         if q_name not in installed_queries:
             res = await workers.install_query(conn, q, False)
-            # stop system if a required query doesn't install
             if res["error"]:
                 raise Exception(res["message"])
             logger.info(f"Successfully created query '{q_name}'.")
-    query = f"""\
-USE GRAPH {conn.graphname}
-INSTALL QUERY ALL
-"""
+
+    if required_names.issubset(set(installed_queries)):
+        logger.info("All required queries already installed, skipping INSTALL QUERY ALL.")
+        return
+
+    logger.info("Submitting INSTALL QUERY ALL ...")
+    query = f"USE GRAPH {conn.graphname}\nINSTALL QUERY ALL\n"
     async with tg_sem:
         res = await conn.gsql(query)
-        if "error" in res:
+        logger.info(f"INSTALL QUERY ALL returned: {str(res)[:200]}")
+        if isinstance(res, str) and "error" in res.lower():
             raise Exception(res)
 
-    logger.info("Finished processing all required queries.")
+    max_wait = 600  # seconds
+    poll_interval = 10
+    elapsed = 0
+    while elapsed < max_wait:
+        ready = [
+            q.split("/")[-1]
+            for q in await conn.getEndpoints(dynamic=True)
+            if f"/{conn.graphname}/" in q
+        ]
+        missing = required_names - set(ready)
+        if not missing:
+            break
+        logger.info(
+            f"Waiting for query installation to finish "
+            f"({len(missing)} remaining: {', '.join(sorted(missing))})"
+        )
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+    else:
+        raise Exception(
+            f"Query installation timed out after {max_wait}s. "
+            f"Still missing: {', '.join(sorted(missing))}"
+        )
+
+    logger.info("All required queries installed and verified.")
 
 
 async def init(
     conn: AsyncTigerGraphConnection,
 ) -> tuple[BaseExtractor, dict[str, EmbeddingStore]]:
+    """Initialize extractors and embedding store.
+
+    Returns:
+        (extractor, embedding_store)
+    """
     # install requried queries
     requried_queries = [
         "common/gsql/graphrag/StreamIds",
         "common/gsql/graphrag/StreamDocContent",
         "common/gsql/graphrag/StreamChunkContent",
         "common/gsql/graphrag/SetEpochProcessing",
-        "common/gsql/graphrag/ResolveRelationships",
         "common/gsql/graphrag/get_community_children",
-        "common/gsql/graphrag/entities_have_resolution",
         "common/gsql/graphrag/communities_have_desc",
         "common/gsql/graphrag/get_vertices_or_remove",
         "common/gsql/graphrag/louvain/graphrag_louvain_init",
@@ -279,20 +308,6 @@ async def get_commuinty_children(conn, i: int, c: str):
 
     return descrs
 
-
-async def check_all_ents_resolved(conn):
-    try:
-        async with tg_sem:
-            resp = await conn.runInstalledQuery(
-                "entities_have_resolution"
-            )
-    except Exception as e:
-        logger.error(f"Check Vert Desc err:\n{e}")
-
-    res = resp[0]["all_resolved"]
-    logger.info(resp)
-
-    return res
 
 async def add_rels_between_types(conn):
     try:

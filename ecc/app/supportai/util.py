@@ -32,40 +32,64 @@ async def install_queries(
     requried_queries: list[str],
     conn: TigerGraphConnection,
 ):
-    # queries that are currently installed
     installed_queries = [q.split("/")[-1] for q in await conn.getEndpoints(dynamic=True) if f"/{conn.graphname}/" in q]
 
-    # doesn't need to be parallel since tg only does it one at a time
+    required_names = set()
     for q in requried_queries:
-        # only install n queries at a time (n=n_workers)
         q_name = q.split("/")[-1]
-        # if the query is not installed, install it
+        required_names.add(q_name)
         if q_name not in installed_queries:
-            logger.info(f"Query '{q_name}' not found in installed queries. Attempting to install...")
+            logger.info(f"Query '{q_name}' not found in installed queries. Attempting to create...")
             try:
                 res = await workers.install_query(conn, q, False)
-                # stop system if a required query doesn't install
                 if res["error"]:
                     logger.error(f"Failed to create query '{q_name}'. Error: {res['message']}")
-                    raise Exception(f"Installation of query '{q_name}' failed with message: {res['message']}")
+                    raise Exception(f"Creation of query '{q_name}' failed with message: {res['message']}")
                 else:
                     logger.info(f"Successfully created query '{q_name}'.")
-                    
             except Exception as e:
-                logger.critical(f"Critical error during installation of query '{q_name}': {e}")
+                logger.critical(f"Critical error during creation of query '{q_name}': {e}")
                 raise e
         else:
             logger.info(f"Query '{q_name}' is already installed.")
-    query = f"""\
-USE GRAPH {conn.graphname}
-INSTALL QUERY ALL
-"""
+
+    if required_names.issubset(set(installed_queries)):
+        logger.info("All required queries already installed, skipping INSTALL QUERY ALL.")
+        return
+
+    logger.info("Submitting INSTALL QUERY ALL ...")
+    query = f"USE GRAPH {conn.graphname}\nINSTALL QUERY ALL\n"
     async with tg_sem:
         res = await conn.gsql(query)
-        if "error" in res:
+        logger.info(f"INSTALL QUERY ALL returned: {str(res)[:200]}")
+        if isinstance(res, str) and "error" in res.lower():
             raise Exception(res)
-    
-    logger.info("Finished processing all required queries.")
+
+    max_wait = 300  # seconds
+    poll_interval = 5
+    elapsed = 0
+    while elapsed < max_wait:
+        ready = [
+            q.split("/")[-1]
+            for q in await conn.getEndpoints(dynamic=True)
+            if f"/{conn.graphname}/" in q
+        ]
+        missing = required_names - set(ready)
+        if not missing:
+            break
+        logger.info(
+            f"Waiting for query installation to finish "
+            f"({len(missing)} remaining: {', '.join(sorted(missing))})"
+        )
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+    else:
+        raise Exception(
+            f"Query installation timed out after {max_wait}s. "
+            f"Still missing: {', '.join(sorted(missing))}"
+        )
+
+    logger.info("All required queries installed and verified.")
 
 
 

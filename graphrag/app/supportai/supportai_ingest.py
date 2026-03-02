@@ -74,12 +74,6 @@ class BaseIngestion:
         ]
         return chunks
 
-    def embed_document(self, document: Document):
-        document.document_embedding = self.embedding_service.embed_query(document.text)
-
-    def embed_documents(self, documents: List[Document]):
-        return self.embedding_service.embed_documents([doc.text for doc in documents])
-
     def document_er_extraction(self, document: Union[Document, DocumentChunk]):
         extractor = LLMEntityRelationshipExtractor(self.llm_service)
         return extractor.extract(document)
@@ -140,34 +134,10 @@ class BaseIngestion:
                             {
                                 "definition": x["definition"],
                                 "date_added": date_added,
-                                "embedding": self.embedding_service.embed_query(
-                                    x["definition"]
-                                ),
                             },
                         )
                         for x in chunk.entities
                     ],
-                )
-                self.conn.upsertVertices(
-                    "Concept",
-                    [
-                        (
-                            x["type"],
-                            {
-                                "description": "",
-                                "concept_type": "EntityType",
-                                "date_added": date_added,
-                                "embedding": [],
-                            },
-                        )
-                        for x in chunk.entities
-                    ],
-                )
-                concept_count = self.conn.upsertEdges(
-                    "Concept",
-                    "DESCRIBES_ENTITY",
-                    "Entity",
-                    [(x["type"], x["id"], {}) for x in chunk.entities],
                 )
                 self.conn.upsertEdges(
                     "DocumentChunk",
@@ -181,7 +151,7 @@ class BaseIngestion:
         if chunk.relationships != []:
             try:
                 self.conn.upsertVertices(
-                    "Relationship",
+                    "RelationshipType",
                     [
                         (
                             x["source"] + ":" + x["type"] + ":" + x["target"],
@@ -189,9 +159,6 @@ class BaseIngestion:
                                 "definition": x["definition"],
                                 "short_name": x["type"],
                                 "date_added": date_added,
-                                "embedding": self.embedding_service.embed_query(
-                                    x["definition"]
-                                ),
                             },
                         )
                         for x in chunk.relationships
@@ -200,7 +167,7 @@ class BaseIngestion:
                 self.conn.upsertEdges(
                     "Entity",
                     "IS_HEAD_OF",
-                    "Relationship",
+                    "RelationshipType",
                     [
                         (
                             x["source"],
@@ -211,7 +178,7 @@ class BaseIngestion:
                     ],
                 )
                 self.conn.upsertEdges(
-                    "Relationship",
+                    "RelationshipType",
                     "HAS_TAIL",
                     "Entity",
                     [
@@ -226,7 +193,7 @@ class BaseIngestion:
                 self.conn.upsertEdges(
                     "DocumentChunk",
                     "MENTIONS_RELATIONSHIP",
-                    "Relationship",
+                    "RelationshipType",
                     [
                         (
                             chunk_id,
@@ -244,22 +211,13 @@ class BaseIngestion:
         date_added = now.strftime("%Y-%m-%d %H:%M:%S")
         doc_id = document.document_id
         doc_collection = document.document_collection
-        doc_emb = document.document_embedding
         self.status.progress.doc_failures[doc_id] = []
         try:
             self.conn.upsertVertex(
                 "Document",
                 doc_id,
-                attributes={"embedding": doc_emb, "date_added": date_added},
+                attributes={"date_added": date_added},
             )
-            if doc_collection:
-                self.conn.upsertEdge(
-                    "DocumentCollection",
-                    doc_collection,
-                    "CONTAINS_DOCUMENT",
-                    "Document",
-                    doc_id,
-                )
             self.conn.upsertVertex(
                 "Content",
                 doc_id,
@@ -279,34 +237,10 @@ class BaseIngestion:
                             {
                                 "definition": x["definition"],
                                 "date_added": date_added,
-                                "embedding": self.embedding_service.embed_query(
-                                    x["definition"]
-                                ),
                             },
                         )
                         for x in document.entities
                     ],
-                )
-                self.conn.upsertVertices(
-                    "Concept",
-                    [
-                        (
-                            x["type"],
-                            {
-                                "description": "",
-                                "concept_type": "EntityType",
-                                "date_added": date_added,
-                                "embedding": [],
-                            },
-                        )
-                        for x in document.entities
-                    ],
-                )
-                self.conn.upsertEdges(
-                    "Concept",
-                    "DESCRIBES_ENTITY",
-                    "Entity",
-                    [(x["type"], x["id"], {}) for x in document.entities],
                 )
                 self.conn.upsertEdges(
                     "Document",
@@ -320,7 +254,7 @@ class BaseIngestion:
         if document.relationships != []:
             try:
                 self.conn.upsertVertices(
-                    "Relationship",
+                    "RelationshipType",
                     [
                         (
                             x["source"] + ":" + x["type"] + ":" + x["target"],
@@ -328,9 +262,6 @@ class BaseIngestion:
                                 "definition": x["definition"],
                                 "short_name": x["type"],
                                 "date_added": date_added,
-                                "embedding": self.embedding_service.embed_query(
-                                    x["definition"]
-                                ),
                             },
                         )
                         for x in document.relationships
@@ -339,7 +270,7 @@ class BaseIngestion:
                 self.conn.upsertEdges(
                     "Entity",
                     "IS_HEAD_OF",
-                    "Relationship",
+                    "RelationshipType",
                     [
                         (
                             x["source"],
@@ -350,7 +281,7 @@ class BaseIngestion:
                     ],
                 )
                 self.conn.upsertEdges(
-                    "Relationship",
+                    "RelationshipType",
                     "HAS_TAIL",
                     "Entity",
                     [
@@ -365,7 +296,7 @@ class BaseIngestion:
                 self.conn.upsertEdges(
                     "Document",
                     "MENTIONS_RELATIONSHIP",
-                    "Relationship",
+                    "RelationshipType",
                     [
                         (doc_id, x["source"] + ":" + x["type"] + ":" + x["target"], {})
                         for x in document.relationships
@@ -396,7 +327,6 @@ class BatchIngestion(BaseIngestion):
             doc.document_id: len(doc.document_chunks) for doc in documents
         }
         for doc in documents:
-            self.embed_document(doc)
             res = self.document_er_extraction(doc)
             doc.entities = res["nodes"]
             doc.relationships = res["rels"]

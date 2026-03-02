@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 TigerGraph, Inc.
+ * Copyright (c) 2024-2026 TigerGraph, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ CREATE OR REPLACE DISTRIBUTED QUERY Content_Similarity_Search(STRING json_list_v
             @@final_retrieval += (s.id -> tgt.text)
           END
         POST-ACCUM
-          IF s.type == "Relationship" OR s.type == "Entity" OR s.type == "Concept" THEN
+          IF s.type == "RelationshipType" OR s.type == "Entity" THEN
             @@final_retrieval += (s.id -> s.definition)
           ELSE IF s.type == "Community" THEN
             @@final_retrieval += (s.id -> s.description)

@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -177,7 +177,6 @@ async def get_vert_desc(conn, v_id, node: Node):
 
 async def extract(
     upsert_chan: Channel,
-    embed_chan: Channel,
     extractor: BaseExtractor,
     conn: TigerGraphConnection,
     chunk: str,
@@ -194,12 +193,8 @@ async def extract(
                 continue
             desc = await get_vert_desc(conn, v_id, node)
 
-            # embed the entity
-            # embed with the v_id if the description is blank
-            if len(desc[0]):
-                await embed_chan.put((v_id, v_id, "Entity"))
-            else:
-                await embed_chan.put((v_id, desc[0], "Entity"))
+            if len(desc[0]) == 0:
+                desc[0] = str(node.id)
 
             await upsert_chan.put(
                 (
@@ -238,15 +233,13 @@ async def extract(
             v_id = edge.type
             if len(v_id) == 0:
                 continue
-            # embed "Relationship"
-            await embed_chan.put((v_id, v_id, "Relationship"))
 
             await upsert_chan.put(
                 (
                     util.upsert_vertex,  # func to call
                     (
                         conn,
-                        "Relationship",  # v_type
+                        "RelationshipType",  # v_type
                         v_id,
                         {  # attrs
                             "epoch_added": int(time.time()),
@@ -300,7 +293,7 @@ async def extract(
                         "Entity",  # src_type
                         util.process_id(edge.source.id),  # src_id
                         "IS_HEAD_OF",  # edgeType
-                        "Relationship",  # tgt_type
+                        "RelationshipType",  # tgt_type
                         edge.type,  # tgt_id
                     ),
                 )
@@ -310,7 +303,7 @@ async def extract(
                     util.upsert_edge,
                     (
                         conn,
-                        "Relationship",  # src_type
+                        "RelationshipType",  # src_type
                         edge.type, # src_id
                         "HAS_TAIL",  # edgeType
                         "Entity",  # tgt_type
@@ -329,7 +322,7 @@ async def extract(
                         "DocumentChunk",  # src_type
                         chunk_id,  # src_id
                         "MENTIONS_RELATIONSHIP",  # edge_type
-                        "Relationship",  # tgt_type
+                        "RelationshipType",  # tgt_type
                         edge.type,  # tgt_id
                     ),
                 )

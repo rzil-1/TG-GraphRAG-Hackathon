@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ import base64
 import logging
 import time
 import json
-import traceback
 from urllib.parse import quote_plus
 from typing import Iterable, List, Optional, Tuple
 
@@ -226,7 +225,6 @@ extract_sem = asyncio.Semaphore(20)
 
 async def extract(
     upsert_chan: Channel,
-    embed_chan: Channel,
     extractor: BaseExtractor,
     conn: AsyncTigerGraphConnection,
     chunk: str,
@@ -256,13 +254,8 @@ async def extract(
                     continue
                 desc = await get_vert_desc(conn, v_id, node)
 
-                # embed the entity
-                # embed with the v_id if the description is blank
                 if len(desc[0]) == 0:
                     desc[0] = str(node.id)
-
-                # (v_id, content, index_name)
-                await embed_chan.put((v_id, desc[0], "Entity"))
 
                 await upsert_chan.put(
                     (
@@ -357,10 +350,7 @@ async def extract(
                     continue
                 desc = await get_vert_desc(conn, v_id, edge.source)
                 if len(desc[0]) == 0:
-                    await embed_chan.put((v_id, v_id, "Entity"))
-                else:
-                    # (v_id, content, index_name)
-                    await embed_chan.put((v_id, desc[0], "Entity"))
+                    desc[0] = edge.source.id
                 await upsert_chan.put(
                     (
                         util.upsert_vertex,  # func to call
@@ -380,10 +370,7 @@ async def extract(
                     continue
                 desc = await get_vert_desc(conn, v_id, edge.target)
                 if len(desc[0]) == 0:
-                    await embed_chan.put((v_id, v_id, "Entity"))
-                else:
-                    # (v_id, content, index_name)
-                    await embed_chan.put((v_id, desc[0], "Entity"))
+                    desc[0] = edge.target.id
                 await upsert_chan.put(
                     (
                         util.upsert_vertex,  # func to call
@@ -414,94 +401,9 @@ async def extract(
                         ),
                     )
                 )
-                # embed "Relationship",
+                # embed "RelationshipType",
                 # (v_id, content, index_name)
                 # right now, we're not embedding relationships in graphrag
-
-
-resolve_sem = asyncio.Semaphore(20)
-
-
-async def resolve_entity(
-    conn: AsyncTigerGraphConnection,
-    upsert_chan: Channel,
-    embed_store: EmbeddingStore,
-    entity_id: str | Tuple[str, str],
-):
-    """
-    get all vectors of E (one name can have multiple discriptions)
-    get ents close to E
-    for e in ents:
-        if e is 95% similar to E and edit_dist(E,e) <=3:
-            merge
-            mark e as processed
-
-    mark as processed
-    """
-
-    # if loader is running, wait until it's done
-    if not util.loading_event.is_set():
-        logger.info("Entity Resolution worker waiting for loading event to finish")
-        await util.loading_event.wait()
-
-    async with resolve_sem:
-        try:
-            logger.info(f"Resolving Entity {entity_id}")
-            results = await embed_store.aget_k_closest(entity_id)
-            logger.info(f"Resolving Entity {entity_id} to {results}")
-
-        except Exception:
-            err = traceback.format_exc()
-            logger.error(err)
-            return
-
-        if len(results) == 0:
-            logger.error(
-                f"aget_k_closest should, minimally, return the entity itself.\n{results}"
-            )
-            raise Exception()
-
-        # merge all entities into the ResolvedEntity vertex
-        # use the longest v_id as the resolved entity's v_id
-        if isinstance(entity_id, tuple):
-          resolved_entity_id = entity_id[0]
-        else:
-          resolved_entity_id = entity_id
-        for v in results:
-            if len(v) > len(resolved_entity_id):
-                resolved_entity_id = v
-
-        logger.debug(f"Merging {results} to ResolvedEntity {resolved_entity_id}")
-        # upsert the resolved entity
-        await upsert_chan.put(
-            (
-                util.upsert_vertex,  # func to call
-                (
-                    conn,
-                    "ResolvedEntity",  # v_type
-                    resolved_entity_id,  # v_id
-                    {  # attrs
-                    },
-                ),
-            )
-        )
-
-        # create RESOLVES_TO edges from each entity to the ResolvedEntity
-        for v in results:
-            await upsert_chan.put(
-                (
-                    util.upsert_edge,
-                    (
-                        conn,
-                        "Entity",  # src_type
-                        v,  # src_id
-                        "RESOLVES_TO",  # edge_type
-                        "ResolvedEntity",  # tgt_type
-                        resolved_entity_id,  # tgt_id
-                        None,  # attributes
-                    ),
-                )
-            )
 
 
 comm_sem = asyncio.Semaphore(20)

@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,9 +23,7 @@ import httpx
 from aiochannel import Channel, ChannelClosed
 from graphrag import workers
 from graphrag.util import (
-    check_all_ents_resolved,
     check_vertex_has_desc,
-    check_embedding_rebuilt,
     http_timeout,
     init,
     load_q,
@@ -38,7 +36,7 @@ from graphrag.util import (
 )
 from pyTigerGraph import AsyncTigerGraphConnection
 
-from common.config import embedding_service, graphrag_config, entity_extraction_switch, entity_resolution_switch, community_detection_switch, doc_process_switch
+from common.config import embedding_service, graphrag_config, entity_extraction_switch, community_detection_switch, doc_process_switch
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.extractors.BaseExtractor import BaseExtractor
 
@@ -306,7 +304,7 @@ async def extract(
                 else:
                     if entity_extraction_switch:
                         grp.create_task(
-                            workers.extract(upsert_chan, embed_chan, extractor, conn, *item)
+                            workers.extract(upsert_chan, extractor, conn, *item)
                         )
             except ChannelClosed:
                 break
@@ -321,81 +319,11 @@ async def extract(
     embed_chan.close()
 
 
-async def stream_entities(
-    conn: AsyncTigerGraphConnection,
-    entity_chan: Channel,
-    ttl_batches: int = 50,
-):
-    """
-    Streams entity IDs from the grpah
-    """
-    logger.info("Entity Streaming Start")
-    for i in range(ttl_batches):
-        ids = await stream_ids(conn, "Entity", i, ttl_batches)
-        if ids["error"]:
-            logger.info(f"""Error streaming batch {i}: got {ids["error"]}""")
-            # continue to the next batch.
-            continue
-
-        for i in ids["ids"]:
-            if len(i) > 0:
-                await entity_chan.put((i, "Entity"))
-
-    logger.info("Entity Streaming End")
-    # close the docs chan -- this function is the only sender
-    logger.info("closing entities chan")
-    entity_chan.close()
-
-
-async def resolve_entities(
-    conn: AsyncTigerGraphConnection,
-    emb_store: EmbeddingStore,
-    entity_chan: Channel,
-    upsert_chan: Channel,
-):
-    """
-    Merges entities into their ResolvedEntity form
-        Groups what should be the same entity into a resolved entity (e.g. V_type and VType should be merged)
-
-    Copies edges between entities to their respective ResolvedEntities
-    """
-    logger.info("Entity Resolving Start")
-    async with asyncio.TaskGroup() as grp:
-        # for every entity
-        while True:
-            try:
-                entity_id = await entity_chan.get()
-                grp.create_task(
-                    workers.resolve_entity(conn, upsert_chan, emb_store, entity_id)
-                )
-                logger.debug(f"Added Entity to resolve: {entity_id}")
-            except ChannelClosed:
-                break
-            except Exception:
-                raise
-    logger.info("Entity Resolving End")
-    logger.info("closing upsert_chan")
-    upsert_chan.close()
-    logger.info("resolve_entities done")
-
-async def resolve_relationships(
-    conn: AsyncTigerGraphConnection
-):
-    """
-    Copy RELATIONSHIP edges to RESOLVED_RELATIONSHIP
-    """
-    logger.info("Relationship Resolving Start")
-    async with tg_sem:
-        res = await conn.runInstalledQuery(
-            "ResolveRelationships"
-        )
-    logger.info("Relationship Resolving End")
-
 async def communities(conn: AsyncTigerGraphConnection, comm_process_chan: Channel):
     """
     Run louvain
     """
-    # first pass: Group ResolvedEntities into Communities
+    # first pass: Group Entities into Communities
     logger.info("Initializing Communities (first louvain pass)")
 
     async with tg_sem:
@@ -423,7 +351,7 @@ async def communities(conn: AsyncTigerGraphConnection, comm_process_chan: Channe
     logger.info(f"****mod pass 1: {mod}")
     await stream_communities(conn, 1, comm_process_chan)
 
-    # nth pass: Iterate on Resolved Entities until modularity stops increasing
+    # nth pass: Iterate on Communities until modularity stops increasing
     prev_mod = -10
     i = 0
     while abs(prev_mod - mod) > 0.0000001 and prev_mod != 0:
@@ -527,10 +455,9 @@ async def run(graphname: str, conn: AsyncTigerGraphConnection):
         - Process the documents into:
             - chunks
             - embeddings
-            - entities/relationships (and their embeddings)
+            - entities/relationships
             - upsert everything to the graph
-        - Resolve Entities
-            Ex: "Vincent van Gogh" and "van Gogh" should be resolved to "Vincent van Gogh"
+        - Detect communities and summarize them
     """
 
     extractor, embedding_store = await init(conn)
@@ -586,40 +513,6 @@ async def run(graphname: str, conn: AsyncTigerGraphConnection):
     logger.info("Type Processing End")
     type_end = time.perf_counter()
 
-    # Entity Resolution
-    entity_start = time.perf_counter()
-    if entity_resolution_switch:
-        logger.info("Entity Processing Start")
-        while not await check_embedding_rebuilt(conn, "Entity"):
-            logger.info(f"Waiting for embedding to finish rebuilding")
-            await asyncio.sleep(1)
-        entities_chan = Channel()
-        upsert_chan = Channel()
-        load_q.reopen()
-        async with asyncio.TaskGroup() as grp:
-            grp.create_task(stream_entities(conn, entities_chan, 50))
-            grp.create_task(
-                resolve_entities(
-                    conn,
-                    embedding_store,
-                    entities_chan,
-                    upsert_chan,
-                )
-            )
-            grp.create_task(upsert(upsert_chan))
-            grp.create_task(load(conn))
-        logger.info("Join entities_chan")
-        await entities_chan.join()
-        logger.info("Join upsert_chan")
-        await upsert_chan.join()
-        #Resolve relationsihps
-        await resolve_relationships(conn)
-        while not await check_all_ents_resolved(conn):
-            logger.info(f"Waiting for resolved entites to finish loading")
-            await asyncio.sleep(1)
-    entity_end = time.perf_counter()
-    logger.info("Entity Processing End")
-
     # Community Detection
     community_start = time.perf_counter()
     if community_detection_switch:
@@ -648,10 +541,8 @@ async def run(graphname: str, conn: AsyncTigerGraphConnection):
     community_end = time.perf_counter()
     logger.info("Community Processing End")
 
-    # Community Summarization
     end = time.perf_counter()
     logger.info(f"DONE. graphrag system initializer dT: {init_end-init_start}")
-    logger.info(f"DONE. graphrag entity resolution dT: {entity_end-entity_start}")
     logger.info(f"DONE. graphrag type creation dT: {type_end-type_start}")
     logger.info(
         f"DONE. graphrag community initializer dT: {community_end-community_start}"

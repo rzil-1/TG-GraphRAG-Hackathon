@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -168,7 +168,7 @@ async def extract(
         async for item in extract_chan:
             if entity_extraction_switch:
                 sp.create_task(
-                    workers.extract(upsert_chan, embed_chan, extractor, conn, *item)
+                    workers.extract(upsert_chan, extractor, conn, *item)
                 )
 
     logger.info(f"extract done")

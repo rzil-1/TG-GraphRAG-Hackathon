@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 TigerGraph, Inc.
+ * Copyright (c) 2024-2026 TigerGraph, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,7 @@
  * limitations under the License.
 */
 
-CREATE SCHEMA_CHANGE JOB add_supportai_vector {
+CREATE SCHEMA_CHANGE JOB add_graphrag_vector {
     ALTER VERTEX DocumentChunk ADD VECTOR ATTRIBUTE embedding(dimension=1536, metric="cosine");
-    ALTER VERTEX Document ADD VECTOR ATTRIBUTE embedding(dimension=1536, metric="cosine");
-    ALTER VERTEX Concept ADD VECTOR ATTRIBUTE embedding(dimension=1536, metric="cosine");
-    ALTER VERTEX Entity ADD VECTOR ATTRIBUTE embedding(dimension=1536, metric="cosine");
-    ALTER VERTEX Relationship ADD VECTOR ATTRIBUTE embedding(dimension=1536, metric="cosine");
-
-    // GraphRAG
     ALTER VERTEX Community ADD VECTOR ATTRIBUTE embedding(dimension=1536, metric="cosine");
-    ALTER VERTEX ResolvedEntity ADD VECTOR ATTRIBUTE embedding(dimension=1536, metric="cosine");
 }

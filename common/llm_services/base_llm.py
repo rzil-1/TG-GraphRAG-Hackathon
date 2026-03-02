@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -159,6 +159,20 @@ Format: {format_instructions}\
     def graphrag_scoring_prompt(self):
         """Property to get the prompt for the GraphRAG Scoring response."""
         return """You are a helpful assistant responsible for generating an answer to the question below using the data provided.\nInclude a quality score for the answer, based on how well it answers the question. The quality score should be between 0 (poor) and 100 (excellent).\n\nQuestion: {question}\nContext: {context}\n\n{format_instructions}\n"""
+
+    @property
+    def contextualize_question_prompt(self):
+        """Property to get the prompt for contextualizing a follow-up question
+        into a standalone search query using conversation history."""
+        return (
+            "Given the following conversation history and a follow-up "
+            "question, rewrite the follow-up question into a standalone, "
+            "self-contained question suitable for searching a knowledge "
+            "graph.  Do NOT answer the question; only rewrite it.\n\n"
+            "Conversation history:\n{history}\n\n"
+            "Follow-up question: {question}\n\n"
+            "Standalone question:"
+        )
 
     @property
     def model(self):

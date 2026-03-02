@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -713,12 +713,16 @@ async def run_agent(
             f"/{graphname}/ui/chat request_id={req_id_cv.get()} Exception Trace:\n{exc}"
         )
     except Exception as e:
-        resp.natural_language_response = "GraphRAG had an issue answering your question. Please try again, or rephrase your prompt."
+        error_msg = str(e)
+        if "does not exist" in error_msg or "not found" in error_msg.lower():
+            resp.natural_language_response = f"Error: {error_msg}. Please check the knowledge graph name and try again."
+        else:
+            resp.natural_language_response = "GraphRAG had an issue answering your question. Please try again, or rephrase your prompt."
 
         resp.query_sources = {}
         resp.answered_question = False
         LogWriter.warning(
-            f"/{graphname}/ui/chat request_id={req_id_cv.get()} agent execution failed due to unknown exception {e}"
+            f"/{graphname}/ui/chat request_id={req_id_cv.get()} agent execution failed due to exception: {e}"
         )
         exc = traceback.format_exc()
         logger.debug_pii(

@@ -19,16 +19,16 @@ CREATE OR REPLACE DISTRIBUTED QUERY modularity(UINT iteration=1) SYNTAX V2 {
                      WHERE c.iteration == i
                      ACCUM t.@parent = c.@parent;
         END;
-        Entities = SELECT t FROM Comms:c -(_>)- ResolvedEntity:t
+        Entities = SELECT t FROM Comms:c -(_>)- Entity:t
                    ACCUM t.@community_id = c.@parent;
 
     ELSE
-        Entities = SELECT t FROM Comms:c -(_>)- ResolvedEntity:t
+        Entities = SELECT t FROM Comms:c -(_>)- Entity:t
                    WHERE c.iteration == iteration
                    ACCUM t.@community_id = c.id;
     END;
   
-    Nodes = SELECT s FROM Entities:s -(_>:e)- ResolvedEntity:t
+    Nodes = SELECT s FROM Entities:s -(_>:e)- Entity:t
             ACCUM  
                 IF s.@community_id == t.@community_id THEN
                     @@community_in_weight_map += (s.@community_id -> wt)

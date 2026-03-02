@@ -38,11 +38,18 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
     // Initial load
     const parseStore = loadStore();
 
-    // Set default selectedGraph to first graph if no value in localStorage
-    if (!localStorage.getItem("selectedGraph") && parseStore?.graphs?.length > 0) {
-      const firstGraph = parseStore.graphs[0];
-      setSelectedGraph(firstGraph);
-      localStorage.setItem("selectedGraph", firstGraph);
+    // Validate selectedGraph against the current graph list
+    const storedGraph = localStorage.getItem("selectedGraph");
+    const availableGraphs = parseStore?.graphs || [];
+    if (!storedGraph || !availableGraphs.includes(storedGraph)) {
+      if (availableGraphs.length > 0) {
+        const firstGraph = availableGraphs[0];
+        setSelectedGraph(firstGraph);
+        localStorage.setItem("selectedGraph", firstGraph);
+      } else {
+        setSelectedGraph('');
+        localStorage.removeItem("selectedGraph");
+      }
     }
 
     // Set default ragPattern if no value in localStorage
@@ -128,7 +135,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
                   className="!h-[48px] !outline-b !outline-gray-300 dark:!outline-[#3D3D3D] h-[70px] flex justify-end items-center bg-white dark:bg-background z-50 rounded-tr-lg"
                 >
                   <img src="/graph-icon.svg" alt="" className="mr-2" />
-                  {selectedGraph} <MdKeyboardArrowDown className="text-2xl" />
+                  {selectedGraph || <span className="text-gray-400 italic">No Knowledge Graph</span>} <MdKeyboardArrowDown className="text-2xl" />
                 </Button>
               </DropdownMenuTrigger>
 
@@ -136,11 +143,19 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
               <DropdownMenuLabel>Select a KnowledgeGraph</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                {store?.graphs.map((f, i) => (
-                  <DropdownMenuItem key={i} onSelect={() => handleSelect(f)}>
-                    <span>{f}</span>
+                {store?.graphs?.length > 0 ? (
+                  store.graphs.map((f, i) => (
+                    <DropdownMenuItem key={i} onSelect={() => handleSelect(f)}>
+                      <span>{f}</span>
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <DropdownMenuItem disabled>
+                    <span className="text-gray-400 italic text-sm">
+                      Please create a Knowledge Graph in Setup first
+                    </span>
                   </DropdownMenuItem>
-                ))}
+                )}
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>

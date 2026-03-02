@@ -1,4 +1,4 @@
-# Copyright (c) 2025 TigerGraph, Inc.
+# Copyright (c) 2024-2026 TigerGraph, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -86,9 +86,17 @@ if llm_config is None:
 completion_config = llm_config.get("completion_service")
 if completion_config is None:
     raise Exception("completion_service is not found in llm_config")
+if "llm_service" not in completion_config:
+    raise Exception("llm_service is not found in completion_service")
+if "llm_model" not in completion_config:
+    raise Exception("llm_model is not found in completion_service")
 embedding_config = llm_config.get("embedding_service")
 if embedding_config is None:
     raise Exception("embedding_service is not found in llm_config")
+if "embedding_model_service" not in embedding_config:
+    raise Exception("embedding_model_service is not found in embedding_service")
+if "model_name" not in embedding_config:
+    raise Exception("model_name is not found in embedding_service")
 embedding_dimension = embedding_config.get("dimensions", 1536)
 
 # Get context window size from llm_config
@@ -144,8 +152,7 @@ if "extractor" not in graphrag_config:
 reuse_embedding = graphrag_config.get("reuse_embedding", True)
 doc_process_switch = graphrag_config.get("doc_process_switch", True)
 entity_extraction_switch = graphrag_config.get("entity_extraction_switch", doc_process_switch)
-entity_resolution_switch = graphrag_config.get("entity_resolution_switch", entity_extraction_switch)
-community_detection_switch = graphrag_config.get("community_detection_switch", entity_resolution_switch)
+community_detection_switch = graphrag_config.get("community_detection_switch", entity_extraction_switch)
 
 if "model_name" not in llm_config or "model_name" not in llm_config["embedding_service"]:
     if "model_name" not in llm_config:
@@ -192,24 +199,41 @@ def get_llm_service(llm_config) -> LLM_Model:
     else:
         raise Exception("LLM Completion Service Not Supported")
 
+DEFAULT_MULTIMODAL_MODELS = {
+    "openai": "gpt-4o-mini",
+    "azure": "gpt-4o-mini",
+    "genai": "gemini-3.5-flash",
+    "vertexai": "gemini-3.5-flash",
+    "bedrock": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+}
+
 def get_multimodal_service() -> LLM_Model:
     """
     Get the multimodal/vision LLM service for image description tasks.
-    Uses multimodal_service if configured, otherwise falls back to completion_service.
-    Currently supports: OpenAI, Azure, GenAI, VertexAI
+    Priority:
+      1. Explicit multimodal_service config
+      2. Auto-derived from completion_service with a default vision model
+    Currently supports: OpenAI, Azure, GenAI, VertexAI, Bedrock
     """
-    # Use multimodal_service if available, otherwise fallback to completion_service
-    service_config = multimodal_config if multimodal_config else completion_config
-    
-    # Make a copy to avoid modifying the original config
-    config_copy = service_config.copy()
-    
-    # Add default prompt_path if not present (required by LLM service classes but not used for multimodal)
+    config_copy = completion_config.copy()
+
+    if multimodal_config:
+        config_copy.update(multimodal_config)
+
+    service_type = config_copy.get("llm_service", "").lower()
+
+    if not multimodal_config or "llm_model" not in multimodal_config:
+        default_model = DEFAULT_MULTIMODAL_MODELS.get(service_type)
+        if default_model:
+            config_copy["llm_model"] = default_model
+            LogWriter.info(
+                f"Using default vision model '{default_model}' "
+                f"for provider '{service_type}'"
+            )
+
     if "prompt_path" not in config_copy:
         config_copy["prompt_path"] = "./common/prompts/openai_gpt4/"
-    
-    service_type = config_copy["llm_service"].lower()
-    
+
     if service_type == "openai":
         return OpenAI(config_copy)
     elif service_type == "azure":
@@ -218,11 +242,14 @@ def get_multimodal_service() -> LLM_Model:
         return GoogleGenAI(config_copy)
     elif service_type == "vertexai":
         return GoogleVertexAI(config_copy)
+    elif service_type == "bedrock":
+        return AWSBedrock(config_copy)
     else:
-        raise Exception(
-            f"Multimodal service '{service_type}' not supported. "
-            "Only OpenAI, Azure, GenAI, and VertexAI are currently supported for vision tasks."
+        LogWriter.warning(
+            f"Multimodal/vision not supported for provider '{service_type}'. "
+            "Image descriptions will be skipped."
         )
+        return None
 
 if os.getenv("INIT_EMBED_STORE", "true") == "true":
     conn = TigerGraphConnection(
