@@ -54,8 +54,8 @@
 
 ## Releases
 * **2/28/2025**: GraphRAG v1.2.0 released. Added Admin UI for graph initialization, document ingestion, and knowledge graph rebuild, along with many other improvements and bug fixes. See [release notes](https://github.com/tigergraph/graphrag/releases/tag/v1.2.0) for details.
-* **9/22/2025: GraphRAG is available now officially v1.1 (v1.1.0). AWS Bedrock support is completed with BDA integration for multimodal document ingestion. See [release notes](https://github.com/tigergraph/graphrag/releases/tag/v1.1.0) for details.
-* **6/18/2025: GraphRAG is available now officially v1.0 (v1.0.0). TigerGraph database is the only graph and vector storagge supported.
+* **9/22/2025**: GraphRAG is available now officially v1.1 (v1.1.0). AWS Bedrock support is completed with BDA integration for multimodal document ingestion. See [release notes](https://github.com/tigergraph/graphrag/releases/tag/v1.1.0) for details.
+* **6/18/2025**: GraphRAG is available now officially v1.0 (v1.0.0). TigerGraph database is the only graph and vector storagge supported.
 Please see [Release Notes](https://docs.tigergraph.com/tg-graphrag/current/release-notes/) for details.
 
 ---
