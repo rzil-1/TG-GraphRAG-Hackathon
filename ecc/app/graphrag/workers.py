@@ -100,7 +100,7 @@ async def chunk_doc(
         # For images, get_chunker returns SingleChunker which preserves markdown image references
         chunker = ecc_util.get_chunker(chunker_type)
         # decode the text return from tigergraph as it was encoded when written into jsonl file for uploading
-        chunks = chunker.chunk(doc["attributes"]["text"].encode('utf-8').decode('unicode_escape'))
+        chunks = chunker.chunk(doc["attributes"]["text"].encode('raw_unicode_escape').decode('unicode_escape'))
        
         logger.info(f"Chunking {v_id} into {len(chunks)} chunk(s)")
         for i, chunk in enumerate(chunks):

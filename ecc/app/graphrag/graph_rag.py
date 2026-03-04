@@ -101,7 +101,7 @@ async def stream_chunks(
                         "StreamChunkContent",
                         params={"chunk": c},
                     )
-                content = res[0]["ChunkContent"][0]["attributes"]["text"].encode('utf-8').decode('unicode_escape')
+                content = res[0]["ChunkContent"][0]["attributes"]["text"].encode('raw_unicode_escape').decode('unicode_escape')
                 logger.info("chunk writes to extract_chan")
                 await extract_chan.put((content, c))
 

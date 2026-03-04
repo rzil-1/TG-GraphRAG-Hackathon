@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from common.chunkers.base_chunker import BaseChunker
+from common.chunkers.separators import TEXT_SEPARATORS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
@@ -23,7 +24,7 @@ class RecursiveChunker(BaseChunker):
 
     def chunk(self, input_string):
         text_splitter = RecursiveCharacterTextSplitter(
-            separators=["\n\n", "\n", " ", ""],
+            separators=TEXT_SEPARATORS,
             chunk_size=self.chunk_size,
             chunk_overlap=self.overlap_size,
             length_function=len

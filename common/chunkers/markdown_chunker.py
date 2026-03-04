@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from common.chunkers.base_chunker import BaseChunker
+from common.chunkers.separators import TEXT_SEPARATORS
 from langchain_text_splitters.markdown import ExperimentalMarkdownSyntaxTextSplitter
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
@@ -34,7 +35,11 @@ class MarkdownChunker(BaseChunker):
         md_chunks = []
 
         if self.chunk_size > 0:
-            recursive_splitter = RecursiveCharacterTextSplitter(chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
+            recursive_splitter = RecursiveCharacterTextSplitter(
+                separators=TEXT_SEPARATORS,
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+            )
 
             if any(len(chunk) > self.chunk_size for chunk in initial_chunks):
                 for chunk in initial_chunks:
