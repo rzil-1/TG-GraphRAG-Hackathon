@@ -9,11 +9,11 @@ logger = logging.getLogger(__name__)
 class GoogleVertexAI(LLM_Model):
     def __init__(self, config):
         super().__init__(config)
-        from langchain_community.llms import VertexAI
+        from langchain_google_vertexai import VertexAI
 
         model_name = config["llm_model"]
         self.llm = VertexAI(
-            model_name=model_name, max_output_tokens=1000, **config["model_kwargs"]
+            model=model_name, max_output_tokens=1000, **config["model_kwargs"]
         )
 
         self.prompt_path = config["prompt_path"]
@@ -38,3 +38,4 @@ class GoogleVertexAI(LLM_Model):
     @property
     def model(self):
         return self.llm
+

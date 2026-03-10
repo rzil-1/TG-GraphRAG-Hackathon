@@ -440,7 +440,7 @@ async def process_community(
         if len(children) == 1:
             summary = children[0]
         else:
-            llm = ecc_util.get_llm_service()
+            llm = ecc_util.get_llm_service(conn.graphname)
             summarizer = community_summarizer.CommunitySummarizer(llm)
             summary = await summarizer.summarize(comm_id, children)
             if summary["error"]:

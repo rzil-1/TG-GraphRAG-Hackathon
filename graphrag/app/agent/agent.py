@@ -8,7 +8,7 @@ from agent.Q import Q
 from fastapi import WebSocket
 from tools import GenerateCypher, GenerateFunction, MapQuestionToSchema
 
-from common.config import embedding_service, embedding_store, llm_config
+from common.config import embedding_service, embedding_store, llm_config, get_completion_config
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.embeddings.embedding_services import EmbeddingModel
 from common.llm_services import (
@@ -166,39 +166,38 @@ class TigerGraphAgent:
 
 
 def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retriever="hybridsearch") -> TigerGraphAgent:
-    if "chat_model" in llm_config["completion_service"]:
-        llm_config["completion_service"]["llm_model"] = llm_config["completion_service"]["chat_model"]
+    completion_service_config = get_completion_config(graphname)
 
-    if llm_config["completion_service"]["llm_service"].lower() == "openai":
+    if completion_service_config["llm_service"].lower() == "openai":
         llm_service_name = "openai"
-        llm_provider = OpenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "azure":
+        llm_provider = OpenAI(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "azure":
         llm_service_name = "azure"
-        llm_provider = AzureOpenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "sagemaker":
+        llm_provider = AzureOpenAI(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "sagemaker":
         llm_service_name = "sagemaker"
-        llm_provider = AWS_SageMaker_Endpoint(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "vertexai":
+        llm_provider = AWS_SageMaker_Endpoint(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "vertexai":
         llm_service_name = "vertexai"
-        llm_provider = GoogleVertexAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "genai":
+        llm_provider = GoogleVertexAI(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "genai":
         llm_service_name = "genai"
-        llm_provider = GoogleGenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "bedrock":
+        llm_provider = GoogleGenAI(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "bedrock":
         llm_service_name = "bedrock"
-        llm_provider = AWSBedrock(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "groq":
+        llm_provider = AWSBedrock(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "groq":
         llm_service_name = "groq"
-        llm_provider = Groq(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "ollama":
+        llm_provider = Groq(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "ollama":
         llm_service_name = "ollama"
-        llm_provider = Ollama(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "huggingface":
+        llm_provider = Ollama(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "huggingface":
         llm_service_name = "huggingface"
-        llm_provider = HuggingFaceEndpoint(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "watsonx":
+        llm_provider = HuggingFaceEndpoint(completion_service_config)
+    elif completion_service_config["llm_service"].lower() == "watsonx":
         llm_service_name = "watsonx"
-        llm_provider = IBMWatsonX(llm_config["completion_service"])
+        llm_provider = IBMWatsonX(completion_service_config)
     else:
         LogWriter.error(
             f"/{graphname}/query_with_history request_id={req_id_cv.get()} agent creation failed due to invalid llm_service"

@@ -1,10 +1,16 @@
 import ReactDOM from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
-import { Outlet, RouterProvider, createBrowserRouter } from "react-router-dom";
+import { Outlet, RouterProvider, createBrowserRouter, Navigate } from "react-router-dom";
 import Chat from "./pages/Chat";
 import ChatDialog from "./pages/ChatDialog.tsx";
-import Setup from "./pages/Setup.tsx";
+import SetupLayout from "./pages/setup/SetupLayout.tsx";
+import KGAdmin from "./pages/setup/KGAdmin.tsx";
+import IngestGraph from "./pages/setup/IngestGraph.tsx";
+import LLMConfig from "./pages/setup/LLMConfig.tsx";
+import GraphDBConfig from "./pages/setup/GraphDBConfig.tsx";
+import GraphRAGConfig from "./pages/setup/GraphRAGConfig.tsx";
+import CustomizePrompts from "./pages/setup/CustomizePrompts.tsx";
 import { ThemeProvider } from "./components/ThemeProvider.tsx";
 import { ModeToggle } from "@/components/ModeToggle.tsx";
 
@@ -42,7 +48,41 @@ const router = createBrowserRouter([
       },
       {
         path: "/setup",
-        element: <Setup />,
+        element: <SetupLayout />,
+        children: [
+          {
+            path: "",
+            element: <Navigate to="/setup/kg-admin" replace />,
+          },
+          {
+            path: "kg-admin",
+            element: <KGAdmin />,
+          },
+          {
+            path: "kg-admin/ingest",
+            element: <IngestGraph />,
+          },
+          {
+            path: "server-config",
+            element: <Navigate to="/setup/server-config/llm" replace />,
+          },
+          {
+            path: "server-config/llm",
+            element: <LLMConfig />,
+          },
+          {
+            path: "server-config/graphdb",
+            element: <GraphDBConfig />,
+          },
+          {
+            path: "server-config/graphrag",
+            element: <GraphRAGConfig />,
+          },
+          {
+            path: "prompts",
+            element: <CustomizePrompts />,
+          },
+        ],
       },
     ],
   },

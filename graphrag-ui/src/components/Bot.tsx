@@ -85,6 +85,7 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
   const handleSelect = (value) => {
     setSelectedGraph(value);
     localStorage.setItem("selectedGraph", value);
+    window.dispatchEvent(new Event("graphrag:selectedGraph"));
     navigate("/chat");
     //window.location.reload();
   };

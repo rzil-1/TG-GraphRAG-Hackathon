@@ -1,4 +1,5 @@
 import { Moon, Sun, LogOut, Settings } from "lucide-react";
+import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,67 @@ export function ModeToggle() {
   const location = useLocation();
   const isLoginRoute = location.pathname === "/";
   const [confirm, confirmDialog] = useConfirm();
+  const [userRoles, setUserRoles] = React.useState<string[]>([]);
+  const [graphRoles, setGraphRoles] = React.useState<Record<string, string[]>>({});
+  const [rolesLoaded, setRolesLoaded] = React.useState(false);
+  const [selectedGraph, setSelectedGraph] = React.useState(
+    localStorage.getItem("selectedGraph") || ""
+  );
+  const isGraphAdmin = (graphRoles[selectedGraph] || []).includes("admin");
+  const canAccessSetup =
+    userRoles.includes("superuser") ||
+    userRoles.includes("globaldesigner") ||
+    isGraphAdmin;
+
+  React.useEffect(() => {
+    const loadRoles = async () => {
+      try {
+        const creds = localStorage.getItem("creds");
+        if (!creds) {
+          setUserRoles([]);
+          setRolesLoaded(true);
+          return;
+        }
+        const response = await fetch("/ui/roles", {
+          headers: { Authorization: `Basic ${creds}` },
+        });
+        if (!response.ok) {
+          setUserRoles([]);
+          setRolesLoaded(true);
+          return;
+        }
+        const data = await response.json();
+        const roles = Array.isArray(data.roles) ? data.roles : [];
+        setUserRoles(roles.map((role: string) => role.toLowerCase()));
+        setGraphRoles(
+          data.graph_roles && typeof data.graph_roles === "object"
+            ? Object.fromEntries(
+                Object.entries(data.graph_roles).map(([graph, roles]) => [
+                  graph,
+                  Array.isArray(roles)
+                    ? roles.map((role: string) => role.toLowerCase())
+                    : [],
+                ])
+              )
+            : {}
+        );
+        setSelectedGraph(localStorage.getItem("selectedGraph") || "");
+      } finally {
+        setRolesLoaded(true);
+      }
+    };
+    loadRoles();
+  }, [location.pathname]);
+
+  React.useEffect(() => {
+    const handleGraphChange = () => {
+      setSelectedGraph(localStorage.getItem("selectedGraph") || "");
+    };
+    window.addEventListener("graphrag:selectedGraph", handleGraphChange);
+    return () => {
+      window.removeEventListener("graphrag:selectedGraph", handleGraphChange);
+    };
+  }, []);
 
   const handleLogout = async () => {
     // Show confirmation dialog
@@ -46,7 +108,7 @@ export function ModeToggle() {
 
   return (
     <div className="absolute right-4 top-[13px] flex items-center gap-2">
-      {!isLoginRoute && (
+      {!isLoginRoute && rolesLoaded && canAccessSetup && (
         <Button 
           variant="outline" 
           className="dark:border-[#3D3D3D]"
@@ -57,14 +119,16 @@ export function ModeToggle() {
         </Button>
       )}
       
-      <Button 
-        variant="outline" 
-        className="dark:border-[#3D3D3D]"
-        onClick={handleLogout}
-        title="Logout"
-      >
-        <LogOut className="h-[1rem] w-[1rem]" />
-      </Button>
+      {!isLoginRoute && (
+        <Button 
+          variant="outline" 
+          className="dark:border-[#3D3D3D]"
+          onClick={handleLogout}
+          title="Logout"
+        >
+          <LogOut className="h-[1rem] w-[1rem]" />
+        </Button>
+      )}
       
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

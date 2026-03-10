@@ -184,9 +184,9 @@ class VertexAI_PaLM_Embedding(EmbeddingModel):
 
     def __init__(self, config):
         super().__init__(config, model_name=config.get("model_name", "VertexAI PaLM"))
-        from langchain.embeddings import VertexAIEmbeddings
+        from langchain_google_vertexai import VertexAIEmbeddings
 
-        self.embeddings = VertexAIEmbeddings(model_name=self.model_name)
+        self.embeddings = VertexAIEmbeddings(model=self.model_name)
 
 
 class GenAI_Embedding(EmbeddingModel):
@@ -243,3 +243,4 @@ class Ollama_Embedding(EmbeddingModel):
             model=self.model_name,
             base_url=base_url
         )
+

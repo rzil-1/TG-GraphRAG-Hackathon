@@ -12,26 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import re
+import logging
 
 from langchain_core.prompts import PromptTemplate
 
 from common.llm_services import LLM_Model
 from common.py_schemas import CommunitySummary
+from common.config import completion_config
+
+logger = logging.getLogger(__name__)
+
+
+# Load prompt from file
+def load_community_prompt():
+    prompt_path = completion_config.get("prompt_path", "./common/prompts/openai_gpt4/")
+    if prompt_path.startswith("./"):
+        prompt_path = prompt_path[2:]
+    prompt_path = prompt_path.rstrip("/")
+
+    prompt_file = os.path.join(prompt_path, "community_summarization.txt")
+    if not os.path.exists(prompt_file):
+        error_msg = f"Community summarization prompt file not found: {prompt_file}. Please ensure the file exists in the configured prompt path."
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+
+    try:
+        with open(prompt_file, "r", encoding="utf-8") as f:
+            content = f.read()
+            logger.info(f"Successfully loaded community summarization prompt from: {prompt_file}")
+            return content
+    except Exception as e:
+        error_msg = f"Failed to read community summarization prompt from {prompt_file}: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+
 
 # src: https://github.com/microsoft/graphrag/blob/main/graphrag/index/graph/extractors/summarize/prompts.py
-SUMMARIZE_PROMPT = PromptTemplate.from_template("""
-You are a helpful assistant responsible for generating a comprehensive summary of the data provided below.
-Given one or two entities, and a list of descriptions, all related to the same entity or group of entities.
-Please concatenate all of these into a single, comprehensive description. Make sure to include information collected from all the descriptions.
-If the provided descriptions are contradictory, please resolve the contradictions and provide a single, coherent summary, but do not add any information that is not in the description.
-Make sure it is written in third person, and include the entity names so we the have full context.
-
-#######
--Data-
-Commuinty Title: {entity_name}
-Description List: {description_list}
-""")
+SUMMARIZE_PROMPT = PromptTemplate.from_template(load_community_prompt())
 
 id_pat = re.compile(r"[_\d]*")
 
