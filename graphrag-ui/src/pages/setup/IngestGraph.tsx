@@ -50,8 +50,11 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
+  const [isProcessingFiles, setIsProcessingFiles] = useState(false);
   const [isIngesting, setIsIngesting] = useState(false);
   const [ingestMessage, setIngestMessage] = useState("");
+  const [ingestJobData, setIngestJobData] = useState<any>(null);
+  const [directIngestion, setDirectIngestion] = useState(false);
   const [activeTab, setActiveTab] = useState("upload");
 
   // S3 state
@@ -156,17 +159,33 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
         }
       );
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Upload failed: ${response.statusText}`);
+      }
+
       const data = await response.json();
       if (data.status === "success") {
-        setUploadMessage(`✅ ${data.message}`);
+        const uploadedCount = selectedFiles?.length || 0;
+        setUploadMessage("✅ Successfully uploaded the files. Processing...");
         setSelectedFiles(null);
         await fetchUploadedFiles();
+        setIsUploading(false);
+
+        console.log("Calling handleCreateIngestAfterUpload from main upload...");
+        setIsProcessingFiles(true);
+        handleCreateIngestAfterUpload("uploaded", uploadedCount).catch((err) => {
+          console.error("Error in background processing:", err);
+          setUploadMessage(`❌ Processing error: ${err.message}`);
+        }).finally(() => setIsProcessingFiles(false));
       } else {
         setUploadMessage(`⚠️ ${data.message}`);
+        setIsUploading(false);
       }
     } catch (error: any) {
-      setUploadMessage(`❌ Error: ${error.message}`);
-    } finally {
+      console.error("Upload error:", error);
+      const isLockConflict = error.message?.includes("currently being processed");
+      setUploadMessage(isLockConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
       setIsUploading(false);
     }
   };
@@ -225,18 +244,24 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
 
       // Show final result
       if (failedCount === 0) {
-        setUploadMessage(
-          `✅ Successfully uploaded all ${uploadedCount} files (uploaded individually).`
-        );
+        setUploadMessage(`✅ Successfully uploaded all ${uploadedCount} files. Processing...`);
       } else {
-        setUploadMessage(
-          `⚠️ Uploaded ${uploadedCount} files successfully, ${failedCount} failed.`
-        );
+        setUploadMessage(`⚠️ Uploaded ${uploadedCount} files successfully, ${failedCount} failed. Processing...`);
       }
 
       setSelectedFiles(null);
       await fetchUploadedFiles();
+
+      console.log("Calling handleCreateIngestAfterUpload...");
+      setIsProcessingFiles(true);
+      try {
+        await handleCreateIngestAfterUpload("uploaded", uploadedCount);
+        console.log("handleCreateIngestAfterUpload completed");
+      } finally {
+        setIsProcessingFiles(false);
+      }
     } catch (error: any) {
+      console.error("Upload error:", error);
       setUploadMessage(`❌ Batch upload error: ${error.message}`);
     } finally {
       setIsUploading(false);
@@ -370,17 +395,31 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
         body: JSON.stringify(requestBody),
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Download failed: ${response.statusText}`);
+      }
       const data = await response.json();
       if (data.status === "success") {
-        setDownloadMessage(`✅ ${data.message}`);
+        const downloadCount = data.downloaded_files?.length || downloadedFiles.length;
+        setDownloadMessage("✅ Successfully downloaded the files. Processing...");
         await fetchDownloadedFiles();
+        setIsDownloading(false);
+        setIsProcessingFiles(true);
+        handleCreateIngestAfterUpload("downloaded", downloadCount).catch((err) => {
+          console.error("Error in background processing:", err);
+          setDownloadMessage(`❌ Processing error: ${err.message}`);
+        }).finally(() => setIsProcessingFiles(false));
       } else if (data.status === "warning") {
         setDownloadMessage(`⚠️ ${data.message}`);
+        setIsDownloading(false);
       } else {
         setDownloadMessage(`❌ ${data.message || "Download failed"}`);
+        setIsDownloading(false);
       }
     } catch (error: any) {
-      setDownloadMessage(`❌ Error: ${error.message}`);
+      const isLockConflict = error.message?.includes("currently being processed");
+      setDownloadMessage(isLockConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
     } finally {
       setIsDownloading(false);
     }
@@ -432,65 +471,27 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     }
   };
 
-  // Ingest files into knowledge graph (uploaded or downloaded)
-  const handleIngestDocuments = async (
-    sourceType: "uploaded" | "downloaded" = "uploaded"
-  ) => {
+  const handleRunIngest = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
     if (!ingestGraphName) {
-      setIngestMessage("Please select a graph");
+      setIngestMessage("❌ Please select a graph");
       return;
     }
-
-    const folderPath =
-      sourceType === "uploaded"
-        ? `uploads/${ingestGraphName}`
-        : `downloaded_files_cloud/${ingestGraphName}`;
-
     setIsIngesting(true);
-    setIngestMessage("Step 1/2: Creating ingest job...");
-
+    setIngestMessage("Ingesting documents into knowledge graph...");
     try {
       const creds = localStorage.getItem("creds");
+      const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
 
-      // Step 1: Create ingest job
-      const createIngestConfig = {
-        data_source: "server",
-        data_source_config: {
-          data_path: folderPath,
+      // Use existing ingestJobData if available, otherwise construct from folder path
+      const jobData = ingestJobData || {
+        load_job_id: "load_documents_content_json",
+        data_source_id: {
+          data_source: "server",
+          data_source_config: { data_path: folderPath },
+          loader_config: {},
+          file_format: "multi"
         },
-        loader_config: {},
-        file_format: "multi",
-      };
-
-      const createResponse = await fetch(
-        `/ui/${ingestGraphName}/create_ingest`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${creds}`,
-          },
-          body: JSON.stringify(createIngestConfig),
-        }
-      );
-
-      if (!createResponse.ok) {
-        const errorData = await createResponse.json();
-        throw new Error(
-          errorData.detail ||
-            `Failed to create ingest job: ${createResponse.statusText}`
-        );
-      }
-
-      const createData = await createResponse.json();
-
-      // Step 2: Run ingest
-      setIngestMessage("Step 2/2: Running document ingest...");
-
-      const loadingInfo = {
-        load_job_id: createData.load_job_id,
-        data_source_id: createData.data_source_id,
-        file_path: createData.data_path || createData.file_path,
+        data_path: folderPath,
       };
 
       const ingestResponse = await fetch(`/ui/${ingestGraphName}/ingest`, {
@@ -499,26 +500,195 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
           "Content-Type": "application/json",
           Authorization: `Basic ${creds}`,
         },
-        body: JSON.stringify(loadingInfo),
+        body: JSON.stringify({
+          load_job_id: jobData.load_job_id,
+          data_source_id: jobData.data_source_id,
+          file_path: jobData.data_path,
+        }),
       });
 
       if (!ingestResponse.ok) {
         const errorData = await ingestResponse.json();
-        throw new Error(
-          errorData.detail || `Failed to run ingest: ${ingestResponse.statusText}`
-        );
+        throw new Error(errorData.detail || `Failed to ingest: ${ingestResponse.statusText}`);
       }
 
       const ingestData = await ingestResponse.json();
+      console.log("Ingest response:", ingestData);
 
-      setIngestMessage(
-        `✅ Data ingested successfully! Processed documents from ${folderPath}/`
-      );
+      setIngestMessage(`✅ Ingestion completed successfully!`);
+      setUploadMessage("");
     } catch (error: any) {
-      console.error("Error ingesting data:", error);
-      setIngestMessage(`❌ Error: ${error.message}`);
+      console.error("Error during ingestion:", error);
+      const isRebuildConflict = error.message?.includes("currently being rebuilt");
+      setIngestMessage(isRebuildConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
     } finally {
       setIsIngesting(false);
+    }
+  };
+
+  // Ingest files into knowledge graph (uploaded or downloaded)
+  const handleIngestDocuments = async (sourceType: "uploaded" | "downloaded" = "uploaded") => {
+    if (!ingestGraphName) {
+      setIngestMessage("Please select a graph");
+      return;
+    }
+
+    const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
+    const fileCount = sourceType === "uploaded" ? uploadedFiles.length : downloadedFiles.length;
+
+    setIsIngesting(true);
+    setIngestMessage("Step 1/2: Creating ingest job...");
+
+    try {
+      const creds = localStorage.getItem("creds");
+
+      const createIngestConfig = {
+        data_source: "server",
+        data_source_config: { data_path: folderPath },
+        loader_config: {},
+        file_format: "multi",
+      };
+
+      const createResponse = await fetch(`/ui/${ingestGraphName}/create_ingest`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${creds}`,
+        },
+        body: JSON.stringify(createIngestConfig),
+      });
+
+      if (!createResponse.ok) {
+        const errorData = await createResponse.json();
+        throw new Error(errorData.detail || `Failed to create ingest job: ${createResponse.statusText}`);
+      }
+
+      const createData = await createResponse.json();
+      console.log("Create ingest response:", createData);
+
+      // Store ingest job data for later use
+      setIngestJobData({
+        load_job_id: createData.load_job_id,
+        data_source_id: createData.data_source_id,
+        data_path: folderPath,
+      });
+
+      if (!directIngestion) {
+        setIngestMessage(`✅ ${fileCount} file(s) ready for ingestion.`);
+        setIsIngesting(false);
+      } else {
+        setIngestMessage("Step 2/2: Running document ingest...");
+
+        const loadingInfo = {
+          load_job_id: createData.load_job_id,
+          data_source_id: createData.data_source_id,
+          file_path: createData.data_path || createData.file_path,
+        };
+
+        const ingestResponse = await fetch(`/ui/${ingestGraphName}/ingest`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${creds}`,
+          },
+          body: JSON.stringify(loadingInfo),
+        });
+
+        if (!ingestResponse.ok) {
+          const errorData = await ingestResponse.json();
+          throw new Error(errorData.detail || `Failed to run ingest: ${ingestResponse.statusText}`);
+        }
+
+        const ingestData = await ingestResponse.json();
+        console.log("Ingest response:", ingestData);
+
+        setIngestMessage(`✅ Data ingested successfully! Processed documents from ${folderPath}/`);
+        setIsIngesting(false);
+      }
+    } catch (error: any) {
+      console.error("Error ingesting data:", error);
+      const isRebuildConflict = error.message?.includes("currently being rebuilt");
+      setIngestMessage(isRebuildConflict ? `⚠️ ${error.message}` : `❌ Error: ${error.message}`);
+      setIsIngesting(false);
+    }
+  };
+
+  // Called automatically after upload or cloud download finishes
+  const handleCreateIngestAfterUpload = async (sourceType: "uploaded" | "downloaded" = "uploaded", fileCountParam?: number) => {
+    console.log("handleCreateIngestAfterUpload called with sourceType:", sourceType);
+    console.log("ingestGraphName:", ingestGraphName);
+
+    if (!ingestGraphName) {
+      console.log("No graph name, returning early");
+      return;
+    }
+
+    const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
+    const fileCount = fileCountParam || (sourceType === "uploaded" ? uploadedFiles.length : downloadedFiles.length);
+    console.log("folderPath:", folderPath);
+    console.log("fileCount:", fileCount);
+
+    try {
+      const creds = localStorage.getItem("creds");
+
+      const createIngestConfig = {
+        data_source: "server",
+        data_source_config: { data_path: folderPath },
+        loader_config: {},
+        file_format: "multi",
+      };
+
+      console.log("Calling create_ingest with config:", createIngestConfig);
+
+      const createResponse = await fetch(`/ui/${ingestGraphName}/create_ingest`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${creds}`,
+        },
+        body: JSON.stringify(createIngestConfig),
+      });
+
+      console.log("create_ingest response status:", createResponse.status);
+
+      if (!createResponse.ok) {
+        const errorData = await createResponse.json();
+        console.error("create_ingest error:", errorData);
+        throw new Error(errorData.detail || `Failed to create ingest job: ${createResponse.statusText}`);
+      }
+
+      const createData = await createResponse.json();
+      console.log("create_ingest response data:", createData);
+
+      setIngestJobData({
+        load_job_id: createData.load_job_id,
+        data_source_id: createData.data_source_id,
+        data_path: folderPath,
+      });
+
+      console.log("Direct ingestion enabled:", directIngestion);
+
+      if (directIngestion) {
+        if (sourceType === "uploaded") {
+          setUploadMessage("Running direct ingestion...");
+        } else {
+          setDownloadMessage("Running direct ingestion...");
+        }
+        await handleRunIngest(sourceType);
+      } else {
+        if (sourceType === "uploaded") {
+          setUploadMessage(`✅ ${fileCount} file(s) ready for ingestion.`);
+        } else {
+          setDownloadMessage(`✅ ${fileCount} file(s) ready for ingestion.`);
+        }
+      }
+    } catch (error: any) {
+      console.error("Error in create_ingest:", error);
+      if (sourceType === "uploaded") {
+        setUploadMessage(`❌ Processing error: ${error.message}`);
+      } else {
+        setDownloadMessage(`❌ Processing error: ${error.message}`);
+      }
     }
   };
 
@@ -724,7 +894,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
 
         <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
           {/* Graph Name Selection */}
-          <div className="mb-6">
+          <div className="mb-4">
             <label className="block text-sm font-medium mb-2 text-black dark:text-white">
               Target Graph Name
             </label>
@@ -734,7 +904,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
               disabled={isIngesting}
             >
               <SelectTrigger
-                className="dark:border-[#3D3D3D] dark:bg-background"
+                className="dark:border-[#3D3D3D] dark:bg-shadeA"
                 disabled={isIngesting}
               >
                 <SelectValue placeholder="Select a graph" />
@@ -765,7 +935,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
             }}
             className="w-full"
           >
-            <TabsList className="grid w-full grid-cols-3 mb-6">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="upload" disabled={isIngesting}>
                 <FolderUp className="h-4 w-4 mr-2" />
                 Upload Files
@@ -796,7 +966,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                     multiple
                     onChange={(e) => setSelectedFiles(e.target.files)}
                     disabled={isUploading}
-                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                     Maximum upload per request: {MAX_UPLOAD_SIZE_MB} MB.{" "}
@@ -843,48 +1013,6 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                   </div>
                 )}
 
-                {/* Ingest Data Section */}
-                {uploadedFiles.length > 0 && (
-                  <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
-                    <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
-                      Ingest Documents into Knowledge Graph
-                    </h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                      Process uploaded files and add them to the knowledge graph
-                    </p>
-                    <Button
-                      onClick={() => handleIngestDocuments("uploaded")}
-                      disabled={isIngesting}
-                      className="gradient text-white w-full"
-                    >
-                      {isIngesting ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Ingesting...
-                        </>
-                      ) : (
-                        <>
-                          <Database className="h-4 w-4 mr-2" />
-                          Ingest Documents into {ingestGraphName}
-                        </>
-                      )}
-                    </Button>
-                    {ingestMessage && (
-                      <div
-                        className={`p-3 rounded-lg text-sm mt-3 ${
-                          ingestMessage.includes("✅")
-                            ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
-                            : ingestMessage.includes("❌")
-                            ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
-                            : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                        }`}
-                      >
-                        {ingestMessage}
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 {/* Uploaded Files List */}
                 {uploadedFiles.length > 0 && (
                   <div className="border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-4">
@@ -895,7 +1023,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                       {uploadedFiles.map((file, index) => (
                         <div
                           key={index}
-                          className="flex items-center justify-between p-2 bg-gray-50 dark:bg-background rounded"
+                          className="flex items-center justify-between p-2 bg-gray-50 dark:bg-shadeA rounded"
                         >
                           <span className="text-sm text-black dark:text-white truncate flex-1">
                             {file.filename}
@@ -911,6 +1039,51 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Ingest Data Section */}
+                {uploadedFiles.length > 0 && (
+                  <div className="border-t border-gray-300 dark:border-[#3D3D3D] pt-4 mt-4">
+                    <h3 className="text-sm font-medium mb-2 text-black dark:text-white">
+                      Ingest Documents into Knowledge Graph
+                    </h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                      Process uploaded files and add them to the knowledge graph
+                    </p>
+                    <Button
+                      onClick={() => handleRunIngest("uploaded")}
+                      disabled={isIngesting || isProcessingFiles}
+                      className="gradient text-white w-full"
+                    >
+                      {isIngesting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Ingesting...
+                        </>
+                      ) : isProcessingFiles ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processing files...
+                        </>
+                      ) : (
+                        <>
+                          <Database className="h-4 w-4 mr-2" />
+                          Ingest Documents into {ingestGraphName}
+                        </>
+                      )}
+                    </Button>
+                    {ingestMessage && (
+                      <div className={`p-3 rounded-lg text-sm mt-3 ${
+                        ingestMessage.includes("✅")
+                          ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
+                          : ingestMessage.includes("❌")
+                          ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
+                          : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                      }`}>
+                        {ingestMessage}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -933,7 +1106,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                       setCloudProvider(value)
                     }
                   >
-                    <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
+                    <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-shadeA">
                       <SelectValue placeholder="Select cloud provider" />
                     </SelectTrigger>
                     <SelectContent>
@@ -956,7 +1129,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudAccessKey}
                         onChange={(e) => setCloudAccessKey(e.target.value)}
                         placeholder="Enter AWS access key"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -968,7 +1141,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudSecretKey}
                         onChange={(e) => setCloudSecretKey(e.target.value)}
                         placeholder="Enter AWS secret key"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -980,7 +1153,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudBucket}
                         onChange={(e) => setCloudBucket(e.target.value)}
                         placeholder="my-bucket-name"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -992,7 +1165,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudRegion}
                         onChange={(e) => setCloudRegion(e.target.value)}
                         placeholder="us-east-1"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -1004,7 +1177,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudPrefix}
                         onChange={(e) => setCloudPrefix(e.target.value)}
                         placeholder="folder/subfolder/"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                   </>
@@ -1022,7 +1195,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={gcsProjectId}
                         onChange={(e) => setGcsProjectId(e.target.value)}
                         placeholder="my-project-id"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -1034,7 +1207,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         onChange={(e) => setGcsCredentials(e.target.value)}
                         placeholder='{"type": "service_account", ...}'
                         rows={4}
-                        className="w-full p-2 rounded border dark:border-[#3D3D3D] dark:bg-background text-sm"
+                        className="w-full p-2 rounded border dark:border-[#3D3D3D] dark:bg-shadeA text-sm"
                       />
                     </div>
                     <div>
@@ -1046,7 +1219,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudBucket}
                         onChange={(e) => setCloudBucket(e.target.value)}
                         placeholder="my-gcs-bucket"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -1058,7 +1231,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudPrefix}
                         onChange={(e) => setCloudPrefix(e.target.value)}
                         placeholder="folder/subfolder/"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                   </>
@@ -1076,7 +1249,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={azureAccountName}
                         onChange={(e) => setAzureAccountName(e.target.value)}
                         placeholder="mystorageaccount"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -1088,7 +1261,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={azureAccountKey}
                         onChange={(e) => setAzureAccountKey(e.target.value)}
                         placeholder="Enter account key"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -1100,7 +1273,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={azureContainer}
                         onChange={(e) => setAzureContainer(e.target.value)}
                         placeholder="my-container"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                     <div>
@@ -1112,7 +1285,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         value={cloudPrefix}
                         onChange={(e) => setCloudPrefix(e.target.value)}
                         placeholder="folder/subfolder/"
-                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        className="dark:border-[#3D3D3D] dark:bg-shadeA"
                       />
                     </div>
                   </>
@@ -1183,7 +1356,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                       {downloadedFiles.map((file, index) => (
                         <li
                           key={index}
-                          className="flex justify-between items-center p-2 bg-gray-50 dark:bg-background rounded text-sm"
+                          className="flex justify-between items-center p-2 bg-gray-50 dark:bg-shadeA rounded text-sm"
                         >
                           <span className="text-black dark:text-white truncate flex-1">
                             {file.name}
@@ -1212,14 +1385,19 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                       Process downloaded files and add them to the knowledge graph
                     </p>
                     <Button
-                      onClick={() => handleIngestDocuments("downloaded")}
-                      disabled={isIngesting}
+                      onClick={() => handleRunIngest("downloaded")}
+                      disabled={isIngesting || isProcessingFiles}
                       className="gradient text-white w-full"
                     >
                       {isIngesting ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                           Ingesting...
+                        </>
+                      ) : isProcessingFiles ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processing files...
                         </>
                       ) : (
                         <>
@@ -1228,19 +1406,6 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                         </>
                       )}
                     </Button>
-                    {ingestMessage && (
-                      <div
-                        className={`p-3 rounded-lg text-sm mt-3 ${
-                          ingestMessage.includes("✅")
-                            ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
-                            : ingestMessage.includes("❌")
-                            ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
-                            : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                        }`}
-                      >
-                        {ingestMessage}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -1264,7 +1429,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                     value={awsAccessKey}
                     onChange={(e) => setAwsAccessKey(e.target.value)}
                     placeholder="Enter AWS access key"
-                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     disabled={isIngesting}
                   />
                 </div>
@@ -1278,7 +1443,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                     value={awsSecretKey}
                     onChange={(e) => setAwsSecretKey(e.target.value)}
                     placeholder="Enter AWS secret key"
-                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     disabled={isIngesting}
                   />
                 </div>
@@ -1304,7 +1469,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                     value={inputBucket}
                     onChange={(e) => setInputBucket(e.target.value)}
                     placeholder="Enter input bucket name"
-                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     disabled={isIngesting || skipBDAProcessing}
                   />
                 </div>
@@ -1318,7 +1483,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                     value={outputBucket}
                     onChange={(e) => setOutputBucket(e.target.value)}
                     placeholder="Enter output bucket name"
-                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     disabled={isIngesting}
                   />
                 </div>
@@ -1332,7 +1497,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                     value={regionName}
                     onChange={(e) => setRegionName(e.target.value)}
                     placeholder="e.g., us-east-1"
-                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     disabled={isIngesting}
                   />
                 </div>

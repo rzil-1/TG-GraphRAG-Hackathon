@@ -523,7 +523,7 @@ def get_rebuild_status(
         response = httpx.get(
             ecc_status_url,
             headers={"Authorization": f"Basic {auth}"},
-            timeout=10.0
+            timeout=30.0
         )
         
         if response.status_code == 200:
@@ -536,6 +536,15 @@ def get_rebuild_status(
                 "status": "unknown",
                 "error": f"ECC service returned status {response.status_code}"
             }
+    except httpx.TimeoutException as e:
+        # ECC is busy (heavy processing) - assume rebuild is still running
+        LogWriter.warning(f"ECC status check timed out (ECC may be busy): {str(e)}")
+        return {
+            "graphname": graphname,
+            "is_running": True,
+            "status": "unknown",
+            "error": "ECC is busy processing, status check timed out. Rebuild likely still in progress."
+        }
     except Exception as e:
         LogWriter.error(f"Failed to check ECC status: {str(e)}")
         return {

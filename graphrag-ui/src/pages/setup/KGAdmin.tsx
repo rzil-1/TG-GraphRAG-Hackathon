@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Database, Loader2, RefreshCw, Upload } from "lucide-react";
@@ -6,6 +6,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -21,7 +22,7 @@ import { useNavigate } from "react-router-dom";
 import IngestGraph from "./IngestGraph";
 
 const KGAdmin = () => {
-  const [confirm, confirmDialog] = useConfirm();
+  const [confirm, confirmDialog, isConfirmDialogOpen] = useConfirm();
   const navigate = useNavigate();
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
   
@@ -32,7 +33,7 @@ const KGAdmin = () => {
 
   // Reset states when dialogs close
   const handleInitializeDialogChange = (open: boolean) => {
-    if (!open && isInitializing) {
+    if (!open && isConfirmDialogOpen) {
       return;
     }
     setInitializeDialogOpen(open);
@@ -44,6 +45,9 @@ const KGAdmin = () => {
   };
 
   const handleRefreshDialogChange = (open: boolean) => {
+    if (!open && isConfirmDialogOpen) {
+      return;
+    }
     setRefreshDialogOpen(open);
     if (!open) {
       setRefreshMessage("");
@@ -61,6 +65,7 @@ const KGAdmin = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState("");
   const [isRebuildRunning, setIsRebuildRunning] = useState(false);
+  const isRebuildRunningRef = useRef(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
 
   // Load available graphs
@@ -150,20 +155,23 @@ const KGAdmin = () => {
       }
 
       setStatusMessage(
-        `✅ Graph "${graphName}" created and initialized successfully!`
+        `✅ Graph "${graphName}" created and initialized successfully! You can now close this dialog.`
       );
       setStatusType("success");
 
-      const store = JSON.parse(localStorage.getItem("site") || "{}");
-      if (!store.graphs) {
-        store.graphs = [];
-      }
-      if (!store.graphs.includes(graphName)) {
-        store.graphs.push(graphName);
-        localStorage.setItem("site", JSON.stringify(store));
-        setAvailableGraphs([...store.graphs]);
-      }
+      const newGraph = graphName;
+      setAvailableGraphs(prev => {
+        if (!prev.includes(newGraph)) {
+          const updated = [...prev, newGraph];
+          const store = JSON.parse(localStorage.getItem("site") || "{}");
+          store.graphs = updated;
+          localStorage.setItem("site", JSON.stringify(store));
+          return updated;
+        }
+        return prev;
+      });
 
+      setRefreshGraphName(graphName);
       setGraphName("");
     } catch (error: any) {
       console.error("Error creating graph:", error);
@@ -195,10 +203,11 @@ const KGAdmin = () => {
 
       if (statusResponse.ok) {
         const statusData = await statusResponse.json();
-        const wasRunning = isRebuildRunning;
+        const wasRunning = isRebuildRunningRef.current;
         const isCurrentlyRunning = statusData.is_running || false;
 
         setIsRebuildRunning(isCurrentlyRunning);
+        isRebuildRunningRef.current = isCurrentlyRunning;
 
         if (isCurrentlyRunning) {
           const startTime = statusData.started_at
@@ -207,26 +216,25 @@ const KGAdmin = () => {
           setRefreshMessage(
             `⚠️ A rebuild is already in progress for "${graphName}" (started at ${startTime}). Please wait for it to complete.`
           );
+        } else if (wasRunning && statusData.status === "completed") {
+          setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
+        } else if (statusData.status === "failed") {
+          setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
+        } else if (statusData.status === "error") {
+          setRefreshMessage(`❌ Failed to check rebuild status: ${statusData.error || "Unknown error"}`);
+        } else if (statusData.status === "unknown") {
+          setRefreshMessage(`⚠️ ECC service returned unknown status. It may be unavailable.`);
         } else {
-          if (wasRunning && statusData.status === "completed") {
-            setRefreshMessage(
-              `✅ Rebuild completed successfully for "${graphName}".`
-            );
-          } else if (statusData.status === "failed") {
-            setRefreshMessage(
-              `❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`
-            );
-          } else {
-            if (!showLoadingMessage) {
-              setRefreshMessage("");
-            }
-          }
+          setRefreshMessage("");
         }
+      } else {
+        setRefreshMessage(`❌ Failed to check rebuild status (HTTP ${statusResponse.status}).`);
       }
     } catch (error: any) {
       console.error("Error checking rebuild status:", error);
-      setIsRebuildRunning(false);
-      setRefreshMessage("");
+      if (showLoadingMessage) {
+        setRefreshMessage(`❌ Unable to reach ECC service: ${error.message || "Connection failed"}`);
+      }
     } finally {
       setIsCheckingStatus(false);
     }
@@ -246,19 +254,40 @@ const KGAdmin = () => {
       return;
     }
 
+    setIsRefreshing(true);
+
     const shouldRefresh = await confirm(
       `Are you sure you want to refresh the knowledge graph "${refreshGraphName}"? This will rebuild the graph content.`
     );
     if (!shouldRefresh) {
       setRefreshMessage("Operation cancelled by user.");
+      setIsRefreshing(false);
       return;
     }
 
-    setIsRefreshing(true);
-    setRefreshMessage("Submitting rebuild request...");
+    setRefreshMessage("Verifying rebuild status...");
 
     try {
       const creds = localStorage.getItem("creds");
+
+      // Final status check to prevent race conditions
+      const statusCheckResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
+        method: "GET",
+        headers: { Authorization: `Basic ${creds}` },
+      });
+
+      if (statusCheckResponse.ok) {
+        const statusData = await statusCheckResponse.json();
+        if (statusData.is_running) {
+          setRefreshMessage(`⚠️ A rebuild is already in progress for "${refreshGraphName}". Please wait for it to complete.`);
+          setIsRebuildRunning(true);
+          isRebuildRunningRef.current = true;
+          setIsRefreshing(false);
+          return;
+        }
+      }
+
+      setRefreshMessage("Submitting rebuild request...");
 
       const response = await fetch(`/ui/${refreshGraphName}/rebuild_graph`, {
         method: "POST",
@@ -267,6 +296,11 @@ const KGAdmin = () => {
 
       if (!response.ok) {
         const errorData = await response.json();
+        if (response.status === 409) {
+          setRefreshMessage(`⚠️ ${errorData.detail || errorData.message}`);
+          setIsRefreshing(false);
+          return;
+        }
         throw new Error(
           errorData.detail || `Failed to refresh graph: ${response.statusText}`
         );
@@ -279,6 +313,7 @@ const KGAdmin = () => {
         `✅ Refresh submitted successfully! The knowledge graph "${refreshGraphName}" is being rebuilt.`
       );
       setIsRebuildRunning(true);
+      isRebuildRunningRef.current = true;
     } catch (error: any) {
       console.error("Error refreshing graph:", error);
       setRefreshMessage(`❌ Error: ${error.message}`);
@@ -390,30 +425,27 @@ const KGAdmin = () => {
         {/* Initialize Dialog */}
         <Dialog open={initializeDialogOpen} onOpenChange={handleInitializeDialogChange}>
           <DialogContent
-            className="sm:max-w-md"
-            onInteractOutside={(e) => {
-              if (isInitializing) {
-                e.preventDefault();
-              }
-            }}
+            className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]"
+            onInteractOutside={(e) => e.preventDefault()}
           >
             <DialogHeader>
-              <DialogTitle>Create New Knowledge Graph</DialogTitle>
-              <DialogDescription>
-                Enter a name for your new knowledge graph. This will create the graph and initialize the GraphRAG schema.
+              <DialogTitle className="text-black dark:text-white">Initialize Knowledge Graph</DialogTitle>
+              <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
+                Enter the name of your knowledge graph. The system will create it if necessary and initialize it with the GraphRAG schema.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
-              <div>
+
+            <div className="py-4">
+              <div className="mb-4">
                 <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                  Graph Name
+                  Knowledge Graph Name
                 </label>
                 <Input
                   placeholder="e.g., MyKnowledgeGraph"
                   value={graphName}
                   onChange={(e) => setGraphName(e.target.value)}
                   disabled={isInitializing}
-                  className="dark:border-[#3D3D3D] dark:bg-background"
+                  className="dark:border-[#3D3D3D] dark:bg-shadeA"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !isInitializing) {
                       handleInitializeGraph();
@@ -435,61 +467,101 @@ const KGAdmin = () => {
                   {statusMessage}
                 </div>
               )}
-
-              <div className="flex gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => handleInitializeDialogChange(false)}
-                  disabled={isInitializing}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleInitializeGraph}
-                  disabled={isInitializing || !graphName.trim()}
-                  className="gradient text-white flex-1"
-                >
-                  {isInitializing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    "Create"
-                  )}
-                </Button>
-              </div>
             </div>
+
+            <DialogFooter>
+              {statusType === "success" ? (
+                <Button
+                  className="gradient text-white w-full"
+                  onClick={() => {
+                    setInitializeDialogOpen(false);
+                    setGraphName("");
+                    setStatusMessage("");
+                    setStatusType("");
+                  }}
+                >
+                  Done
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleInitializeDialogChange(false)}
+                    disabled={isInitializing}
+                    className="dark:border-[#3D3D3D]"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleInitializeGraph}
+                    disabled={isInitializing || !graphName.trim()}
+                    className="gradient text-white"
+                  >
+                    {isInitializing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        <Database className="h-4 w-4 mr-2" />
+                        Create & Initialize
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
         {/* Ingest Dialog */}
-        <Dialog open={ingestDialogOpen} onOpenChange={setIngestDialogOpen}>
-          <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+        <Dialog
+          open={ingestDialogOpen}
+          onOpenChange={(open) => {
+            if (!open && isConfirmDialogOpen) {
+              return;
+            }
+            setIngestDialogOpen(open);
+          }}
+        >
+          <DialogContent
+            className="sm:max-w-[700px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D] max-h-[80vh] overflow-y-auto"
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader>
-              <DialogTitle>Ingest to Knowledge Graph</DialogTitle>
-              <DialogDescription>
-                Upload and ingest documents into your knowledge graph for future content processing
+              <DialogTitle className="text-black dark:text-white">Document Ingestion for Knowledge Graph</DialogTitle>
+              <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
+                Upload files locally, download from cloud storage, or configure Amazon Bedrock Data Automation for document ingestion
               </DialogDescription>
             </DialogHeader>
             <IngestGraph isModal={true} />
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setIngestDialogOpen(false)}
+                className="dark:border-[#3D3D3D]"
+              >
+                Close
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
         {/* Refresh Dialog */}
         <Dialog open={refreshDialogOpen} onOpenChange={handleRefreshDialogChange}>
           <DialogContent
-            className="sm:max-w-md"
+            className="sm:max-w-[500px] bg-white dark:bg-background border-gray-300 dark:border-[#3D3D3D]"
             onInteractOutside={(e) => e.preventDefault()}
           >
             <DialogHeader>
-              <DialogTitle>Refresh (Rebuild) Knowledge Graph</DialogTitle>
-              <DialogDescription>
-                Rebuild and refresh your knowledge graph
+              <DialogTitle className="text-black dark:text-white">Refresh Knowledge Graph</DialogTitle>
+              <DialogDescription className="text-gray-600 dark:text-[#D9D9D9]">
+                Rebuild the graph content and rerun community detection for your knowledge graph
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
+
+            <div className="py-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                   Select Graph to Refresh
@@ -500,7 +572,7 @@ const KGAdmin = () => {
                   disabled={isRefreshing || isRebuildRunning || isCheckingStatus}
                 >
                   <SelectTrigger
-                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
                     disabled={isRefreshing || isRebuildRunning || isCheckingStatus}
                   >
                     <SelectValue placeholder="Select a graph" />
@@ -521,69 +593,66 @@ const KGAdmin = () => {
                 </Select>
               </div>
 
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
                 <p className="text-sm text-yellow-800 dark:text-yellow-200 font-medium">
                   ⚠️ Warning
                 </p>
-                <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-1">
+                <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
                   This operation will process new documents and rerun community detection that will interrupt related queries.
+                  Please confirm to proceed.
                 </p>
               </div>
 
               {refreshMessage && (
-                <div
-                  className={`p-3 rounded-lg text-sm ${
-                    refreshMessage.includes("✅")
-                      ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
-                      : refreshMessage.includes("❌")
-                      ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
-                      : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
-                  }`}
-                >
+                <div className={`p-3 rounded-lg text-sm ${
+                  refreshMessage.includes("✅")
+                    ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
+                    : refreshMessage.includes("❌")
+                    ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
+                    : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                }`}>
                   {refreshMessage}
                 </div>
               )}
-
-              <div className="flex gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => handleRefreshDialogChange(false)}
-                  disabled={isRefreshing || isRebuildRunning || isCheckingStatus}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleRefreshGraph}
-                  disabled={
-                    isRefreshing ||
-                    !refreshGraphName ||
-                    isRebuildRunning ||
-                    isCheckingStatus
-                  }
-                  className="gradient text-white flex-1"
-                >
-                  {isRefreshing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Submitting...
-                    </>
-                  ) : isCheckingStatus ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Checking...
-                    </>
-                  ) : isRebuildRunning ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Rebuilding...
-                    </>
-                  ) : (
-                    "Rebuild Graph"
-                  )}
-                </Button>
-              </div>
             </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => handleRefreshDialogChange(false)}
+                disabled={isRefreshing}
+                className="dark:border-[#3D3D3D]"
+              >
+                Close
+              </Button>
+              <Button
+                onClick={handleRefreshGraph}
+                disabled={isRefreshing || !refreshGraphName || isRebuildRunning || isCheckingStatus}
+                className="gradient text-white"
+              >
+                {isRefreshing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : isCheckingStatus ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Checking Status...
+                  </>
+                ) : isRebuildRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Rebuild In Progress...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Confirm & Refresh
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
