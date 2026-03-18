@@ -9,6 +9,7 @@ import uuid
 import base64
 import io
 import re
+import tempfile
 import threading
 from pathlib import Path
 import shutil
@@ -21,7 +22,11 @@ logger = logging.getLogger(__name__)
 _pymupdf4llm_lock = threading.Lock()
 
 # regex for markdown images: ![alt](path)
-_md_pattern = re.compile(r'!\[([^\]]*)\]\(([^)\s]+)\)')
+# [^)]+ (not [^)\s]+) so that paths containing spaces are captured correctly.
+# pymupdf4llm can generate image filenames with spaces; the narrower \s exclusion
+# caused extract_images() to silently return [] for those files, deleting the temp
+# folder and leaving broken references in the markdown.
+_md_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
 
 def extract_images(md_text):
     """
@@ -291,15 +296,44 @@ def extract_text_from_file_with_images_as_docs(file_path, graphname=None):
             "position": 0
         }]
 
+def _sanitize_image_filenames(image_folder, markdown_content):
+    """Rename image files that contain spaces (replace with underscores).
+
+    pymupdf4llm can produce filenames with spaces.  Renaming them avoids
+    downstream issues with path parsing and markdown rendering.
+
+    Returns the updated markdown_content with paths adjusted to match the
+    renamed files.
+    """
+    if not image_folder.exists():
+        return markdown_content
+
+    for img_file in image_folder.iterdir():
+        if not img_file.is_file() or ' ' not in img_file.name:
+            continue
+        new_name = img_file.name.replace(' ', '_')
+        new_path = img_file.with_name(new_name)
+        img_file.rename(new_path)
+        old_ref = str(img_file)
+        new_ref = str(new_path)
+        markdown_content = markdown_content.replace(old_ref, new_ref)
+
+    return markdown_content
+
+
 def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
     """
     Extract PDF as ONE markdown document with inline image references using pymupdf4llm.
     Uses unique temporary folder per PDF to allow parallel processing.
     After processing, delete the extracted image folder.
     """
-    # Use unique folder per PDF to allow parallel processing without conflicts
-    unique_folder_id = uuid.uuid4().hex[:12]
-    image_output_folder = Path(f"tg_temp_{unique_folder_id}")
+    # Use a unique ABSOLUTE temp folder per PDF.
+    # A relative path would resolve to whatever the process CWD happens to be at
+    # call time (varies across ThreadPoolExecutor threads in container deployments).
+    # pymupdf4llm embeds os.path.join(image_path, filename) in the markdown, so an
+    # absolute image_path produces absolute embedded paths that PIL can always open
+    # regardless of CWD.
+    image_output_folder = Path(tempfile.mkdtemp(prefix="tg_pdf_"))
 
     try:
         import pymupdf4llm
@@ -346,7 +380,21 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
                     }]
 
         if not markdown_content or not markdown_content.strip():
-            logger.warning(f"No content extracted from PDF: {file_path}")
+            logger.warning(
+                f"No text layer found in PDF: {file_path}. "
+                "The file may be a scanned image-only PDF — consider enabling OCR."
+            )
+            if image_output_folder.exists():
+                shutil.rmtree(image_output_folder, ignore_errors=True)
+            return [{
+                "doc_id": base_doc_id,
+                "doc_type": "markdown",
+                "content": f"[Scanned PDF — no text layer extracted: {file_path.name}]",
+                "position": 0
+            }]
+
+        # Rename image files that contain spaces to avoid path-parsing issues
+        markdown_content = _sanitize_image_filenames(image_output_folder, markdown_content)
 
         # Extract image references from markdown
         image_refs = extract_images(markdown_content)
