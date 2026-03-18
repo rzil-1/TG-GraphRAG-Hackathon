@@ -259,8 +259,9 @@ if os.getenv("INIT_EMBED_STORE", "true") == "true":
         gsPort=db_config.get("gsPort", "14240"),
         restppPort=db_config.get("restppPort", "9000"),
         graphname=db_config.get("graphname", ""),
+        apiToken=db_config.get("apiToken", ""),
     )
-    if db_config.get("getToken"):
+    if not db_config.get("apiToken") and db_config.get("getToken"):
         conn.getToken()
 
     embedding_store = TigerGraphEmbeddingStore(
