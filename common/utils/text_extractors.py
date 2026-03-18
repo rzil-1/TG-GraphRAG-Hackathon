@@ -5,7 +5,6 @@ This module handles the extraction of text content from different document types
 import os
 import json
 import logging
-import uuid
 import base64
 import io
 import re
@@ -27,6 +26,49 @@ _pymupdf4llm_lock = threading.Lock()
 # caused extract_images() to silently return [] for those files, deleting the temp
 # folder and leaving broken references in the markdown.
 _md_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+
+# Matches a ColN placeholder header cell produced by pymupdf4llm when it
+# cannot detect a column header from the PDF structure (common in form PDFs).
+_coln_pattern = re.compile(r'\bCol\d+\b')
+
+
+def _clean_pdf_markdown(markdown: str) -> str:
+    """Apply post-processing to markdown produced by pymupdf4llm for form PDFs.
+
+    Two specific artefacts are fixed:
+
+    1. **Duplicate table rows** — complex form PDFs (e.g. IRS forms) often have
+       overlapping text layers (a rendered background layer plus a searchable text
+       layer).  pymupdf4llm can emit the same row twice: once from the background
+       layer (no formatting, missing spaces) and once from the text layer (bold,
+       correct spacing).  The duplicate row that appears immediately after the
+       original is removed; when the content is identical after stripping bold
+       markers, the richer (longer) version is kept.
+
+    2. **ColN placeholder headers** — pymupdf4llm uses "Col1", "Col2", … when it
+       cannot derive a header from the PDF's column structure.  These are replaced
+       with empty strings so the table is still valid markdown but does not expose
+       internal artefacts to downstream consumers.
+    """
+    # --- Pass 1: remove ColN placeholders ---
+    markdown = _coln_pattern.sub('', markdown)
+
+    # --- Pass 2: deduplicate consecutive table rows ---
+    lines = markdown.splitlines()
+    cleaned: list[str] = []
+    for line in lines:
+        if cleaned and line.startswith('|') and cleaned[-1].startswith('|'):
+            prev = cleaned[-1]
+            norm_cur = re.sub(r'\*+', '', line).strip()
+            norm_prev = re.sub(r'\*+', '', prev).strip()
+            if norm_cur == norm_prev:
+                if len(line) > len(prev):
+                    cleaned[-1] = line
+                continue
+        cleaned.append(line)
+
+    return '\n'.join(cleaned)
+
 
 def extract_images(md_text):
     """
@@ -392,6 +434,9 @@ def _extract_pdf_with_images_as_docs(file_path, base_doc_id, graphname=None):
                 "content": f"[Scanned PDF — no text layer extracted: {file_path.name}]",
                 "position": 0
             }]
+
+        # Clean up artefacts common in form PDFs (duplicate rows, ColN headers)
+        markdown_content = _clean_pdf_markdown(markdown_content)
 
         # Rename image files that contain spaces to avoid path-parsing issues
         markdown_content = _sanitize_image_filenames(image_output_folder, markdown_content)

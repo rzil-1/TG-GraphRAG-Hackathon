@@ -121,7 +121,7 @@ IMPORTANT: Questions about graph database statistics or metadata MUST be routed 
 - Any question mentioning "graph", "graph db", "graph database", "vertices", "nodes", or "edges" in the context of statistics or counts
 These are database queries, NOT document lookups — always route them to function calls.
 Otherwise, use vectorstore. Choose one of 'functions', 'vectorstore', or 'history' based on the question and conversation history.
-Return the a JSON with a single key 'datasource' and no premable or explaination.
+Return a JSON with a single key 'datasource' and no preamble or explanation.
 Question to route: {question}
 Conversation history: {conversation}
 Format: {format_instructions}\
