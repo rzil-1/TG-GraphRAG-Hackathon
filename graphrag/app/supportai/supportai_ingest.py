@@ -53,7 +53,9 @@ class BaseIngestion:
             from common.chunkers.html_chunker import HTMLChunker
 
             chunker = HTMLChunker(
-                headers=chunker_params.get("headers", None)
+                chunk_size=chunker_params.get("chunk_size", 0),
+                chunk_overlap=chunker_params.get("overlap_size", 0),
+                headers=chunker_params.get("headers", None),
             )
         elif chunker.lower() == "markdown":
             from common.chunkers.markdown_chunker import MarkdownChunker

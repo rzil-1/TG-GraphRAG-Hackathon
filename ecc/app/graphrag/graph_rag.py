@@ -179,7 +179,8 @@ async def upsert(upsert_chan: Channel):
 async def load(conn: AsyncTigerGraphConnection):
     logger.info("Data Loading Start")
     dd = lambda: defaultdict(dd)  # infinite default dict
-    batch_size = 500
+    batch_size = graphrag_config.get("load_batch_size", 500)
+    upsert_delay = graphrag_config.get("upsert_delay", 0)
     # while the load q is still open or has contents
     while not load_q.closed() or not load_q.empty():
         if load_q.closed():
@@ -227,11 +228,12 @@ async def load(conn: AsyncTigerGraphConnection):
                 f"Upserting batch size of {size}. ({n_verts} verts | {n_edges} edges. {len(data.encode())/1000:,} kb)"
             )
 
-            loading_event.clear()
-            if n_verts >0 or n_edges >0:
+            if n_verts > 0 or n_edges > 0:
+                loading_event.clear()
                 await upsert_batch(conn, data)
-                await asyncio.sleep(5)
-            loading_event.set()
+                loading_event.set()
+                if upsert_delay > 0:
+                    await asyncio.sleep(upsert_delay)
         else:
             await asyncio.sleep(1)
 

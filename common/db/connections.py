@@ -120,6 +120,34 @@ def get_db_connection_pwd_manual(
     return conn
 
 def elevate_db_connection_to_token(host, username, password, graphname, async_conn: bool = False) -> TigerGraphConnectionProxy:
+    # If a pre-existing apiToken is provided in config, use it directly
+    # and skip the getToken() call to avoid conflicts.
+    static_token = db_config.get("apiToken", "")
+
+    if static_token:
+        LogWriter.info("Using pre-configured apiToken from db_config")
+        if async_conn:
+            conn = AsyncTigerGraphConnection(
+                host=host,
+                username=username,
+                password=password,
+                graphname=graphname,
+                apiToken=static_token,
+                restppPort=db_config.get("restppPort", "9000"),
+                gsPort=db_config.get("gsPort", "14240"),
+            )
+        else:
+            conn = TigerGraphConnection(
+                host=host,
+                username=username,
+                password=password,
+                graphname=graphname,
+                apiToken=static_token,
+                restppPort=db_config.get("restppPort", "9000"),
+                gsPort=db_config.get("gsPort", "14240"),
+            )
+        return conn
+
     conn = TigerGraphConnection(
         host=host,
         username=username,
@@ -129,7 +157,7 @@ def elevate_db_connection_to_token(host, username, password, graphname, async_co
         gsPort=db_config.get("gsPort", "14240")
     )
     
-    if db_config["getToken"]:
+    if db_config.get("getToken"):
         try:
             apiToken = conn.getToken()[0]
         except HTTPError:
