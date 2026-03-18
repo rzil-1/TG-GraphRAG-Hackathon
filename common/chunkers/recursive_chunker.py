@@ -16,10 +16,12 @@ from common.chunkers.base_chunker import BaseChunker
 from common.chunkers.separators import TEXT_SEPARATORS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
+_DEFAULT_FALLBACK_SIZE = 4096
+
 
 class RecursiveChunker(BaseChunker):
-    def __init__(self, chunk_size=1024, overlap_size=0):
-        self.chunk_size = chunk_size
+    def __init__(self, chunk_size=0, overlap_size=0):
+        self.chunk_size = chunk_size if chunk_size > 0 else _DEFAULT_FALLBACK_SIZE
         self.overlap_size = overlap_size
 
     def chunk(self, input_string):
