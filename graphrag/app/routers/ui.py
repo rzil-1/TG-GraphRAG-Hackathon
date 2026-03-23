@@ -2126,9 +2126,12 @@ async def get_config(
                 "llm_config_access": "chatbot_only",
             }
 
+        safe_db_config = copy.deepcopy(db_config)
+        safe_db_config.pop("password", None)
+
         return {
             "llm_config": safe_llm_config,
-            "db_config": db_config,
+            "db_config": safe_db_config,
             "graphrag_config": graphrag_config,
             "llm_config_access": "full",
         }

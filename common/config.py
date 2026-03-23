@@ -355,10 +355,6 @@ def reload_llm_config(new_llm_config: dict = None):
             with open(SERVER_CONFIG, "r") as f:
                 server_config = json.load(f)
             
-            # Preserve existing API keys if not provided in new config
-            existing_llm_config = server_config.get("llm_config", {})
-            
-            # Directly save the new LLM config without preserving old API keys
             server_config["llm_config"] = new_llm_config
             
             with open(SERVER_CONFIG, "w") as f:

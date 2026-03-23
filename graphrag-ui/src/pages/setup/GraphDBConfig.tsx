@@ -52,7 +52,6 @@ const GraphDBConfig = () => {
         setGsPort(dbConfig.gsPort || "14240");
         
         setUsername(dbConfig.username || "");
-        setPassword(dbConfig.password || "");
         
         setGetToken(dbConfig.getToken || false);
         setDefaultTimeout(String(dbConfig.default_timeout || 300));
@@ -312,7 +311,7 @@ const GraphDBConfig = () => {
                     <Input
                       type="password"
                       className="dark:border-[#3D3D3D] dark:bg-background"
-                      placeholder=""
+                      placeholder="Enter password to test and save"
                       value={password}
                       onChange={(e) => {
                         setPassword(e.target.value);

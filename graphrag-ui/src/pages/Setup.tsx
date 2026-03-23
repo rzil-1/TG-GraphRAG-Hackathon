@@ -815,7 +815,7 @@ const [activeTab, setActiveTab] = useState("upload");
           file_path: outputBucket,
         };
 
-        const filesToIngest = createData.data_source_id.bda_jobs.map((job: any) => job.jobId.split("/")[-1]);
+        const filesToIngest = createData.data_source_id.bda_jobs.map((job: any) => job.jobId.split("/").at(-1));
         setIngestMessage(`Step 2/2: Running document ingest for ${filesToIngest.length} files in ${outputBucket}...`);
       }
 

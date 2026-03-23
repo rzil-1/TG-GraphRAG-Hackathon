@@ -819,7 +819,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
         };
 
         const filesToIngest = createData.data_source_id.bda_jobs.map(
-          (job: any) => job.jobId.split("/")[-1]
+          (job: any) => job.jobId.split("/").at(-1)
         );
         setIngestMessage(
           `Step 2/2: Running document ingest for ${filesToIngest.length} files in ${outputBucket}...`
