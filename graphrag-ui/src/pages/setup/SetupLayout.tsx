@@ -3,22 +3,21 @@ import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Database, Settings, FileText, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRoles } from "@/hooks/useRoles";
 
 const SetupLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [userRoles, setUserRoles] = React.useState<string[]>([]);
-  const [graphRoles, setGraphRoles] = React.useState<Record<string, string[]>>({});
-  const [rolesLoaded, setRolesLoaded] = React.useState(false);
-  const [hasCreds, setHasCreds] = React.useState(false);
-  const isSuperuser = userRoles.includes("superuser");
-  const isGlobalDesigner = userRoles.includes("globaldesigner");
-  const selectedGraph = localStorage.getItem("selectedGraph") || "";
-  const selectedGraphRoles = graphRoles[selectedGraph] || [];
-  const isGraphAdmin = selectedGraphRoles.includes("admin");
-  const canAccessPrompts = isSuperuser || isGlobalDesigner || isGraphAdmin;
-  const canAccessSetup = isSuperuser || isGlobalDesigner || isGraphAdmin;
-  const canAccessLlmConfig = isSuperuser || isGlobalDesigner || isGraphAdmin;
+  const {
+    rolesLoaded,
+    hasCreds,
+    isSuperuser,
+    isGlobalDesigner,
+    isGraphAdmin,
+    canAccessSetup,
+  } = useRoles(location.pathname);
+  const canAccessPrompts = canAccessSetup;
+  const canAccessLlmConfig = canAccessSetup;
 
   const menuItems = [
     {
@@ -57,49 +56,6 @@ const SetupLayout = () => {
   const [expandedSection, setExpandedSection] = React.useState<string>("");
 
   React.useEffect(() => {
-    const loadRoles = async () => {
-      try {
-        const creds = localStorage.getItem("creds");
-        if (!creds) {
-          setUserRoles([]);
-          setGraphRoles({});
-          setHasCreds(false);
-          setRolesLoaded(true);
-          return;
-        }
-        const response = await fetch("/ui/roles", {
-          headers: { Authorization: `Basic ${creds}` },
-        });
-        if (!response.ok) {
-          setUserRoles([]);
-          setGraphRoles({});
-          setHasCreds(false);
-          setRolesLoaded(true);
-          return;
-        }
-        const data = await response.json();
-        const roles = Array.isArray(data.roles) ? data.roles : [];
-        setUserRoles(roles.map((role: string) => role.toLowerCase()));
-        setGraphRoles(
-          data.graph_roles && typeof data.graph_roles === "object"
-            ? Object.fromEntries(
-                Object.entries(data.graph_roles).map(([graph, roles]) => [
-                  graph,
-                  Array.isArray(roles)
-                    ? roles.map((role: string) => role.toLowerCase())
-                    : [],
-                ])
-              )
-            : {}
-        );
-        setHasCreds(true);
-      } finally {
-        setRolesLoaded(true);
-      }
-    };
-    loadRoles();
-
-    // Auto-expand section based on current path
     const currentSection = menuItems.find(
       (item) => location.pathname.startsWith(item.path)
     );

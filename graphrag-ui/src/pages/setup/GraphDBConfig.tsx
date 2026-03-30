@@ -14,8 +14,9 @@ const GraphDBConfig = () => {
   const [defaultMemThreshold, setDefaultMemThreshold] = useState("5000");
   const [defaultThreadLimit, setDefaultThreadLimit] = useState("8");
   
-  // Track original hostname to detect changes
+  // Track original values to detect changes
   const [originalHostname, setOriginalHostname] = useState("");
+  const [originalUsername, setOriginalUsername] = useState("");
   
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -52,6 +53,7 @@ const GraphDBConfig = () => {
         setGsPort(dbConfig.gsPort || "14240");
         
         setUsername(dbConfig.username || "");
+        setOriginalUsername(dbConfig.username || "");
         
         setGetToken(dbConfig.getToken || false);
         setDefaultTimeout(String(dbConfig.default_timeout || 300));
@@ -151,27 +153,15 @@ const GraphDBConfig = () => {
         setMessageType("success");
         setConnectionTested(false); // Reset after save
         
-        // Check if hostname changed (different TigerGraph instance)
+        // Check if hostname or username changed from what was loaded
         const hostnameChanged = originalHostname && hostname !== originalHostname;
+        const usernameChanged = originalUsername && username !== originalUsername;
         
-        // Check if credentials changed from login credentials
-        let credentialsChanged = false;
-        const loginCreds = localStorage.getItem("creds");
-        if (loginCreds) {
-          try {
-            const decodedCreds = atob(loginCreds);
-            const [loginUsername, loginPassword] = decodedCreds.split(":");
-            credentialsChanged = loginUsername !== username || loginPassword !== password;
-          } catch (e) {
-            console.error("Error parsing login credentials:", e);
-          }
-        }
-        
-        // If hostname OR credentials changed, redirect to login
-        if (hostnameChanged || credentialsChanged) {
+        // If hostname OR username changed, redirect to login so services reconnect
+        if (hostnameChanged || usernameChanged) {
           const reason = hostnameChanged 
-            ? "GraphDB hostname changed. Please relogin with the changed credentials to connect to the new instance."
-            : "GraphDB credentials changed. Please relogin with the changed credentials.";
+            ? "GraphDB hostname changed. Please relogin with the new credentials to connect to the new instance."
+            : "GraphDB username changed. Please relogin with the new credentials.";
           
           setTimeout(() => {
             // Clear localStorage and redirect to login
@@ -180,8 +170,9 @@ const GraphDBConfig = () => {
             window.location.href = "/"; // Redirect to root (login page)
           }, 2000); // Give user 2 seconds to see the success message
         } else {
-          // Update original hostname after successful save (only if no redirect)
+          // Update originals after successful save (only if no redirect)
           setOriginalHostname(hostname);
+          setOriginalUsername(username);
         }
       } else {
         setMessage(result.detail || "Failed to save configuration");

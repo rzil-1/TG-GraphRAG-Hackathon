@@ -162,6 +162,45 @@ def _require_roles(credentials: HTTPBasicCredentials, allowed_roles: set[str]) -
     return roles
 
 
+def _create_llm_service(provider: str, config: dict):
+    from common.llm_services import (
+        OpenAI, AzureOpenAI, GoogleGenAI, GoogleVertexAI,
+        AWSBedrock, AWS_SageMaker_Endpoint, Groq, Ollama,
+        HuggingFaceEndpoint, IBMWatsonX
+    )
+    providers = {
+        "openai": OpenAI,
+        "azure": AzureOpenAI,
+        "genai": GoogleGenAI,
+        "vertexai": GoogleVertexAI,
+        "bedrock": AWSBedrock,
+        "sagemaker": AWS_SageMaker_Endpoint,
+        "groq": Groq,
+        "ollama": Ollama,
+        "huggingface": HuggingFaceEndpoint,
+        "watsonx": IBMWatsonX,
+    }
+    cls = providers.get(provider.lower())
+    return cls(config) if cls else None
+
+
+def _create_embedding_service(provider: str, config: dict):
+    from common.embeddings.embedding_services import (
+        OpenAI_Embedding, AzureOpenAI_Ada002, GenAI_Embedding,
+        VertexAI_PaLM_Embedding, AWS_Bedrock_Embedding, Ollama_Embedding
+    )
+    providers = {
+        "openai": OpenAI_Embedding,
+        "azure": AzureOpenAI_Ada002,
+        "genai": GenAI_Embedding,
+        "vertexai": VertexAI_PaLM_Embedding,
+        "bedrock": AWS_Bedrock_Embedding,
+        "ollama": Ollama_Embedding,
+    }
+    cls = providers.get(provider.lower())
+    return cls(config) if cls else None
+
+
 def _require_prompt_access(credentials: HTTPBasicCredentials, graphname: str | None) -> str:
     """
     Check if user can access prompts. Returns access level: 'full' or 'chatbot_only'.
@@ -1770,7 +1809,7 @@ async def save_llm_config(
     Save LLM configuration and reload services.
     """
     try:
-        graphname = llm_config_data.get("graphname")
+        graphname = llm_config_data.pop("graphname", None)
         llm_access_mode = _resolve_llm_config_access(credentials, graphname)
         graphs = auth(credentials.username, credentials.password)[0]
         auth_header = "Basic " + base64.b64encode(
@@ -1839,15 +1878,6 @@ async def test_llm_config(
     try:
         _require_roles(credentials, {"superuser", "globaldesigner"})
         from common import config as cfg
-        from common.llm_services import (
-            OpenAI, AzureOpenAI, GoogleGenAI, GoogleVertexAI,
-            AWSBedrock, AWS_SageMaker_Endpoint, Groq, Ollama,
-            HuggingFaceEndpoint, IBMWatsonX
-        )
-        from common.embeddings.embedding_services import (
-            OpenAI_Embedding, AzureOpenAI_Ada002, GenAI_Embedding,
-            VertexAI_PaLM_Embedding, AWS_Bedrock_Embedding, Ollama_Embedding
-        )
         
         test_results = {
             "completion": {"status": "not_tested", "message": ""},
@@ -1888,26 +1918,12 @@ async def test_llm_config(
                 if "prompt_path" not in test_completion_config:
                     test_completion_config["prompt_path"] = "common/prompts/openai_gpt4/"
                 
-                # Create LLM service instance based on provider
-                llm_service = None
-                if provider == "openai":
-                    llm_service = OpenAI(test_completion_config)
-                elif provider == "azure":
-                    llm_service = AzureOpenAI(test_completion_config)
-                elif provider == "genai":
-                    llm_service = GoogleGenAI(test_completion_config)
-                elif provider == "vertexai":
-                    llm_service = GoogleVertexAI(test_completion_config)
-                elif provider == "bedrock":
-                    llm_service = AWSBedrock(test_completion_config)
-                elif provider == "groq":
-                    llm_service = Groq(test_completion_config)
-                elif provider == "ollama":
-                    llm_service = Ollama(test_completion_config)
+                llm_service = _create_llm_service(provider, test_completion_config)
                 
                 if llm_service:
-                    # Test with a simple prompt
                     response = llm_service.model.invoke("Say 'Connection successful' in 2 words")
+                    if not response or not str(response).strip():
+                        raise ValueError("LLM returned an empty response")
                     test_results["completion"]["status"] = "success"
                     test_results["completion"]["message"] = f"✅ Default LLM model ({model}) connected successfully"
                 else:
@@ -1942,26 +1958,12 @@ async def test_llm_config(
                 if "prompt_path" not in test_chatbot_config:
                     test_chatbot_config["prompt_path"] = "common/prompts/openai_gpt4/"
                 
-                # Create LLM service instance based on provider
-                llm_service = None
-                if provider == "openai":
-                    llm_service = OpenAI(test_chatbot_config)
-                elif provider == "azure":
-                    llm_service = AzureOpenAI(test_chatbot_config)
-                elif provider == "genai":
-                    llm_service = GoogleGenAI(test_chatbot_config)
-                elif provider == "vertexai":
-                    llm_service = GoogleVertexAI(test_chatbot_config)
-                elif provider == "bedrock":
-                    llm_service = AWSBedrock(test_chatbot_config)
-                elif provider == "groq":
-                    llm_service = Groq(test_chatbot_config)
-                elif provider == "ollama":
-                    llm_service = Ollama(test_chatbot_config)
+                llm_service = _create_llm_service(provider, test_chatbot_config)
                 
                 if llm_service:
-                    # Test with a simple prompt
                     response = llm_service.model.invoke("Say 'Connection successful' in 2 words")
+                    if not response or not str(response).strip():
+                        raise ValueError("LLM returned an empty response")
                     test_results["chatbot"]["status"] = "success"
                     test_results["chatbot"]["message"] = f"✅ Chatbot LLM model ({model}) connected successfully"
                 else:
@@ -1990,20 +1992,7 @@ async def test_llm_config(
                         if key not in test_embedding_config and key in cfg.embedding_config:
                             test_embedding_config[key] = cfg.embedding_config[key]
                 
-                # Create embedding service instance based on provider
-                embedding_service_test = None
-                if provider == "openai":
-                    embedding_service_test = OpenAI_Embedding(test_embedding_config)
-                elif provider == "azure":
-                    embedding_service_test = AzureOpenAI_Ada002(test_embedding_config)
-                elif provider == "genai":
-                    embedding_service_test = GenAI_Embedding(test_embedding_config)
-                elif provider == "vertexai":
-                    embedding_service_test = VertexAI_PaLM_Embedding(test_embedding_config)
-                elif provider == "bedrock":
-                    embedding_service_test = AWS_Bedrock_Embedding(test_embedding_config)
-                elif provider == "ollama":
-                    embedding_service_test = Ollama_Embedding(test_embedding_config)
+                embedding_service_test = _create_embedding_service(provider, test_embedding_config)
                 
                 if embedding_service_test:
                     # Test with a simple text
@@ -2051,20 +2040,12 @@ async def test_llm_config(
                 if "prompt_path" not in test_multimodal_config:
                     test_multimodal_config["prompt_path"] = "common/prompts/openai_gpt4/"
                 
-                # Create multimodal service instance based on provider
-                multimodal_service = None
-                if provider == "openai":
-                    multimodal_service = OpenAI(test_multimodal_config)
-                elif provider == "azure":
-                    multimodal_service = AzureOpenAI(test_multimodal_config)
-                elif provider == "genai":
-                    multimodal_service = GoogleGenAI(test_multimodal_config)
-                elif provider == "vertexai":
-                    multimodal_service = GoogleVertexAI(test_multimodal_config)
+                multimodal_service = _create_llm_service(provider, test_multimodal_config)
                 
                 if multimodal_service:
-                    # Test with a simple prompt
                     response = multimodal_service.model.invoke("Say 'Connection successful' in 2 words")
+                    if not response or not str(response).strip():
+                        raise ValueError("Multimodal LLM returned an empty response")
                     test_results["multimodal"]["status"] = "success"
                     test_results["multimodal"]["message"] = f"✅ Multimodal model ({model}) connected successfully"
                 else:
@@ -2088,6 +2069,8 @@ async def test_llm_config(
             "results": test_results
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"LLM connection test failed: {str(e)}")
         return {
@@ -2239,28 +2222,23 @@ async def save_graphrag_config(
                 status_code=409,
                 detail="ECC rebuild in progress. Please wait for it to complete before updating config."
             )
-        from common.config import SERVER_CONFIG
+        from common.config import SERVER_CONFIG, reload_graphrag_config
         
-        # Read current full config
+        # Save to file atomically
         with open(SERVER_CONFIG, "r") as f:
             server_config = json.load(f)
         
-        # Update graphrag_config section
         server_config["graphrag_config"] = graphrag_config_data
         
-        # Write back to file atomically (write to temp, then rename)
         temp_file = f"{SERVER_CONFIG}.tmp"
         with open(temp_file, "w") as f:
             json.dump(server_config, f, indent=2)
-        
-        # Rename temp file to actual config file (atomic operation)
         os.replace(temp_file, SERVER_CONFIG)
         
-        # Update in-memory graphrag_config to reflect changes immediately
-        graphrag_config.clear()
-        graphrag_config.update(graphrag_config_data)
-        
-        logger.info("GraphRAG configuration saved successfully")
+        # Reload from file (applies defaults for missing keys like chunker/extractor)
+        result = reload_graphrag_config()
+        if result["status"] != "success":
+            raise HTTPException(status_code=500, detail=result["message"])
         
         return {
             "status": "success",

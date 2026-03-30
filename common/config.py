@@ -73,15 +73,16 @@ def get_completion_config(graphname=None):
     """
     config_path = get_server_config_path(graphname)
     if config_path != SERVER_CONFIG:
-        logger.info(f"[get_completion_config] graph={graphname} using graph-specific config: {config_path}")
+        logger.debug(f"[get_completion_config] graph={graphname} using graph-specific config: {config_path}")
         with open(config_path, "r") as f:
             graph_config = json.load(f)
         graph_completion = graph_config.get("llm_config", {}).get("completion_service", {}).copy()
         if "authentication_configuration" in llm_config:
             graph_completion["authentication_configuration"] = llm_config["authentication_configuration"]
         return graph_completion
-    logger.info(f"[get_completion_config] graph={graphname} using default config")
+    logger.debug(f"[get_completion_config] graph={graphname} using default config")
     return llm_config["completion_service"].copy()
+
 PATH_PREFIX = os.getenv("PATH_PREFIX", "")
 PRODUCTION = os.getenv("PRODUCTION", "false").lower() == "true"
 
@@ -357,8 +358,10 @@ def reload_llm_config(new_llm_config: dict = None):
             
             server_config["llm_config"] = new_llm_config
             
-            with open(SERVER_CONFIG, "w") as f:
+            temp_file = f"{SERVER_CONFIG}.tmp"
+            with open(temp_file, "w") as f:
                 json.dump(server_config, f, indent=2)
+            os.replace(temp_file, SERVER_CONFIG)
         
         # Read/reload from file
         with open(SERVER_CONFIG, "r") as f:
