@@ -1844,8 +1844,10 @@ async def save_llm_config(
                     graph_server_config["llm_config"]["completion_service"]["chatbot_llm"] = chatbot_model
                 else:
                     graph_server_config["llm_config"]["completion_service"].pop("chatbot_llm", None)
-                with open(graph_config_path, "w") as f:
+                temp_file = f"{graph_config_path}.tmp"
+                with open(temp_file, "w") as f:
                     json.dump(graph_server_config, f, indent=2)
+                os.replace(temp_file, graph_config_path)
                 result = {"status": "success"}
             else:
                 result = reload_llm_config(llm_config_data)
@@ -2118,6 +2120,8 @@ async def get_config(
             "graphrag_config": graphrag_config,
             "llm_config_access": "full",
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error returning config: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to return config: {str(e)}")
@@ -2154,6 +2158,8 @@ async def test_db_connection(
             "message": "Connection successful"
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"DB connection test failed: {str(e)}")
         return {
@@ -2413,8 +2419,10 @@ async def save_prompts(
                 with open(graph_config_path, "r") as f:
                     graph_server_config = json.load(f)
             graph_server_config["llm_config"]["completion_service"]["prompt_path"] = f"./{graph_prompt_dir}/"
-            with open(graph_config_path, "w") as f:
+            temp_file = f"{graph_config_path}.tmp"
+            with open(temp_file, "w") as f:
                 json.dump(graph_server_config, f, indent=2)
+            os.replace(temp_file, graph_config_path)
 
             prompt_path = graph_prompt_dir
         else:
