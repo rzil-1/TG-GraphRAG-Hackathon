@@ -2397,18 +2397,20 @@ async def save_prompts(
             default_prompt_path = default_prompt_path[2:]
         default_prompt_path = default_prompt_path.rstrip("/")
 
-        if graphname:
-            # Create graph-specific prompt dir, seed from default (first time only)
-            graph_prompt_dir = f"common/prompts/{graphname}"
-            os.makedirs(graph_prompt_dir, exist_ok=True)
-            if os.path.exists(default_prompt_path):
-                for fname in os.listdir(default_prompt_path):
-                    src = os.path.join(default_prompt_path, fname)
-                    dst = os.path.join(graph_prompt_dir, fname)
+        def _seed_prompt_dir(target_dir: str, source_dir: str):
+            """Copy prompt files from source to target if they don't already exist."""
+            os.makedirs(target_dir, exist_ok=True)
+            if os.path.exists(source_dir):
+                for fname in os.listdir(source_dir):
+                    src = os.path.join(source_dir, fname)
+                    dst = os.path.join(target_dir, fname)
                     if os.path.isfile(src) and not os.path.exists(dst):
                         shutil.copy2(src, dst)
 
-            # Create or update configs/{graphname}/server_config.json
+        if graphname:
+            graph_prompt_dir = f"configs/{graphname}/prompts"
+            _seed_prompt_dir(graph_prompt_dir, default_prompt_path)
+
             graph_config_dir = f"configs/{graphname}"
             os.makedirs(graph_config_dir, exist_ok=True)
             graph_config_path = os.path.join(graph_config_dir, "server_config.json")
@@ -2426,7 +2428,21 @@ async def save_prompts(
 
             prompt_path = graph_prompt_dir
         else:
-            prompt_path = default_prompt_path
+            persistent_prompt_dir = "configs/prompts"
+            if not default_prompt_path.startswith("configs/"):
+                _seed_prompt_dir(persistent_prompt_dir, default_prompt_path)
+                from common.config import reload_llm_config
+                with open(SERVER_CONFIG, "r") as f:
+                    server_cfg = json.load(f)
+                server_cfg["llm_config"]["completion_service"]["prompt_path"] = f"./{persistent_prompt_dir}/"
+                temp_file = f"{SERVER_CONFIG}.tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(server_cfg, f, indent=2)
+                os.replace(temp_file, SERVER_CONFIG)
+                reload_llm_config()
+                prompt_path = persistent_prompt_dir
+            else:
+                prompt_path = default_prompt_path
 
         prompt_type_to_file = {
             "chatbot_response": "chatbot_response.txt",
