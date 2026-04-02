@@ -1851,7 +1851,29 @@ async def save_llm_config(
                 result = {"status": "success"}
             else:
                 result = reload_llm_config(llm_config_data)
-        
+
+                has_chat_model = "chat_model" in llm_config_data.get("completion_service", {})
+                configs_dir = os.path.dirname(SERVER_CONFIG) or "configs"
+                if os.path.isdir(configs_dir):
+                    for entry in os.listdir(configs_dir):
+                        graph_cfg_path = os.path.join(configs_dir, entry, "server_config.json")
+                        if not os.path.isfile(graph_cfg_path):
+                            continue
+                        try:
+                            with open(graph_cfg_path, "r") as f:
+                                gcfg = json.load(f)
+                            completion = gcfg.get("llm_config", {}).get("completion_service", {})
+                            if has_chat_model:
+                                completion["chat_model"] = llm_config_data["completion_service"]["chat_model"]
+                            else:
+                                completion.pop("chat_model", None)
+                            temp = f"{graph_cfg_path}.tmp"
+                            with open(temp, "w") as f:
+                                json.dump(gcfg, f, indent=2)
+                            os.replace(temp, graph_cfg_path)
+                        except Exception as e:
+                            logger.warning(f"Failed to sync chat_model in {graph_cfg_path}: {e}")
+
             if result["status"] != "success":
                 raise HTTPException(status_code=500, detail=result["message"])
         

@@ -204,8 +204,10 @@ def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retr
         )
         raise Exception("LLM Completion Service Not Supported")
 
-    logger.debug(
-        f"/{graphname}/query_with_history request_id={req_id_cv.get()} llm_service={llm_service_name} agent created"
+    chat_model_name = completion_service_config.get("chat_model", completion_service_config.get("llm_model", "unknown"))
+    prompt_path = completion_service_config.get("prompt_path", "unknown")
+    logger.info(
+        f"[CHATBOT] graph={graphname} model={chat_model_name} provider={llm_service_name} prompt_path={prompt_path}"
     )
 
     agent = TigerGraphAgent(
