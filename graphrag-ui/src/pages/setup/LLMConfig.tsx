@@ -166,7 +166,7 @@ const LLMConfig = () => {
       const llmConfig = data.llm_config;
       setLlmConfigAccess(data.llm_config_access === "chatbot_only" ? "chatbot_only" : "full");
       const currentDefaultModel = llmConfig.completion_service?.llm_model || "";
-      const currentChatbotModel = llmConfig.completion_service?.chatbot_llm || "";
+      const currentChatbotModel = llmConfig.completion_service?.chat_model || "";
       setSingleDefaultModel(currentDefaultModel);
       setSingleChatbotModel(currentChatbotModel);
       setSingleUseDifferentChatbotModel(
@@ -189,7 +189,7 @@ const LLMConfig = () => {
       if (!allSameProvider) {
         // Multi-provider mode - Load from backend
         const defaultModel = llmConfig.completion_service?.llm_model || "";
-        const chatbotModel = llmConfig.completion_service?.chatbot_llm || "";
+        const chatbotModel = llmConfig.completion_service?.chat_model || "";
         
         setCompletionProvider(completionProv || "openai");
         setCompletionDefaultModel(defaultModel);
@@ -225,7 +225,7 @@ const LLMConfig = () => {
       } else {
         // Single provider mode - Load from backend
         const defaultModel = llmConfig.completion_service?.llm_model || "";
-        const chatbotModel = llmConfig.completion_service?.chatbot_llm || "";
+        const chatbotModel = llmConfig.completion_service?.chat_model || "";
         
         setSingleProvider(completionProv || "openai");
         setSingleDefaultModel(defaultModel);
@@ -338,9 +338,9 @@ const LLMConfig = () => {
           ...buildServiceConfig(completionProvider, completionConfig)
         };
         
-        // Only add chatbot_llm if user wants a different chatbot model
+        // Only add chat_model if user wants a different chatbot model
         if (completionUseDifferentChatbotModel && completionChatbotModel && completionChatbotModel !== completionDefaultModel) {
-          completionServiceConfig.chatbot_llm = completionChatbotModel;
+          completionServiceConfig.chat_model = completionChatbotModel;
         }
         
         llmConfigData = {
@@ -369,9 +369,9 @@ const LLMConfig = () => {
           ...buildServiceConfig(singleProvider, singleConfig)
         };
         
-        // Only add chatbot_llm if user wants a different chatbot model
+        // Only add chat_model if user wants a different chatbot model
         if (singleUseDifferentChatbotModel && singleChatbotModel && singleChatbotModel !== singleDefaultModel) {
-          completionServiceConfig.chatbot_llm = singleChatbotModel;
+          completionServiceConfig.chat_model = singleChatbotModel;
         }
         
         llmConfigData = {
@@ -544,7 +544,7 @@ const LLMConfig = () => {
         llmConfigData = {
           graphname: selectedGraph || undefined,
           completion_service: {
-            chatbot_llm: useDifferentChatbotModel ? chatbotModel : "",
+            chat_model: useDifferentChatbotModel ? chatbotModel : "",
           },
         };
       }

@@ -295,8 +295,8 @@ def ws_basic_auth(auth_info: str, graphname=None):
 
 def get_chat_model_name() -> str:
     completion_service = llm_config.get("completion_service", {})
-    if "chatbot_llm" in completion_service:
-        return completion_service["chatbot_llm"]
+    if "chat_model" in completion_service:
+        return completion_service["chat_model"]
     if "llm_model" in completion_service:
         return completion_service["llm_model"]
     return llm_config.get("model_name", "unknown")
@@ -1831,9 +1831,9 @@ async def save_llm_config(
 
             if llm_access_mode == "chatbot_only":
                 incoming_completion = llm_config_data.get("completion_service", {})
-                chatbot_model = incoming_completion.get("chatbot_llm", "") if isinstance(incoming_completion, dict) else ""
+                chatbot_model = incoming_completion.get("chat_model", "") if isinstance(incoming_completion, dict) else ""
 
-                # Write chatbot_llm to graph-specific config file, not the default
+                # Write chat_model to graph-specific config file, not the default
                 graph_config_dir = f"configs/{graphname}"
                 os.makedirs(graph_config_dir, exist_ok=True)
                 graph_config_path = os.path.join(graph_config_dir, "server_config.json")
@@ -1841,9 +1841,9 @@ async def save_llm_config(
                 with open(config_source, "r") as f:
                     graph_server_config = json.load(f)
                 if chatbot_model:
-                    graph_server_config["llm_config"]["completion_service"]["chatbot_llm"] = chatbot_model
+                    graph_server_config["llm_config"]["completion_service"]["chat_model"] = chatbot_model
                 else:
-                    graph_server_config["llm_config"]["completion_service"].pop("chatbot_llm", None)
+                    graph_server_config["llm_config"]["completion_service"].pop("chat_model", None)
                 temp_file = f"{graph_config_path}.tmp"
                 with open(temp_file, "w") as f:
                     json.dump(graph_server_config, f, indent=2)

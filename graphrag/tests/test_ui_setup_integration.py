@@ -98,11 +98,11 @@ class TestUISetupIntegration(unittest.TestCase):
         self.assertEqual(completion.get("llm_model"), "gpt-4o-mini")
 
     # =========================================================================
-    # Test 2 – Graph admin: 403 on full config, success on chatbot_llm only
+    # Test 2 – Graph admin: 403 on full config, success on chat_model only
     # =========================================================================
 
     def test_graph_admin_chatbot_only_access(self):
-        """Graph admin cannot POST a full LLM config (403) but can POST chatbot_llm."""
+        """Graph admin cannot POST a full LLM config (403) but can POST chat_model."""
         if GRAPH_ADMIN_USER == SUPERUSER:
             self.skipTest(
                 "GRAPH_ADMIN_USER is the same as SUPERUSER — set GRAPH_ADMIN_USER "
@@ -124,7 +124,7 @@ class TestUISetupIntegration(unittest.TestCase):
 
         chatbot_payload = {
             "graphname": GRAPH_ADMIN_GRAPH,
-            "completion_service": {"chatbot_llm": "gpt-4o-mini"},
+            "completion_service": {"chat_model": "gpt-4o-mini"},
         }
         resp_chatbot = requests.post(
             f"{GRAPHRAG_URL}/ui/config/llm",

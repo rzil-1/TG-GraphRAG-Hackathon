@@ -129,8 +129,8 @@ if completion_config is None:
     raise Exception("completion_service is not found in llm_config")
 
 # Log which model will be used for chatbot and ECC/GraphRAG
-if "chatbot_llm" in completion_config:
-    logger.info(f"[CHATBOT] Using chatbot_llm: {completion_config['chatbot_llm']} (Provider: {completion_config['llm_service']})")
+if "chat_model" in completion_config:
+    logger.info(f"[CHATBOT] Using chat_model: {completion_config['chat_model']} (Provider: {completion_config['llm_service']})")
     logger.info(f"[ECC/GraphRAG] Using llm_model: {completion_config['llm_model']} (Provider: {completion_config['llm_service']})")
 else:
     logger.info(f"[CHATBOT & ECC/GraphRAG] Using llm_model: {completion_config['llm_model']} (Provider: {completion_config['llm_service']})")
@@ -230,16 +230,16 @@ def get_llm_service(llm_config, for_chatbot=False) -> LLM_Model:
     
     Args:
         llm_config: The LLM configuration dictionary
-        for_chatbot: If True, uses chatbot_llm if specified, otherwise uses llm_model.
+        for_chatbot: If True, uses chat_model if specified, otherwise uses llm_model.
                      If False (default), always uses llm_model for ECC/GraphRAG.
     """
     # Use completion_service which already has authentication_configuration injected
     service_config = llm_config["completion_service"].copy()
     
-    # For chatbot: use chatbot_llm if specified, otherwise use llm_model
+    # For chatbot: use chat_model if specified, otherwise use llm_model
     # For ECC/GraphRAG: always use llm_model
-    if for_chatbot and "chatbot_llm" in service_config:
-        service_config["llm_model"] = service_config["chatbot_llm"]
+    if for_chatbot and "chat_model" in service_config:
+        service_config["llm_model"] = service_config["chat_model"]
     # If llm_model doesn't exist, it will raise KeyError in the service constructor
     
     if service_config["llm_service"].lower() == "openai":
