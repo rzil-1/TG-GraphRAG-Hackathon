@@ -28,7 +28,7 @@ def get_chunker(chunker_type: str = ""):
         )
     elif chunker_type == "character":
         chunker = character_chunker.CharacterChunker(
-            chunk_size=chunker_config.get("chunk_size", 1024),
+            chunk_size=chunker_config.get("chunk_size", 4096),
             overlap_size=chunker_config.get("overlap_size", 0),
         )
     elif chunker_type == "markdown":
@@ -38,11 +38,13 @@ def get_chunker(chunker_type: str = ""):
         )
     elif chunker_type == "html":
         chunker = html_chunker.HTMLChunker(
-            headers=chunker_config.get("headers", None)
+            chunk_size=chunker_config.get("chunk_size", 0),
+            chunk_overlap=chunker_config.get("overlap_size", 0),
+            headers=chunker_config.get("headers", None),
         )
     elif chunker_type == "recursive":
         chunker = recursive_chunker.RecursiveChunker(
-            chunk_size=chunker_config.get("chunk_size", 1024),
+            chunk_size=chunker_config.get("chunk_size", 4096),
             overlap_size=chunker_config.get("overlap_size", 0),
         )
     elif chunker_type == "single" or chunker_type == "image":

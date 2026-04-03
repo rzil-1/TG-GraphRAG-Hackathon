@@ -15,7 +15,12 @@
 from typing import Optional, List, Tuple
 import re
 from common.chunkers.base_chunker import BaseChunker
+from common.chunkers.separators import TEXT_SEPARATORS
 from langchain_text_splitters import HTMLSectionSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+
+_DEFAULT_FALLBACK_SIZE = 4096
 
 
 class HTMLChunker(BaseChunker):
@@ -25,12 +30,20 @@ class HTMLChunker(BaseChunker):
     - Automatically detects which headers (h1-h6) are present in the HTML
     - Uses only the headers that exist in the document for optimal chunking
     - If custom headers are provided, uses those instead of auto-detection
+    - Supports chunk_size / chunk_overlap: when chunk_size > 0, oversized
+      header-based chunks are further split with RecursiveCharacterTextSplitter
+    - When chunk_size is 0 (default), a fallback of 4096 is used so that
+      headerless HTML documents are still split into reasonable chunks
     """
 
     def __init__(
         self,
-        headers: Optional[List[Tuple[str, str]]] = None  # e.g. [("h1", "Header 1"), ("h2", "Header 2")]
+        chunk_size: int = 0,
+        chunk_overlap: int = 0,
+        headers: Optional[List[Tuple[str, str]]] = None,
     ):
+        self.chunk_size = chunk_size if chunk_size > 0 else _DEFAULT_FALLBACK_SIZE
+        self.chunk_overlap = chunk_overlap
         self.headers = headers
 
     def _detect_headers(self, html_content: str) -> List[Tuple[str, str]]:
@@ -77,8 +90,23 @@ class HTMLChunker(BaseChunker):
         splitter = HTMLSectionSplitter(headers_to_split_on=headers_to_use)
         docs = splitter.split_text(input_string)
 
-        # Extract text content from Document objects
-        return [doc.page_content for doc in docs]
+        initial_chunks = [doc.page_content for doc in docs]
+
+        if any(len(chunk) > self.chunk_size for chunk in initial_chunks):
+            recursive_splitter = RecursiveCharacterTextSplitter(
+                separators=TEXT_SEPARATORS,
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+            )
+            final_chunks = []
+            for chunk in initial_chunks:
+                if len(chunk) > self.chunk_size:
+                    final_chunks.extend(recursive_splitter.split_text(chunk))
+                else:
+                    final_chunks.append(chunk)
+            return final_chunks
+
+        return initial_chunks
 
     def __call__(self, input_string: str) -> List[str]:
         return self.chunk(input_string)

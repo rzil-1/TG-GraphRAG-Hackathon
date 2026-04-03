@@ -1,16 +1,16 @@
 from common.chunkers.base_chunker import BaseChunker
 
+_DEFAULT_FALLBACK_SIZE = 4096
+
 
 class CharacterChunker(BaseChunker):
-    def __init__(self, chunk_size=1024, overlap_size=0):
-        if chunk_size <= overlap_size:
-            raise ValueError("Chunk size must be larger than overlap size")
-        self.chunk_size = chunk_size
+    def __init__(self, chunk_size=0, overlap_size=0):
+        self.chunk_size = chunk_size if chunk_size > 0 else _DEFAULT_FALLBACK_SIZE
         self.overlap_size = overlap_size
 
     def chunk(self, input_string):
-        if self.chunk_size <= 0:
-            return []
+        if self.chunk_size <= self.overlap_size:
+            raise ValueError("Chunk size must be larger than overlap size")
 
         chunks = []
         i = 0
