@@ -50,7 +50,6 @@ def load_community_prompt():
 
 
 # src: https://github.com/microsoft/graphrag/blob/main/graphrag/index/graph/extractors/summarize/prompts.py
-SUMMARIZE_PROMPT = PromptTemplate.from_template(load_community_prompt())
 
 id_pat = re.compile(r"[_\d]*")
 
@@ -63,8 +62,10 @@ class CommunitySummarizer:
         self.llm_service = llm_service
 
     async def summarize(self, name: str, text: list[str]) -> CommunitySummary:
+        # Load prompt at call time so config reloads and prompt edits take effect
+        prompt = PromptTemplate.from_template(load_community_prompt())
         structured_llm = self.llm_service.model.with_structured_output(CommunitySummary)
-        chain = SUMMARIZE_PROMPT | structured_llm
+        chain = prompt | structured_llm
 
         # remove iteration tags from name
         name = id_pat.sub("", name)

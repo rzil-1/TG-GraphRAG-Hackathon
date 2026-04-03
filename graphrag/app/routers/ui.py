@@ -242,7 +242,7 @@ def _resolve_llm_config_access(
 def _ecc_jobs_running(graphs: list[str], auth_header: str) -> bool:
     if not graphs:
         return False
-    ecc_base = graphrag_config.get("ecc", "http://localhost:8001")
+    ecc_base = graphrag_config.get("ecc", "http://graphrag-ecc:8001")
     for graphname in graphs:
         try:
             status_url = f"{ecc_base}/{graphname}/graphrag/rebuild_status"
@@ -468,7 +468,7 @@ async def forceupdate(
     creds = creds[1]
     auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
 
-    ecc_base = graphrag_config.get("ecc", "http://localhost:8001")
+    ecc_base = graphrag_config.get("ecc", "http://graphrag-ecc:8001")
     ecc_update_url = f"{ecc_base}/{graphname}/graphrag/consistency_update"
     ecc_status_url = f"{ecc_base}/{graphname}/graphrag/rebuild_status"
     
@@ -554,7 +554,7 @@ def get_rebuild_status(
 
     try:
         ecc_status_url = (
-            graphrag_config.get("ecc", "http://localhost:8001")
+            graphrag_config.get("ecc", "http://graphrag-ecc:8001")
             + f"/{graphname}/graphrag/rebuild_status"
         )
         LogWriter.info(f"Checking ECC status at: {ecc_status_url}")
@@ -2250,19 +2250,20 @@ async def save_graphrag_config(
                 status_code=409,
                 detail="ECC rebuild in progress. Please wait for it to complete before updating config."
             )
-        from common.config import SERVER_CONFIG, reload_graphrag_config
-        
-        # Save to file atomically
-        with open(SERVER_CONFIG, "r") as f:
-            server_config = json.load(f)
-        
-        server_config["graphrag_config"] = graphrag_config_data
-        
-        temp_file = f"{SERVER_CONFIG}.tmp"
-        with open(temp_file, "w") as f:
-            json.dump(server_config, f, indent=2)
-        os.replace(temp_file, SERVER_CONFIG)
-        
+        from common.config import SERVER_CONFIG, reload_graphrag_config, _config_file_lock
+
+        # Save to file atomically under the shared config lock
+        with _config_file_lock:
+            with open(SERVER_CONFIG, "r") as f:
+                server_config = json.load(f)
+
+            server_config["graphrag_config"] = graphrag_config_data
+
+            temp_file = f"{SERVER_CONFIG}.tmp"
+            with open(temp_file, "w") as f:
+                json.dump(server_config, f, indent=2)
+            os.replace(temp_file, SERVER_CONFIG)
+
         # Reload from file (applies defaults for missing keys like chunker/extractor)
         result = reload_graphrag_config()
         if result["status"] != "success":
@@ -2453,14 +2454,15 @@ async def save_prompts(
             persistent_prompt_dir = "configs/prompts"
             if not default_prompt_path.startswith("configs/"):
                 _seed_prompt_dir(persistent_prompt_dir, default_prompt_path)
-                from common.config import reload_llm_config
-                with open(SERVER_CONFIG, "r") as f:
-                    server_cfg = json.load(f)
-                server_cfg["llm_config"]["completion_service"]["prompt_path"] = f"./{persistent_prompt_dir}/"
-                temp_file = f"{SERVER_CONFIG}.tmp"
-                with open(temp_file, "w") as f:
-                    json.dump(server_cfg, f, indent=2)
-                os.replace(temp_file, SERVER_CONFIG)
+                from common.config import reload_llm_config, _config_file_lock
+                with _config_file_lock:
+                    with open(SERVER_CONFIG, "r") as f:
+                        server_cfg = json.load(f)
+                    server_cfg["llm_config"]["completion_service"]["prompt_path"] = f"./{persistent_prompt_dir}/"
+                    temp_file = f"{SERVER_CONFIG}.tmp"
+                    with open(temp_file, "w") as f:
+                        json.dump(server_cfg, f, indent=2)
+                    os.replace(temp_file, SERVER_CONFIG)
                 reload_llm_config()
                 prompt_path = persistent_prompt_dir
             else:
@@ -2477,8 +2479,10 @@ async def save_prompts(
             raise HTTPException(status_code=400, detail=f"Invalid prompt_type: {prompt_type}")
 
         file_path = os.path.join(prompt_path, prompt_type_to_file[prompt_type])
-        with open(file_path, "w", encoding="utf-8") as f:
+        temp_file = f"{file_path}.tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
             f.write(content)
+        os.replace(temp_file, file_path)
 
         messages = {
             "chatbot_response": "Chatbot response prompt saved successfully",

@@ -33,6 +33,8 @@
   - [GraphRAG configuration](#graphrag-configuration)
   - [Chat configuration](#chat-configuration)
   - [LLM provider configuration](#llm-provider-configuration)
+    - [Supported parameters](#supported-parameters)
+    - [Provider examples](#provider-examples)
     - [OpenAI](#openai)
     - [Google GenAI](#google-genai)
     - [GCP VertexAI](#gcp-vertexai)
@@ -198,10 +200,10 @@ Run command `docker compose down` and wait for all the service containers to sto
 
 If you prefer to start a TigerGraph Community Edition instance without a license key, please make sure the container can be accessed from the GraphRAG containers by add `--network graphrag_default`:
 ```
-docker run -d -p 14240:14240 --name tigergraph --ulimit nofile=1000000:1000000 --init --network graphrag_default -t tigergraph/community:4.2.1
+docker run -d -p 14240:14240 --name tigergraph --ulimit nofile=1000000:1000000 --init --network graphrag_default -t tigergraph/community:4.2.2
 ```
 
-> Use **tigergraph/tigergraph:4.2.1** if Enterprise Edition is preferred.
+> Use **tigergraph/tigergraph:4.2.2** if Enterprise Edition is preferred.
 > Setting up **DNS** or `/etc/hosts` properly is an alternative solution to ensure contains can connect to each other.
 > Or modify`hostname` in `db_config` section of `configs/server_config.json` and replace `http://tigergraph` to your tigergraph container IP address, e.g., `http://172.19.0.2`. 
 
@@ -419,6 +421,8 @@ Copy the below into `configs/server_config.json` and edit the `hostname` and `ge
         "hostname": "http://tigergraph",
         "restppPort": "9000",
         "gsPort": "14240",
+        "username": "tigergraph",
+        "password": "tigergraph",
         "getToken": false,
         "default_timeout": 300,
         "default_mem_threshold": 5000,
@@ -427,21 +431,63 @@ Copy the below into `configs/server_config.json` and edit the `hostname` and `ge
 }
 ```
 
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `hostname` | string | `"http://tigergraph"` | TigerGraph server URL. |
+| `restppPort` | string | `"9000"` | RESTPP port for TigerGraph API requests. |
+| `gsPort` | string | `"14240"` | GSQL port for TigerGraph admin operations. |
+| `username` | string | `"tigergraph"` | TigerGraph database username. |
+| `password` | string | `"tigergraph"` | TigerGraph database password. |
+| `getToken` | bool | `false` | Set to `true` if token authentication is enabled on TigerGraph. |
+| `graphname` | string | `""` | Default graph name. Usually left empty (selected at runtime). |
+| `apiToken` | string | `""` | Pre-generated API token. If set, token-based auth is used instead of username/password. |
+| `default_timeout` | int | `300` | Default query timeout in seconds. |
+| `default_mem_threshold` | int | `5000` | Memory threshold (MB) for query execution. |
+| `default_thread_limit` | int | `8` | Max threads for query execution. |
+
 ### GraphRAG configuration
 Copy the below code into `configs/server_config.json`. You shouldn’t need to change anything unless you change the port of the chat history service in the Docker Compose file.
-
-`reuse_embedding` to `true` will skip re-generating the embedding if it already exists.
-`ecc` and `chat_history_api` are the addresses of internal components of GraphRAG.If you use the Docker Compose file as is, you don’t need to change them.
 
 ```json
 {
     "graphrag_config": {
         "reuse_embedding": false,
-        "ecc": "http://eventual-consistency-service:8001",
-        "chat_history_api": "http://chat-history:8002"
+        "ecc": "http://graphrag-ecc:8001",
+        "chat_history_api": "http://chat-history:8002",
+        "chunker": "semantic",
+        "extractor": "llm",
+        "top_k": 5,
+        "num_hops": 2
     }
 }
 ```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `reuse_embedding` | bool | `true` | Skip re-generating the embedding if it already exists on a vertex. |
+| `ecc` | string | `"http://graphrag-ecc:8001"` | URL of the Entity-Context-Community (ECC) service. No change needed when using the provided Docker Compose file. |
+| `chat_history_api` | string | `"http://chat-history:8002"` | URL of the chat history service. No change needed when using the provided Docker Compose file. |
+| `chunker` | string | `"semantic"` | Default document chunker. Options: `semantic`, `character`, `regex`, `markdown`, `html`, `recursive`. |
+| `extractor` | string | `"llm"` | Entity extraction method. Options: `llm`, `graphrag`. |
+| `chunker_config` | object | `{}` | Chunker-specific settings. For `character`/`markdown`/`recursive`: `chunk_size`, `overlap_size`. For `semantic`: `method`, `threshold`. For `regex`: `pattern`. |
+| `top_k` | int | `5` | Number of top similar results to retrieve during search. |
+| `num_hops` | int | `2` | Number of graph hops to traverse when expanding retrieved results. |
+| `num_seen_min` | int | `2` | Minimum number of times a node must appear across retrievals to be included. |
+| `community_level` | int | `2` | Community hierarchy level used for community search. |
+| `chunk_only` | bool | `true` | If true, hybrid search only retrieves document chunks (not entities). |
+| `doc_only` | bool | `false` | If true, hybrid search only retrieves from document chunks, skipping entity traversal. |
+| `with_chunk` | bool | `true` | If true, community search also includes document chunks in results. |
+| `doc_process_switch` | bool | `true` | Enable/disable document processing during knowledge graph build. |
+| `entity_extraction_switch` | bool | same as `doc_process_switch` | Enable/disable entity extraction during knowledge graph build. |
+| `community_detection_switch` | bool | same as `entity_extraction_switch` | Enable/disable community detection during knowledge graph build. |
+| `load_batch_size` | int | `500` | Batch size for upserting vertices during document loading. |
+| `upsert_delay` | int | `0` | Delay in seconds between upsert batches. |
+| `tg_concurrency` | int | `10` | Max concurrent requests to TigerGraph during processing. |
+| `process_interval_seconds` | int | `300` | Interval for background consistency processing (when enabled). |
+| `cleanup_interval_seconds` | int | `300` | Interval for background cleanup (when enabled). |
+| `checker_batch_size` | int | `100` | Number of vertices to scan per batch during background consistency checking. (Also accepts legacy key `batch_size`.) |
+| `enable_consistency_checker` | bool | `false` | Enable the background consistency checker. |
+| `graph_names` | list | `[]` | Graphs to monitor when consistency checker is enabled. |
 
 ### Chat configuration
 Copy the below code into `configs/server_config.json`. You shouldn’t need to change anything unless you change the port of the chat history service in the Docker Compose file.
@@ -463,6 +509,51 @@ Copy the below code into `configs/server_config.json`. You shouldn’t need to c
 
 ### LLM provider configuration
 In the `llm_config` section of `configs/server_config.json` file, copy JSON config template from below for your LLM provider, and fill out the appropriate fields. Only one provider is needed.
+
+#### Supported parameters
+
+**Top-level `llm_config` parameters:**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `authentication_configuration` | object | — | Shared authentication credentials. Merged into all service configs (service-specific values take precedence). |
+| `token_limit` | int | — | Shared token limit propagated to `completion_service` and `embedding_service` if they don't define their own. Use `0` or negative for unlimited. |
+
+**`completion_service` parameters:**
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `llm_service` | string | **Yes** | — | LLM provider. Options: `openai`, `azure`, `vertexai`, `genai`, `bedrock`, `sagemaker`, `groq`, `ollama`, `huggingface`, `watsonx`. |
+| `llm_model` | string | **Yes** | — | Model name for ECC/GraphRAG tasks (e.g., `gpt-4.1-mini`). |
+| `chat_model` | string | No | same as `llm_model` | Model name for the chatbot. If not set, falls back to `llm_model`. Allows using a different (e.g., cheaper/faster) model for chat vs. ingestion. |
+| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials (overrides top-level). |
+| `model_kwargs` | object | No | `{}` | Additional keyword arguments passed to the LLM (e.g., `{"temperature": 0}`). |
+| `prompt_path` | string | No | `"./common/prompts/openai_gpt4/"` | Path to prompt template files. |
+| `base_url` | string | No | — | Custom API base URL (for self-hosted or proxy endpoints). |
+| `token_limit` | int | No | inherited from top-level | Max token limit for this service. |
+
+**`embedding_service` parameters:**
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `embedding_model_service` | string | **Yes** | — | Embedding provider. Options: `openai`, `azure`, `vertexai`, `genai`, `bedrock`, `ollama`. |
+| `model_name` | string | **Yes** | — | Embedding model name (e.g., `text-embedding-3-small`). |
+| `dimensions` | int | No | `1536` | Embedding vector dimensions. |
+| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials (overrides top-level). |
+
+**`multimodal_service` parameters (optional):**
+
+Used for vision/image description tasks during document ingestion. If not configured, a default vision model is auto-derived from the completion service provider.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `llm_service` | string | No | same as completion | Multimodal LLM provider. |
+| `llm_model` | string | No | auto-derived per provider | Vision model name (e.g., `gpt-4o`). |
+| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials. |
+| `model_kwargs` | object | No | `{}` | Additional keyword arguments. |
+| `prompt_path` | string | No | `"./common/prompts/openai_gpt4/"` | Path to prompt template files. |
+
+#### Provider examples
 
 #### OpenAI
 In addition to the `OPENAI_API_KEY`, `llm_model` and `model_name` can be edited to match your specific configuration details.

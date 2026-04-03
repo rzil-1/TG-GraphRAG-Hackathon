@@ -330,7 +330,7 @@ def graphrag_update(
     from httpx import get as http_get
 
     ecc = (
-        graphrag_config.get("ecc", "http://localhost:8001")
+        graphrag_config.get("ecc", "http://graphrag-ecc:8001")
         + f"/{graphname}/{method}/consistency_update"
     )
     LogWriter.info(f"Sending ECC request to: {ecc}")

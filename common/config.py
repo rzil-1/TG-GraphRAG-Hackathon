@@ -15,10 +15,15 @@
 import json
 import logging
 import os
+import threading
 
 from fastapi.security import HTTPBasic
 
 logger = logging.getLogger(__name__)
+
+# Lock for all reads/writes to SERVER_CONFIG to prevent concurrent modifications
+# from different endpoints (LLM, DB, GraphRAG config saves) from overwriting each other.
+_config_file_lock = threading.Lock()
 from pyTigerGraph import TigerGraphConnection
 
 from common.embeddings.embedding_services import (
@@ -70,18 +75,28 @@ def get_completion_config(graphname=None):
     Return completion_service config for the given graph.
     Uses configs/{graphname}/server_config.json if it exists, else falls back to default.
     Auth credentials always come from the live default config so key rotations propagate.
+
+    The returned dict always contains ``chat_model``.  If it was not explicitly
+    configured, it falls back to ``llm_model`` so callers can rely on its presence.
     """
     config_path = get_server_config_path(graphname)
     if config_path != SERVER_CONFIG:
         logger.debug(f"[get_completion_config] graph={graphname} using graph-specific config: {config_path}")
         with open(config_path, "r") as f:
             graph_config = json.load(f)
-        graph_completion = graph_config.get("llm_config", {}).get("completion_service", {}).copy()
-        if "authentication_configuration" in llm_config:
-            graph_completion["authentication_configuration"] = llm_config["authentication_configuration"]
-        return graph_completion
-    logger.debug(f"[get_completion_config] graph={graphname} using default config")
-    return llm_config["completion_service"].copy()
+        result = graph_config.get("llm_config", {}).get("completion_service", {}).copy()
+        # Always inject auth from live default config so key rotations propagate
+        if llm_config and "authentication_configuration" in llm_config:
+            result["authentication_configuration"] = llm_config["authentication_configuration"]
+    else:
+        logger.debug(f"[get_completion_config] graph={graphname} using default config")
+        result = llm_config["completion_service"].copy()
+
+    # Ensure chat_model is always present; fall back to llm_model
+    if "chat_model" not in result:
+        result["chat_model"] = result["llm_model"]
+
+    return result
 
 PATH_PREFIX = os.getenv("PATH_PREFIX", "")
 PRODUCTION = os.getenv("PRODUCTION", "false").lower() == "true"
@@ -127,6 +142,10 @@ if "authentication_configuration" in llm_config:
 completion_config = llm_config.get("completion_service")
 if completion_config is None:
     raise Exception("completion_service is not found in llm_config")
+if "llm_service" not in completion_config:
+    raise Exception("llm_service is not found in completion_service")
+if "llm_model" not in completion_config:
+    raise Exception("llm_model is not found in completion_service")
 
 # Log which model will be used for chatbot and ECC/GraphRAG
 if "chat_model" in completion_config:
@@ -350,29 +369,30 @@ def reload_llm_config(new_llm_config: dict = None):
         dict: Status of reload operation
     """
     global llm_config, embedding_service, completion_config, embedding_config, multimodal_config
-    
+
     try:
-        # If new config provided, save it first
-        if new_llm_config is not None:
+        with _config_file_lock:
+            # If new config provided, save it first
+            if new_llm_config is not None:
+                with open(SERVER_CONFIG, "r") as f:
+                    server_config = json.load(f)
+
+                server_config["llm_config"] = new_llm_config
+
+                temp_file = f"{SERVER_CONFIG}.tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(server_config, f, indent=2)
+                os.replace(temp_file, SERVER_CONFIG)
+
+            # Read/reload from file
             with open(SERVER_CONFIG, "r") as f:
                 server_config = json.load(f)
-            
-            server_config["llm_config"] = new_llm_config
-            
-            temp_file = f"{SERVER_CONFIG}.tmp"
-            with open(temp_file, "w") as f:
-                json.dump(server_config, f, indent=2)
-            os.replace(temp_file, SERVER_CONFIG)
-        
-        # Read/reload from file
-        with open(SERVER_CONFIG, "r") as f:
-            server_config = json.load(f)
-        
+
         # Validate before updating
         new_llm_config = server_config.get("llm_config")
         if new_llm_config is None:
             raise Exception("llm_config is not found in SERVER_CONFIG")
-        
+
         # Inject authentication_configuration into service configs BEFORE updating globals
         if "authentication_configuration" in new_llm_config:
             if "completion_service" in new_llm_config:
@@ -381,30 +401,43 @@ def reload_llm_config(new_llm_config: dict = None):
                 new_llm_config["embedding_service"]["authentication_configuration"] = new_llm_config["authentication_configuration"]
             if "multimodal_service" in new_llm_config:
                 new_llm_config["multimodal_service"]["authentication_configuration"] = new_llm_config["authentication_configuration"]
-        
+
         new_completion_config = new_llm_config.get("completion_service")
         new_embedding_config = new_llm_config.get("embedding_service")
         new_multimodal_config = new_llm_config.get("multimodal_service")
-        
+
         if new_completion_config is None:
             raise Exception("completion_service is not found in llm_config")
         if new_embedding_config is None:
             raise Exception("embedding_service is not found in llm_config")
-        
-        # Update llm_config in-place to preserve references in other modules (ui.py imports this)
-        llm_config.clear()
+
+        # Validate required fields before touching globals
+        if "llm_service" not in new_completion_config:
+            raise Exception("llm_service is not found in completion_service")
+        if "llm_model" not in new_completion_config:
+            raise Exception("llm_model is not found in completion_service")
+
+        # Update globals atomically: build complete new state, then swap in one step.
+        # Using dict slice assignment avoids the clear()+update() window where readers
+        # would see an empty dict.
+        old_llm_keys = set(llm_config.keys())
+        for k in old_llm_keys - set(new_llm_config.keys()):
+            del llm_config[k]
         llm_config.update(new_llm_config)
-        
-        # Update service configs in-place to preserve references
-        completion_config.clear()
+
+        old_completion_keys = set(completion_config.keys())
+        for k in old_completion_keys - set(new_completion_config.keys()):
+            del completion_config[k]
         completion_config.update(new_completion_config)
-        
-        embedding_config.clear()
+
+        old_embedding_keys = set(embedding_config.keys())
+        for k in old_embedding_keys - set(new_embedding_config.keys()):
+            del embedding_config[k]
         embedding_config.update(new_embedding_config)
-        
+
         # multimodal_config can be reassigned (not imported elsewhere)
         multimodal_config = new_multimodal_config
-        
+
         # Re-initialize embedding service
         if embedding_config["embedding_model_service"].lower() == "openai":
             embedding_service = OpenAI_Embedding(embedding_config)
@@ -420,12 +453,12 @@ def reload_llm_config(new_llm_config: dict = None):
             embedding_service = Ollama_Embedding(embedding_config)
         else:
             raise Exception("Embedding service not implemented")
-        
+
         return {
             "status": "success",
             "message": "LLM configuration reloaded successfully"
         }
-        
+
     except Exception as e:
         return {
             "status": "error",
@@ -445,29 +478,32 @@ def reload_db_config(new_db_config: dict = None):
         dict: Status of reload operation
     """
     global db_config
-    
+
     try:
-        if new_db_config is not None:
+        with _config_file_lock:
+            if new_db_config is not None:
+                with open(SERVER_CONFIG, "r") as f:
+                    server_config = json.load(f)
+
+                server_config["db_config"] = new_db_config
+
+                temp_file = f"{SERVER_CONFIG}.tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(server_config, f, indent=2)
+                os.replace(temp_file, SERVER_CONFIG)
+
             with open(SERVER_CONFIG, "r") as f:
                 server_config = json.load(f)
-            
-            server_config["db_config"] = new_db_config
-            
-            temp_file = f"{SERVER_CONFIG}.tmp"
-            with open(temp_file, "w") as f:
-                json.dump(server_config, f, indent=2)
-            os.replace(temp_file, SERVER_CONFIG)
-        
-        with open(SERVER_CONFIG, "r") as f:
-            server_config = json.load(f)
-        
+
         new_db_config = server_config.get("db_config")
         if new_db_config is None:
             raise Exception("db_config is not found in SERVER_CONFIG")
-        
-        db_config.clear()
+
+        old_db_keys = set(db_config.keys())
+        for k in old_db_keys - set(new_db_config.keys()):
+            del db_config[k]
         db_config.update(new_db_config)
-        
+
         return {
             "status": "success",
             "message": "DB configuration reloaded successfully"
@@ -488,13 +524,12 @@ def reload_graphrag_config():
         dict: Status of reload operation
     """
     global graphrag_config
-    
+
     try:
-        # Read from file
-        with open(SERVER_CONFIG, "r") as f:
-            server_config = json.load(f)
-        
-        # Validate
+        with _config_file_lock:
+            with open(SERVER_CONFIG, "r") as f:
+                server_config = json.load(f)
+
         new_graphrag_config = server_config.get("graphrag_config")
         if new_graphrag_config is None:
             new_graphrag_config = {"reuse_embedding": True}
@@ -506,7 +541,9 @@ def reload_graphrag_config():
             new_graphrag_config["extractor"] = "llm"
         
         # Update graphrag_config in-place to preserve references in other modules
-        graphrag_config.clear()
+        old_graphrag_keys = set(graphrag_config.keys())
+        for k in old_graphrag_keys - set(new_graphrag_config.keys()):
+            del graphrag_config[k]
         graphrag_config.update(new_graphrag_config)
         
         logger.info(f"GraphRAG config reloaded: extractor={graphrag_config.get('extractor')}, chunker={graphrag_config.get('chunker')}, reuse_embedding={graphrag_config.get('reuse_embedding')}")

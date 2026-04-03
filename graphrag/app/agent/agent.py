@@ -168,6 +168,10 @@ class TigerGraphAgent:
 def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retriever="hybridsearch") -> TigerGraphAgent:
     completion_service_config = get_completion_config(graphname)
 
+    # The chatbot agent uses chat_model (get_completion_config guarantees it is present,
+    # falling back to llm_model when not explicitly configured).
+    completion_service_config["llm_model"] = completion_service_config["chat_model"]
+
     if completion_service_config["llm_service"].lower() == "openai":
         llm_service_name = "openai"
         llm_provider = OpenAI(completion_service_config)
@@ -204,10 +208,9 @@ def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retr
         )
         raise Exception("LLM Completion Service Not Supported")
 
-    chat_model_name = completion_service_config.get("chat_model", completion_service_config.get("llm_model", "unknown"))
-    prompt_path = completion_service_config.get("prompt_path", "unknown")
     logger.info(
-        f"[CHATBOT] graph={graphname} model={chat_model_name} provider={llm_service_name} prompt_path={prompt_path}"
+        f"[CHATBOT] graph={graphname} model={completion_service_config['llm_model']} "
+        f"provider={llm_service_name} prompt_path={completion_service_config.get('prompt_path', 'unknown')}"
     )
 
     agent = TigerGraphAgent(

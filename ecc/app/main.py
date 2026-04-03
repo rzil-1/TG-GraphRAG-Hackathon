@@ -119,7 +119,7 @@ def initialize_eventual_consistency_checker(
             index_names,
             conn,
             extractor,
-            graphrag_config.get("batch_size", 100),
+            graphrag_config.get("checker_batch_size", graphrag_config.get("batch_size", 100)),
         )
         consistency_checkers[graphname] = checker
 
@@ -216,12 +216,12 @@ async def run_with_tracking(task_key: str, run_func, graphname: str, conn):
         LogWriter.info(f"Starting ECC task: {task_key}")
         
         # Reload config at the start of each job to ensure latest settings are used
-        LogWriter.info("📥 Reloading configuration for new job...")
+        LogWriter.info("Reloading configuration for new job...")
         from common.config import reload_llm_config, reload_graphrag_config, reload_db_config
-        
+
         llm_result = reload_llm_config()
         if llm_result["status"] == "success":
-            LogWriter.info(f"✅ LLM config reloaded: {llm_result['message']}")
+            LogWriter.info(f"LLM config reloaded: {llm_result['message']}")
             completion_service = llm_config.get("completion_service", {})
             ecc_model = completion_service.get("llm_model", "unknown")
             ecc_provider = completion_service.get("llm_service", "unknown")
@@ -229,24 +229,24 @@ async def run_with_tracking(task_key: str, run_func, graphname: str, conn):
                 f"[ECC] Using completion model={ecc_model} (provider={ecc_provider})"
             )
         else:
-            LogWriter.warning(f"⚠️ LLM config reload had issues: {llm_result['message']}")
+            LogWriter.warning(f"LLM config reload had issues: {llm_result['message']}")
 
         db_result = reload_db_config()
         if db_result["status"] == "success":
             LogWriter.info(
-                f"✅ DB config reloaded: {db_result['message']} "
+                f"DB config reloaded: {db_result['message']} "
                 f"(host={db_config.get('hostname')}, "
                 f"restppPort={db_config.get('restppPort')}, "
                 f"gsPort={db_config.get('gsPort')})"
             )
         else:
-            LogWriter.warning(f"⚠️ DB config reload had issues: {db_result['message']}")
-        
+            LogWriter.warning(f"DB config reload had issues: {db_result['message']}")
+
         graphrag_result = reload_graphrag_config()
         if graphrag_result["status"] == "success":
-            LogWriter.info(f"✅ GraphRAG config reloaded: {graphrag_result['message']}")
+            LogWriter.info(f"GraphRAG config reloaded: {graphrag_result['message']}")
         else:
-            LogWriter.warning(f"⚠️ GraphRAG config reload had issues: {graphrag_result['message']}")
+            LogWriter.warning(f"GraphRAG config reload had issues: {graphrag_result['message']}")
         
         # Now run the actual job with fresh config
         await run_func(graphname, conn)
@@ -281,13 +281,13 @@ def consistency_update(
     db_result = reload_db_config()
     if db_result["status"] == "success":
         LogWriter.info(
-            f"✅ DB config reloaded: {db_result['message']} "
+            f"DB config reloaded: {db_result['message']} "
             f"(host={db_config.get('hostname')}, "
             f"restppPort={db_config.get('restppPort')}, "
             f"gsPort={db_config.get('gsPort')})"
         )
     else:
-        LogWriter.warning(f"⚠️ DB config reload had issues: {db_result['message']}")
+        LogWriter.warning(f"DB config reload had issues: {db_result['message']}")
 
     if isinstance(credentials, HTTPBasicCredentials):
         conn = elevate_db_connection_to_token(

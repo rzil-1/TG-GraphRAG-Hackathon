@@ -18,6 +18,10 @@ const GraphRAGConfig = () => {
   // Default chunker (used when no chunker specified in document)
   const [defaultChunker, setDefaultChunker] = useState("semantic");
   
+  // Retrieval settings
+  const [topK, setTopK] = useState("5");
+  const [numHops, setNumHops] = useState("2");
+
   // Chunker-specific settings
   const [chunkSize, setChunkSize] = useState("1024");
   const [overlapSize, setOverlapSize] = useState("0");
@@ -55,7 +59,9 @@ const GraphRAGConfig = () => {
         setEccUrl(graphragConfig.ecc || "http://graphrag-ecc:8001");
         setChatHistoryUrl(graphragConfig.chat_history_api || "http://chat-history:8002");
         setDefaultChunker(graphragConfig.chunker || "semantic");
-        
+        setTopK(String(graphragConfig.top_k ?? 5));
+        setNumHops(String(graphragConfig.num_hops ?? 2));
+
         const chunkerConfig = graphragConfig.chunker_config || {};
         setChunkSize(String(chunkerConfig.chunk_size || 1024));
         setOverlapSize(String(chunkerConfig.overlap_size || 0));
@@ -101,7 +107,9 @@ const GraphRAGConfig = () => {
         ecc: eccUrl,
         chat_history_api: chatHistoryUrl,
         chunker: defaultChunker,
-        chunker_config: chunkerConfig
+        chunker_config: chunkerConfig,
+        top_k: parseInt(topK),
+        num_hops: parseInt(numHops),
       };
 
       const response = await fetch("/ui/config/graphrag", {
@@ -228,6 +236,42 @@ const GraphRAGConfig = () => {
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Chat history service endpoint
                 </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                    Top K
+                  </label>
+                  <Input
+                    type="number"
+                    min="1"
+                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    placeholder="5"
+                    value={topK}
+                    onChange={(e) => setTopK(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Number of top similar results to retrieve during search
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                    Number of Hops
+                  </label>
+                  <Input
+                    type="number"
+                    min="1"
+                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    placeholder="2"
+                    value={numHops}
+                    onChange={(e) => setNumHops(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Number of graph hops to traverse when expanding retrieved results
+                  </p>
+                </div>
               </div>
             </div>
           </div>

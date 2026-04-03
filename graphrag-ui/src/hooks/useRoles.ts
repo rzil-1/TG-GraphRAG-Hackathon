@@ -50,7 +50,6 @@ export function useRoles(refreshKey?: unknown): RolesState {
         setUserRoles([]);
         setGraphRoles({});
         setHasCreds(false);
-        setRolesLoaded(true);
         return;
       }
       const data = await response.json();
@@ -59,6 +58,11 @@ export function useRoles(refreshKey?: unknown): RolesState {
       setGraphRoles(parseGraphRoles(data.graph_roles));
       setSelectedGraph(localStorage.getItem("selectedGraph") || "");
       setHasCreds(true);
+    } catch (err) {
+      console.error("Failed to fetch user roles:", err);
+      setUserRoles([]);
+      setGraphRoles({});
+      setHasCreds(false);
     } finally {
       setRolesLoaded(true);
     }
