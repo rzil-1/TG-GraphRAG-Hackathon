@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Database, Loader2, RefreshCw, Upload } from "lucide-react";
+import { pauseIdleTimer, resumeIdleTimer } from "@/hooks/useIdleTimeout";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +52,7 @@ const KGAdmin = () => {
     setRefreshDialogOpen(open);
     if (!open) {
       setRefreshMessage("");
+      setPollingActive(false);
     }
   };
 
@@ -67,6 +69,7 @@ const KGAdmin = () => {
   const [isRebuildRunning, setIsRebuildRunning] = useState(false);
   const isRebuildRunningRef = useRef(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const [pollingActive, setPollingActive] = useState(false);
 
   // Load available graphs
   useEffect(() => {
@@ -210,6 +213,7 @@ const KGAdmin = () => {
         isRebuildRunningRef.current = isCurrentlyRunning;
 
         if (isCurrentlyRunning) {
+          setPollingActive(true);
           const startTime = statusData.started_at
             ? new Date(statusData.started_at * 1000).toLocaleString()
             : "unknown time";
@@ -218,12 +222,16 @@ const KGAdmin = () => {
           );
         } else if (wasRunning && statusData.status === "completed") {
           setRefreshMessage(`✅ Rebuild completed successfully for "${graphName}".`);
+          setPollingActive(false);
         } else if (statusData.status === "failed") {
           setRefreshMessage(`❌ Previous rebuild failed: ${statusData.error || "Unknown error"}`);
+          setPollingActive(false);
         } else if (statusData.status === "error") {
           setRefreshMessage(`❌ Failed to check rebuild status: ${statusData.error || "Unknown error"}`);
+          setPollingActive(false);
         } else if (statusData.status === "unknown") {
           setRefreshMessage(`⚠️ ECC service returned unknown status. It may be unavailable.`);
+          setPollingActive(false);
         } else {
           setRefreshMessage("");
         }
@@ -314,6 +322,7 @@ const KGAdmin = () => {
       );
       setIsRebuildRunning(true);
       isRebuildRunningRef.current = true;
+      setPollingActive(true);
     } catch (error: any) {
       console.error("Error refreshing graph:", error);
       setRefreshMessage(`❌ Error: ${error.message}`);
@@ -322,18 +331,27 @@ const KGAdmin = () => {
     }
   };
 
-  // Check status on interval
+  // Initial status check when dialog opens
   useEffect(() => {
     if (refreshDialogOpen && refreshGraphName) {
       checkRebuildStatus(refreshGraphName, true);
-
-      const intervalId = setInterval(() => {
-        checkRebuildStatus(refreshGraphName, false);
-      }, 5000);
-
-      return () => clearInterval(intervalId);
     }
   }, [refreshDialogOpen, refreshGraphName]);
+
+  // Poll status only while a rebuild is actively running
+  useEffect(() => {
+    if (!pollingActive || !refreshDialogOpen || !refreshGraphName) return;
+
+    pauseIdleTimer();
+    const intervalId = setInterval(() => {
+      checkRebuildStatus(refreshGraphName, false);
+    }, 5000);
+
+    return () => {
+      clearInterval(intervalId);
+      resumeIdleTimer();
+    };
+  }, [pollingActive, refreshDialogOpen, refreshGraphName]);
 
   return (
     <div className="p-8">
@@ -635,15 +653,15 @@ const KGAdmin = () => {
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     Submitting...
                   </>
-                ) : isCheckingStatus ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Checking Status...
-                  </>
                 ) : isRebuildRunning ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     Rebuild In Progress...
+                  </>
+                ) : isCheckingStatus ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Checking Status...
                   </>
                 ) : (
                   <>

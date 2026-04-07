@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useConfirm } from "@/hooks/useConfirm";
+import { pauseIdleTimer, resumeIdleTimer } from "@/hooks/useIdleTimeout";
 
 interface IngestGraphProps {
   isModal?: boolean;
@@ -578,7 +579,6 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
         setIsIngesting(false);
       } else {
         setIngestMessage("Step 2/2: Running document ingest...");
-
         const loadingInfo = {
           load_job_id: createData.load_job_id,
           data_source_id: createData.data_source_id,
@@ -855,6 +855,15 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
       setIsIngesting(false);
     }
   };
+
+  // Pause idle timer while ingestion is running
+  useEffect(() => {
+    if (isIngesting) {
+      pauseIdleTimer();
+    } else {
+      resumeIdleTimer();
+    }
+  }, [isIngesting]);
 
   // Load available graphs from sessionStorage on mount
   useEffect(() => {

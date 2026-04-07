@@ -17,6 +17,14 @@ import { useIdleTimeout } from "./hooks/useIdleTimeout.ts";
 
 import "./components/i18n";
 
+/** Redirect to login if no credentials in session. */
+const RequireAuth = ({ children }: { children: any }) => {
+  if (!sessionStorage.getItem("creds")) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+};
+
 const Layout = () => {
   useIdleTimeout();
   return (
@@ -38,19 +46,19 @@ const router = createBrowserRouter([
       },
       {
         path: "/chat",
-        element: <Chat />,
+        element: <RequireAuth><Chat /></RequireAuth>,
       },
       {
         path: "/chat-dialog",
-        element: <ChatDialog />,
+        element: <RequireAuth><ChatDialog /></RequireAuth>,
       },
       {
         path: "/preferences",
-        element: <ChatDialog />,
+        element: <RequireAuth><ChatDialog /></RequireAuth>,
       },
       {
         path: "/setup",
-        element: <SetupLayout />,
+        element: <RequireAuth><SetupLayout /></RequireAuth>,
         children: [
           {
             path: "",

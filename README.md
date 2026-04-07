@@ -552,7 +552,7 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `authentication_configuration` | object | — | Shared authentication credentials. Merged into all service configs (service-specific values take precedence). |
-| `token_limit` | int | — | Shared token limit propagated to `completion_service` and `embedding_service` if they don't define their own. Use `0` or negative for unlimited. |
+| `token_limit` | int | — | Maximum token count for truncating text before processing. For `completion_service`, caps retrieved context sent to the LLM. `0` or omitted means no truncation. |
 
 **`completion_service` parameters:**
 

@@ -370,7 +370,7 @@ const GraphRAGConfig = () => {
                   </label>
                 </div>
                 <p className="text-xs text-gray-600 dark:text-[#D9D9D9] mt-1 ml-6">
-                  Skip entity graph traversal and use only document chunks for hybrid search
+                  Retrieve original documents instead of document chunks in results
                 </p>
               </div>
             </div>

@@ -21,7 +21,6 @@ class AzureOpenAI(LLM_Model):
             azure_deployment=config["azure_deployment"],
             openai_api_version=config["openai_api_version"],
             model_name=config["llm_model"],
-            max_tokens=config.get("token_limit"),
             temperature=config["model_kwargs"]["temperature"],
         )
 
