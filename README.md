@@ -464,28 +464,28 @@ Copy the below code into `configs/server_config.json`. You shouldn’t need to c
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `reuse_embedding` | bool | `true` | Skip re-generating the embedding if it already exists on a vertex. |
-| `ecc` | string | `"http://graphrag-ecc:8001"` | URL of the Entity-Context-Community (ECC) service. No change needed when using the provided Docker Compose file. |
+| `reuse_embedding` | bool | `true` | Reuse existing embeddings instead of regenerating them. |
+| `ecc` | string | `"http://graphrag-ecc:8001"` | URL of the knowledge graph build service. No change needed when using the provided Docker Compose file. |
 | `chat_history_api` | string | `"http://chat-history:8002"` | URL of the chat history service. No change needed when using the provided Docker Compose file. |
 | `chunker` | string | `"semantic"` | Default document chunker. Options: `semantic`, `character`, `regex`, `markdown`, `html`, `recursive`. |
 | `extractor` | string | `"llm"` | Entity extraction method. Options: `llm`, `graphrag`. |
 | `chunker_config` | object | `{}` | Chunker-specific settings. For `character`/`markdown`/`recursive`: `chunk_size`, `overlap_size`. For `semantic`: `method`, `threshold`. For `regex`: `pattern`. |
 | `top_k` | int | `5` | Number of top similar results to retrieve during search. |
 | `num_hops` | int | `2` | Number of graph hops to traverse when expanding retrieved results. |
-| `num_seen_min` | int | `2` | Minimum number of times a node must appear across retrievals to be included. |
+| `num_seen_min` | int | `2` | Minimum occurrence threshold for a node to be included in search results. |
 | `community_level` | int | `2` | Community hierarchy level used for community search. |
 | `chunk_only` | bool | `true` | If true, hybrid search only retrieves document chunks (not entities). |
-| `doc_only` | bool | `false` | If true, hybrid search only retrieves from document chunks, skipping entity traversal. |
+| `doc_only` | bool | `false` | If true, hybrid search retrieves whole documents instead of chunks. |
 | `with_chunk` | bool | `true` | If true, community search also includes document chunks in results. |
 | `doc_process_switch` | bool | `true` | Enable/disable document processing during knowledge graph build. |
 | `entity_extraction_switch` | bool | same as `doc_process_switch` | Enable/disable entity extraction during knowledge graph build. |
 | `community_detection_switch` | bool | same as `entity_extraction_switch` | Enable/disable community detection during knowledge graph build. |
-| `load_batch_size` | int | `500` | Batch size for upserting vertices during document loading. |
-| `upsert_delay` | int | `0` | Delay in seconds between upsert batches. |
-| `tg_concurrency` | int | `10` | Max concurrent requests to TigerGraph during processing. |
-| `process_interval_seconds` | int | `300` | Interval for background consistency processing (when enabled). |
-| `cleanup_interval_seconds` | int | `300` | Interval for background cleanup (when enabled). |
-| `checker_batch_size` | int | `100` | Number of vertices to scan per batch during background consistency checking. (Also accepts legacy key `batch_size`.) |
+| `load_batch_size` | int | `500` | Batch size for document loading. |
+| `upsert_delay` | int | `0` | Delay in seconds between loading batches. |
+| `default_concurrency` | int | `10` | Base concurrency level for parallel processing. Configurable per graph. |
+| `process_interval_seconds` | int | `300` | Interval (seconds) for background consistency processing. |
+| `cleanup_interval_seconds` | int | `300` | Interval (seconds) for background cleanup. |
+| `checker_batch_size` | int | `100` | Batch size for background consistency checking. |
 | `enable_consistency_checker` | bool | `false` | Enable the background consistency checker. |
 | `graph_names` | list | `[]` | Graphs to monitor when consistency checker is enabled. |
 
@@ -539,10 +539,10 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 }
 ```
 
-- `authentication_configuration`: Shared credentials, merged into all service configs. Service-level keys take precedence over top-level keys.
-- `completion_service` **(required)**: LLM for ECC/GraphRAG ingestion tasks.
+- `authentication_configuration`: Shared credentials for all services. Service-level keys take precedence over top-level keys.
+- `completion_service` **(required)**: LLM for knowledge graph building and query generation.
 - `embedding_service` **(required)**: Text embedding model for document indexing.
-- `chat_service` *(optional)*: Chatbot LLM override. Missing keys are inherited from `completion_service`. Graph admins can configure this per graph.
+- `chat_service` *(optional)*: Chatbot LLM override. Missing keys are inherited from `completion_service`. Configurable per graph.
 - `multimodal_service` *(optional)*: Vision/image model for document ingestion.
 
 #### Supported parameters
@@ -551,20 +551,20 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `authentication_configuration` | object | — | Shared authentication credentials. Merged into all service configs (service-specific values take precedence). |
-| `token_limit` | int | — | Maximum token count for truncating text before processing. For `completion_service`, caps retrieved context sent to the LLM. `0` or omitted means no truncation. |
+| `authentication_configuration` | object | — | Shared authentication credentials for all services. Service-level values take precedence. |
+| `token_limit` | int | — | Maximum token count for retrieved context. Inherited by all services if not set at service level. `0` or omitted means unlimited. |
 
 **`completion_service` parameters:**
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `llm_service` | string | **Yes** | — | LLM provider. Options: `openai`, `azure`, `vertexai`, `genai`, `bedrock`, `sagemaker`, `groq`, `ollama`, `huggingface`, `watsonx`. |
-| `llm_model` | string | **Yes** | — | Model name for ECC/GraphRAG tasks (e.g., `gpt-4.1-mini`). |
-| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials (overrides top-level). |
-| `model_kwargs` | object | No | `{}` | Additional keyword arguments passed to the LLM (e.g., `{"temperature": 0}`). |
+| `llm_model` | string | **Yes** | — | Model name for knowledge graph building and query generation (e.g., `gpt-4.1-mini`). |
+| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials. Overrides top-level values. |
+| `model_kwargs` | object | No | `{}` | Additional model parameters (e.g., `{"temperature": 0}`). |
 | `prompt_path` | string | No | `"./common/prompts/openai_gpt4/"` | Path to prompt template files. |
-| `base_url` | string | No | — | Custom API base URL (for self-hosted or proxy endpoints). |
-| `token_limit` | int | No | inherited from top-level | Max token limit for this service. |
+| `base_url` | string | No | — | Custom API endpoint URL. |
+| `token_limit` | int | No | inherited from top-level | Max token count for retrieved context sent to the LLM. `0` or omitted means unlimited. |
 
 **`embedding_service` parameters:**
 
@@ -573,33 +573,33 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 | `embedding_model_service` | string | **Yes** | — | Embedding provider. Options: `openai`, `azure`, `vertexai`, `genai`, `bedrock`, `ollama`. |
 | `model_name` | string | **Yes** | — | Embedding model name (e.g., `text-embedding-3-small`). |
 | `dimensions` | int | No | `1536` | Embedding vector dimensions. |
-| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials (overrides top-level). |
+| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials. Overrides top-level values. |
 
 **`chat_service` parameters (optional):**
 
-Per-graph chatbot LLM override. If not configured, the chatbot inherits from `completion_service`. When partially specified, missing keys are inherited from `completion_service`. Graph admins can configure this per graph via the UI.
+Chatbot LLM override. If not configured, inherits from `completion_service`. Configurable per graph via the UI.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `llm_service` | string | No | same as completion | LLM provider for the chatbot. |
 | `llm_model` | string | No | same as completion | Model name for the chatbot. |
-| `authentication_configuration` | object | No | inherited from completion | Auth credentials. Lower-level keys take precedence; missing keys fall back to upper level. |
-| `model_kwargs` | object | No | inherited from completion | Additional keyword arguments (e.g., `{"temperature": 0}`). |
+| `authentication_configuration` | object | No | inherited from completion | Auth credentials. Service-level values take precedence. |
+| `model_kwargs` | object | No | inherited from completion | Additional model parameters (e.g., `{"temperature": 0}`). |
 | `prompt_path` | string | No | inherited from completion | Path to prompt template files. |
-| `base_url` | string | No | inherited from completion | Custom API base URL. |
-| `token_limit` | int | No | inherited from completion | Max token limit for chatbot responses. |
+| `base_url` | string | No | inherited from completion | Custom API endpoint URL. |
+| `token_limit` | int | No | inherited from completion | Max token count for retrieved context sent to the chatbot LLM. `0` or omitted means unlimited. |
 
 **`multimodal_service` parameters (optional):**
 
-Used for vision/image description tasks during document ingestion. If not configured, a default vision model is auto-derived from the completion service provider.
+Vision model for image processing during document ingestion. If not configured, inherits from `completion_service` with a default vision model derived per provider.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `llm_service` | string | No | same as completion | Multimodal LLM provider. |
+| `llm_service` | string | No | inherited from completion | Multimodal LLM provider. |
 | `llm_model` | string | No | auto-derived per provider | Vision model name (e.g., `gpt-4o`). |
-| `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials. |
-| `model_kwargs` | object | No | `{}` | Additional keyword arguments. |
-| `prompt_path` | string | No | `"./common/prompts/openai_gpt4/"` | Path to prompt template files. |
+| `authentication_configuration` | object | No | inherited from completion | Service-specific auth credentials. Overrides top-level values. |
+| `model_kwargs` | object | No | inherited from completion | Additional model parameters. |
+| `prompt_path` | string | No | inherited from completion | Path to prompt template files. |
 
 #### Provider examples
 

@@ -163,7 +163,7 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
             // Create bot message
             const botMessage = createChatBotMessage({
               content: msg.content || "",
-              response_type: msg.response_type || "text",
+              response_type: "history",
               query_sources: msg.query_sources,
               answered_question: msg.answered_question,
             });

@@ -64,7 +64,7 @@ INSTALL QUERY {query_name}
     return {"result": res, "error": False}
 
 
-chunk_sem = asyncio.Semaphore(20)
+chunk_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def chunk_doc(
@@ -172,7 +172,7 @@ async def upsert_chunk(conn: AsyncTigerGraphConnection, doc_id, chunk_id, chunk)
         )
 
 
-embed_sem = asyncio.Semaphore(20)
+embed_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def embed(
@@ -220,7 +220,7 @@ async def get_vert_desc(conn, v_id, node: Node):
     return desc
 
 
-extract_sem = asyncio.Semaphore(20)
+extract_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def extract(
@@ -406,7 +406,7 @@ async def extract(
                 # right now, we're not embedding relationships in graphrag
 
 
-comm_sem = asyncio.Semaphore(20)
+comm_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def process_community(

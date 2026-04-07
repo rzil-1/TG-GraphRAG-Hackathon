@@ -13,6 +13,14 @@
 # limitations under the License.
 
 import os
+import re
+import logging
+from langchain_core.output_parsers import BaseOutputParser, PydanticOutputParser
+from langchain_core.exceptions import OutputParserException
+from langchain_core.prompts import BasePromptTemplate
+from langchain_community.callbacks.manager import get_openai_callback
+
+logger = logging.getLogger(__name__)
 
 
 class LLM_Model:
@@ -48,6 +56,91 @@ class LLM_Model:
             with open(path) as f:
                 return f.read()
         return None
+
+    def invoke_with_parser(
+        self,
+        prompt: BasePromptTemplate,
+        parser: BaseOutputParser,
+        input_variables: dict,
+        caller_name: str = "unknown",
+    ):
+        """Invoke the LLM with a prompt and parse the output using the given parser.
+
+        Builds a chain (prompt | llm), invokes it, and parses the output.
+        Supports PydanticOutputParser (with JSON extraction fallback)
+        and StrOutputParser (returns raw text).
+
+        Args:
+            prompt: The prompt template.
+            parser: The output parser (PydanticOutputParser, StrOutputParser, etc.).
+            input_variables: Dict of variables to pass to the prompt.
+            caller_name: Name of the calling function (for logging).
+
+        Returns:
+            Parsed Pydantic model instance.
+
+        Raises:
+            OutputParserException: If all parsing attempts fail.
+        """
+
+        chain = prompt | self.llm
+
+        usage_data = {}
+        with get_openai_callback() as cb:
+            raw_output = chain.invoke(input_variables)
+
+            usage_data["input_tokens"] = cb.prompt_tokens
+            usage_data["output_tokens"] = cb.completion_tokens
+            usage_data["total_tokens"] = cb.total_tokens
+            usage_data["cost"] = cb.total_cost
+            logger.info(f"{caller_name} usage: {usage_data}")
+
+        raw_text = raw_output.content if hasattr(raw_output, "content") else str(raw_output)
+
+        try:
+            return parser.parse(raw_text)
+        except OutputParserException:
+            logger.warning(f"{caller_name}: parser failed, attempting JSON extraction")
+            json_match = re.search(r'\{[\s\S]*\}', raw_text)
+            if json_match:
+                return parser.parse(json_match.group())
+            raise
+
+    async def ainvoke_with_parser(
+        self,
+        prompt: BasePromptTemplate,
+        parser: BaseOutputParser,
+        input_variables: dict,
+        caller_name: str = "unknown",
+    ):
+        """Async version of invoke_with_parser.
+
+        Uses chain.ainvoke() to avoid blocking the event loop,
+        suitable for async callers (e.g., ECC workers).
+        """
+
+        chain = prompt | self.llm
+
+        usage_data = {}
+        with get_openai_callback() as cb:
+            raw_output = await chain.ainvoke(input_variables)
+
+            usage_data["input_tokens"] = cb.prompt_tokens
+            usage_data["output_tokens"] = cb.completion_tokens
+            usage_data["total_tokens"] = cb.total_tokens
+            usage_data["cost"] = cb.total_cost
+            logger.info(f"{caller_name} usage: {usage_data}")
+
+        raw_text = raw_output.content if hasattr(raw_output, "content") else str(raw_output)
+
+        try:
+            return parser.parse(raw_text)
+        except OutputParserException:
+            logger.warning(f"{caller_name}: parser failed, attempting JSON extraction")
+            json_match = re.search(r'\{[\s\S]*\}', raw_text)
+            if json_match:
+                return parser.parse(json_match.group())
+            raise
 
     @property
     def map_question_schema_prompt(self):

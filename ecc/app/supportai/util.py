@@ -13,6 +13,7 @@ from pyTigerGraph import TigerGraphConnection
 
 from common.config import (
     embedding_service,
+    graphrag_config,
     get_llm_service,
     get_completion_config,
     get_graphrag_config,
@@ -26,7 +27,8 @@ from common.logs.logwriter import LogWriter
 logger = logging.getLogger(__name__)
 http_timeout = httpx.Timeout(15.0)
 
-tg_sem = asyncio.Semaphore(100)
+_default_concurrency = graphrag_config.get("default_concurrency", 10)
+tg_sem = asyncio.Semaphore(_default_concurrency * 2)
 
 async def install_queries(
     requried_queries: list[str],

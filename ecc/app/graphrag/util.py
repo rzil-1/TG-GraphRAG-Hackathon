@@ -41,7 +41,11 @@ logger = logging.getLogger(__name__)
 
 http_timeout = httpx.Timeout(15.0)
 
-tg_sem = asyncio.Semaphore(graphrag_config.get("tg_concurrency", 10))
+_default_concurrency = graphrag_config.get("default_concurrency", 10)
+# Worker amplifier: processing workers (chunk, embed, extract, community) run at 2x
+# the base concurrency since each worker is mostly waiting on I/O (LLM/embedding API calls).
+_worker_concurrency = _default_concurrency * 2
+tg_sem = asyncio.Semaphore(_default_concurrency)
 load_q = reusable_channel.ReuseableChannel()
 
 # will pause workers until the event is false

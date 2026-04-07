@@ -26,6 +26,7 @@ from agent.agent_router import TigerGraphAgentRouter
 from agent.agent_usefulness_check import TigerGraphAgentUsefulnessCheck
 from agent.Q import DONE, Q
 from langchain.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END, StateGraph
 from pyTigerGraph.common.exception import TigerGraphException
 from supportai.retrievers import (HybridRetriever, SimilarityRetriever,
@@ -103,12 +104,42 @@ class TigerGraphAgentGraph:
             state["question_retry_count"] += 1
         return state
 
+    _GREETING_PATTERNS = re.compile(
+        r"^("
+        r"h(i|ello|ey|owdy|iya)(\s+there)?|"
+        r"yo+|sup|what'?s\s*up|"
+        r"good\s+(morning|afternoon|evening|night|day)|"
+        r"greetings|"
+        r"thanks?(\s+you)?|thank\s+you(\s+so\s+much)?|"
+        r"bye|goodbye|see\s+you|take\s+care"
+        r")$",
+        re.IGNORECASE,
+    )
+
+    def _is_greeting(self, question: str) -> bool:
+        """Check if the question is a simple greeting or non-question."""
+        normalized = question.strip().rstrip("!?.,;")
+        return bool(self._GREETING_PATTERNS.match(normalized))
+
+    def greet(self, state):
+        """Respond to greetings and ask the user to provide a real question."""
+        self.emit_progress(DONE)
+        state["answer"] = GraphRAGResponse(
+            natural_language_response="Hello! I'm your knowledge graph assistant. Please ask a question about your data and I'll do my best to help.",
+            answered_question=False,
+            response_type="greeting",
+            query_sources={},
+        )
+        return state
+
     def route_question(self, state):
         """
         Run the agent router.
         """
         if state["question_retry_count"] > 2:
             return "apologize"
+        if self._is_greeting(state["question"]):
+            return "greeting"
         self.emit_progress("Thinking")
         step = TigerGraphAgentRouter(self.llm_provider, self.db_connection)
         logger.debug_pii(
@@ -162,9 +193,11 @@ class TigerGraphAgentGraph:
                 template=self.llm_provider.contextualize_question_prompt,
                 input_variables=["history", "question"],
             )
-            chain = prompt | self.llm_provider.llm
-            result = chain.invoke({"history": history_text, "question": question})
-            standalone = result.content.strip() if hasattr(result, "content") else str(result).strip()
+            standalone = self.llm_provider.invoke_with_parser(
+                prompt, StrOutputParser(),
+                {"history": history_text, "question": question},
+                caller_name="contextualize_question",
+            ).strip()
             logger.info(f"Contextualized question for KG search: {standalone}")
             return standalone or question
         except Exception as e:
@@ -271,9 +304,17 @@ class TigerGraphAgentGraph:
         self.emit_progress("Generating the query to answer your question")
         gen_history = []
         response_json = None
+        cypher = None
+        json_str = None
+        response = None
 
         for i in range(3):
-            cypher = self.cypher_gen._run(state["question"], gen_history)
+            try:
+                cypher = self.cypher_gen._run(state["question"], gen_history)
+            except ValueError as e:
+                logger.warning(f"Cypher generation failed: {e}")
+                gen_history.append(f"{i}: Error: {e}\n")
+                continue
             response = self.db_connection.gsql(cypher)
             response_lines = response.split("\n")
             json_str = "\n".join(response_lines[1:])
@@ -299,7 +340,8 @@ class TigerGraphAgentGraph:
             if "error_history" not in state or state["error_history"] is None:
                 state["error_history"] = []
             
-            state["error_history"].append({"error_message": response, "error_step": "generate_cypher"})
+            error_msg = response if response else "LLM failed to produce a valid Cypher query after 3 attempts"
+            state["error_history"].append({"error_message": error_msg, "error_step": "generate_cypher"})
 
         state["lookup_source"] = "cypher"
         return state
@@ -734,6 +776,7 @@ class TigerGraphAgentGraph:
             self.workflow.add_node("merge_history_context", self.merge_history_context)
         self.workflow.add_node("rewrite_question", self.rewrite_question)
         self.workflow.add_node("apologize", self.apologize)
+        self.workflow.add_node("greet", self.greet)
 
         if self.cypher_gen:
             self.workflow.add_node("generate_cypher", self.generate_cypher)
@@ -822,6 +865,7 @@ class TigerGraphAgentGraph:
                     "supportai_lookup": "supportai",
                     "inquiryai_lookup": "map_question_to_schema",
                     "history_lookup": "lookup_history",
+                    "greeting": "greet",
                     "apologize": "apologize",
                 },
             )
@@ -832,6 +876,7 @@ class TigerGraphAgentGraph:
                 {
                     "inquiryai_lookup": "map_question_to_schema",
                     "history_lookup": "lookup_history",
+                    "greeting": "greet",
                     "apologize": "apologize",
                 },
             )
@@ -852,6 +897,7 @@ class TigerGraphAgentGraph:
         self.workflow.add_edge("map_question_to_schema", "generate_function")
         self.workflow.add_edge("rewrite_question", "entry")
         self.workflow.add_edge("apologize", END)
+        self.workflow.add_edge("greet", END)
 
         app = self.workflow.compile()
         return app

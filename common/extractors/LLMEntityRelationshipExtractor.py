@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import re
 from typing import List
 import logging
 
@@ -37,6 +38,36 @@ class LLMEntityRelationshipExtractor(BaseExtractor):
         self.allowed_edge_types = allowed_relationship_types
         self.strict_mode = strict_mode
 
+    def _parse_json_output(self, content: str) -> dict:
+        """Parse JSON from LLM output with multiple fallback strategies.
+
+        Tries in order:
+          1. Direct json.loads
+          2. Extract from ```json code fences
+          3. Regex extraction of first JSON object
+        """
+        # Try direct parse
+        try:
+            return json.loads(content.strip("content="))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Try ```json code fence
+        if "```json" in content:
+            try:
+                return json.loads(
+                    content.split("```")[1].strip("```").strip("json").strip()
+                )
+            except (json.JSONDecodeError, ValueError, IndexError):
+                pass
+
+        # Regex fallback: extract first JSON object
+        match = re.search(r'\{[\s\S]*\}', content)
+        if match:
+            return json.loads(match.group())
+
+        raise ValueError(f"Could not extract JSON from LLM output: {content[:200]}")
+
     async def _aextract_kg_from_doc(self, doc, chain, parser) -> list[GraphDocument]:
         try:
             logger.debug(str(doc))
@@ -47,12 +78,7 @@ class LLMEntityRelationshipExtractor(BaseExtractor):
         except Exception as e:
             return [GraphDocument(nodes=[], relationships=[], source=Document(page_content=doc))]
         try:
-            if "```json" not in out.content:
-                json_out = json.loads(out.content.strip("content="))
-            else:
-                json_out = json.loads(
-                    out.content.split("```")[1].strip("```").strip("json").strip()
-                )
+            json_out = self._parse_json_output(out.content)
 
             formatted_rels = []
             for rels in json_out["rels"]:
@@ -124,7 +150,7 @@ class LLMEntityRelationshipExtractor(BaseExtractor):
                         for rel in formatted_rels
                         if rel["type"] in self.allowed_edge_types
                     ]
-        
+
             nodes = []
             for node in formatted_nodes:
                 nodes.append(Node(id=node["id"],
@@ -141,7 +167,7 @@ class LLMEntityRelationshipExtractor(BaseExtractor):
 
         except:
             return [GraphDocument(nodes=[], relationships=[], source=Document(page_content=doc))]
-        
+
     def _extract_kg_from_doc(self, doc, chain, parser) -> list[GraphDocument]:
         try:
             out = chain.invoke(
@@ -150,12 +176,7 @@ class LLMEntityRelationshipExtractor(BaseExtractor):
         except Exception as e:
             return [GraphDocument(nodes=[], relationships=[], source=Document(page_content=doc))]
         try:
-            if "```json" not in out.content:
-                json_out = json.loads(out.content.strip("content="))
-            else:
-                json_out = json.loads(
-                    out.content.split("```")[1].strip("```").strip("json").strip()
-                )
+            json_out = self._parse_json_output(out.content)
 
             formatted_rels = []
             for rels in json_out["rels"]:

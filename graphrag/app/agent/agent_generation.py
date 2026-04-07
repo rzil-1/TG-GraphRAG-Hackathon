@@ -16,7 +16,6 @@ import json
 import logging
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_community.callbacks.manager import get_openai_callback
 from typing import Optional
 from pydantic import BaseModel, Field
 from common.logs.logwriter import LogWriter
@@ -55,7 +54,6 @@ class TigerGraphAgentGenerator:
                     logger.info(f"Truncated context from {context_tokens} to {max_context_tokens} tokens")
 
         answer_parser = PydanticOutputParser(pydantic_object=GraphRAGAnswerOutput)
-
         prompt = PromptTemplate(
             template=self.llm.chatbot_response_prompt,
             input_variables=["question", "context", "query"],
@@ -64,28 +62,19 @@ class TigerGraphAgentGenerator:
             }
         )
 
-        full_prompt = prompt.format(
-            question=question,
-            context=context,
-            query=query,
-            format_instructions=answer_parser.get_format_instructions()
-        )
-
-        # Chain
-        rag_chain = prompt | self.llm.llm | answer_parser
-
         if isinstance(context, dict):
             context = json.dumps(context)
 
-        usage_data = {}
-        with get_openai_callback() as cb:
-            generation = rag_chain.invoke({"question": question, "context": context, "query": query})
+        try:
+            generation = self.llm.invoke_with_parser(
+                prompt, answer_parser,
+                {"question": question, "context": context, "query": query},
+                caller_name="generate_answer",
+            )
+        except Exception:
+            logger.warning("generate_answer: all parsing failed, using raw context as answer")
+            generation = GraphRAGAnswerOutput(generated_answer=str(context).strip(), citation=[])
 
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            logger.info(f"generate_answer usage: {usage_data}")
         LogWriter.info(f"request_id={req_id_cv.get()} EXIT generate_answer")
 
         return generation

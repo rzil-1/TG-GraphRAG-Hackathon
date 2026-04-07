@@ -61,11 +61,30 @@ class TokenCalculator:
         self.max_context_tokens = token_limit if token_limit else 0
         self.model_name = model_name if model_name else "gpt-4"
         try:
-            self.token_encoding = tiktoken.encoding_for_model(self.model_name)
+            self.token_encoding = tiktoken.encoding_for_model(self._normalize_model_name(self.model_name))
         except Exception as e:
             self.token_encoding = tiktoken.get_encoding("cl100k_base")
-            logger.warning(f"Error getting encoding for model {self.model_name}, using cl100k_base: {e}")
+            logger.info(f"No tiktoken mapping for model {self.model_name}, using cl100k_base")
         logger.info(f"Initialized TokenCalculator with max_context_tokens: {self.max_context_tokens} and encoding: {self.token_encoding}")
+
+    @staticmethod
+    def _normalize_model_name(model_name: str) -> str:
+        """Normalize provider-specific model names for tiktoken lookup.
+
+        Examples:
+            anthropic.claude-3-5-haiku-20241022-v1:0 → claude-3-5-haiku
+            us.anthropic.claude-3-5-haiku-20241022-v1:0 → claude-3-5-haiku
+            gpt-4o-mini → gpt-4o-mini (unchanged)
+        """
+        name = model_name
+        # Strip Bedrock provider prefix (e.g., "anthropic." or "us.anthropic.")
+        if "." in name:
+            name = name.rsplit(".", 1)[-1]
+        # Strip version suffix (e.g., "-20241022-v1:0")
+        # Pattern: date stamp followed by version
+        import re
+        name = re.sub(r'-\d{8}-v\d+.*$', '', name)
+        return name
 
     def set_max_context_tokens(self, max_tokens: int):
         """Set the maximum number of tokens allowed for retrieved context."""

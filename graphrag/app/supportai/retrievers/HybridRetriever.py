@@ -88,15 +88,16 @@ class HybridRetriever(BaseRetriever):
     def retrieve_answer(self, question, index, top_k=1, similarity_threshold=0.90, num_hops=2, num_seen_min=1, expand: bool = False, method: str = "similarity", chunk_only: bool = False, doc_only: bool = False, combine: bool = False, verbose: bool = False):
         retrieved = self.search(question, index, top_k, similarity_threshold, num_hops, num_seen_min, expand, method, chunk_only, doc_only, verbose)
 
-        context = []
         if combine:
+            context = []
             for x in retrieved[0]["final_retrieval"]:
                 context += retrieved[0]["final_retrieval"][x]
             context = ["\n".join(set(context))]
+            resp = self._generate_response(question, context, verbose=verbose)
         else:
             context = ["\n".join(retrieved[0]["final_retrieval"][x]) for x in retrieved[0]["final_retrieval"]]
-
-        resp = self._generate_response(question, context, verbose=verbose)
+            scored = self._score_candidates(question, context, top_k=top_k)
+            resp = self._generate_response(question, scored, verbose=verbose)
         
         if verbose and len(retrieved) > 1 and "verbose" in retrieved[1]:
             resp["verbose"] = retrieved[1]["verbose"]

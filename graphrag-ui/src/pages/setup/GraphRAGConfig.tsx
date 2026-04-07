@@ -32,7 +32,7 @@ const GraphRAGConfig = () => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loadBatchSize, setLoadBatchSize] = useState("500");
   const [upsertDelay, setUpsertDelay] = useState("0");
-  const [tgConcurrency, setTgConcurrency] = useState("10");
+  const [maxConcurrency, setMaxConcurrency] = useState("10");
 
   // Chunker-specific settings
   const [chunkSize, setChunkSize] = useState("1024");
@@ -70,7 +70,7 @@ const GraphRAGConfig = () => {
     setDocOnly(graphragConfig.doc_only || false);
     setLoadBatchSize(String(graphragConfig.load_batch_size ?? 500));
     setUpsertDelay(String(graphragConfig.upsert_delay ?? 0));
-    setTgConcurrency(String(graphragConfig.tg_concurrency ?? 10));
+    setMaxConcurrency(String(graphragConfig.default_concurrency ?? 10));
 
     const chunkerConfig = graphragConfig.chunker_config || {};
     setChunkSize(String(chunkerConfig.chunk_size || 1024));
@@ -155,7 +155,7 @@ const GraphRAGConfig = () => {
         doc_only: docOnly,
         load_batch_size: parseInt(loadBatchSize),
         upsert_delay: parseInt(upsertDelay),
-        tg_concurrency: parseInt(tgConcurrency),
+        default_concurrency: parseInt(maxConcurrency),
       };
 
       if (configScope === "graph") {
@@ -591,18 +591,18 @@ const GraphRAGConfig = () => {
 
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      TG Concurrency
+                      Default Concurrency
                     </label>
                     <Input
                       type="number"
                       min="1"
                       className="dark:border-[#3D3D3D] dark:bg-background"
                       placeholder="10"
-                      value={tgConcurrency}
-                      onChange={(e) => setTgConcurrency(e.target.value)}
+                      value={maxConcurrency}
+                      onChange={(e) => setMaxConcurrency(e.target.value)}
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Max concurrent TigerGraph requests
+                      Max concurrent workers for graph queries, LLM, and embedding calls
                     </p>
                   </div>
                 </div>

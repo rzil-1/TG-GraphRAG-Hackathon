@@ -21,7 +21,6 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain.prompts import PromptTemplate
 from langchain.tools import BaseTool
 from langchain.tools.base import ToolException
-from langchain_community.callbacks.manager import get_openai_callback
 
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.embeddings.embedding_services import EmbeddingModel
@@ -200,16 +199,10 @@ class GenerateFunction(BaseTool):
 
         logger.debug(f"request_id={req_id_cv.get()} retrieved documents={docs}")
 
-        chain = PROMPT | self.llm.llm | func_parser
-        usage_data = {}
-        with get_openai_callback() as cb:
-            generated = chain.invoke(**inputs)
-
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            logger.info(f"generate_function usage: {usage_data}")
+        generated = self.llm.invoke_with_parser(
+            PROMPT, func_parser,
+            inputs, caller_name="generate_function",
+        )
 
         logger.debug(f"request_id={req_id_cv.get()} generated function")
         try:

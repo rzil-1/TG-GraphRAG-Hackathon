@@ -14,7 +14,6 @@
 
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_community.callbacks.manager import get_openai_callback
 
 from pydantic import BaseModel, Field
 from common.logs.logwriter import LogWriter
@@ -55,15 +54,10 @@ class TigerGraphAgentRouter:
             }
         )
 
-        question_router = prompt | self.llm.llm | router_parser
-        usage_data = {}
-        with get_openai_callback() as cb:
-            res = question_router.invoke({"question": question, "v_types": v_types, "e_types": e_types, "conversation": conversation})
-
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            logger.info(f"route_question usage: {usage_data}")
+        res = self.llm.invoke_with_parser(
+            prompt, router_parser,
+            {"question": question, "v_types": v_types, "e_types": e_types, "conversation": conversation},
+            caller_name="route_question",
+        )
         LogWriter.info(f"request_id={req_id_cv.get()} EXIT route_question with {res}")
         return res

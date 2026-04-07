@@ -14,7 +14,6 @@
 
 import logging
 from typing import Iterable
-from langchain_community.callbacks.manager import get_openai_callback
 from langchain_core.output_parsers import StrOutputParser
 from langchain.prompts import PromptTemplate
 from langchain.tools import BaseTool
@@ -121,16 +120,17 @@ Edge Types:
         schema = self._generate_schema_rep()
         logger.debug_pii("Prompt to LLM:\n" + PROMPT.invoke({"question": question, "schema": schema, "history": history}).to_string())
 
-        chain = PROMPT | self.llm.llm | StrOutputParser()
-        usage_data = {}
-        with get_openai_callback() as cb:
-            out = chain.invoke({"question": question, "schema": schema, "history": history}).strip("```cypher").strip("```")
+        out = self.llm.invoke_with_parser(
+            PROMPT, StrOutputParser(),
+            {"question": question, "schema": schema, "history": history},
+            caller_name="generate_cypher",
+        ).strip("```cypher").strip("```").strip()
 
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            logger.info(f"generate_cypher usage: {usage_data}")
+        # Validate the LLM output looks like a Cypher query
+        out_upper = out.upper()
+        if not any(kw in out_upper for kw in ("MATCH", "RETURN", "WITH", "UNWIND", "CALL")):
+            LogWriter.info(f"request_id={req_id_cv.get()} EXIT generate_cypher - LLM did not produce a valid Cypher query")
+            raise ValueError(f"LLM did not produce a valid Cypher query: {out[:200]}")
 
         query_header = "USE GRAPH " + self.conn.graphname + " "+ "\n" + "INTERPRET OPENCYPHER QUERY () {" + "\n"
         query_footer = "\n}"

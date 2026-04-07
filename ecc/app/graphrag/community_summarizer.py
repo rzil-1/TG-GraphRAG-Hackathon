@@ -17,6 +17,7 @@ import re
 import logging
 
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
 
 from common.llm_services import LLM_Model
 from common.py_schemas import CommunitySummary
@@ -61,20 +62,22 @@ class CommunitySummarizer:
     ):
         self.llm_service = llm_service
 
-    async def summarize(self, name: str, text: list[str]) -> CommunitySummary:
+    async def summarize(self, name: str, text: list[str]) -> dict:
         # Load prompt at call time so config reloads and prompt edits take effect
-        prompt = PromptTemplate.from_template(load_community_prompt())
-        structured_llm = self.llm_service.llm.with_structured_output(CommunitySummary)
-        chain = prompt | structured_llm
+        summary_parser = PydanticOutputParser(pydantic_object=CommunitySummary)
+        prompt = PromptTemplate(
+            template=load_community_prompt() + "\n{format_instructions}",
+            input_variables=["entity_name", "description_list"],
+            partial_variables={"format_instructions": summary_parser.get_format_instructions()},
+        )
 
         # remove iteration tags from name
         name = id_pat.sub("", name)
         try:
-            summary = await chain.ainvoke(
-                {
-                    "entity_name": name,
-                    "description_list": text,
-                }
+            summary = await self.llm_service.ainvoke_with_parser(
+                prompt, summary_parser,
+                {"entity_name": name, "description_list": text},
+                caller_name="community_summarize",
             )
         except Exception as e:
             return {"error": True, "summary": "", "message": str(e)}
