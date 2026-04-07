@@ -59,6 +59,7 @@ class TestUISetupIntegration(unittest.TestCase):
       1. test_superuser_can_save_and_retrieve_llm_config
       2. test_graph_admin_chatbot_only_access
       3. test_db_connection_valid_and_invalid_creds
+      4. test_graph_admin_chat_service_save_and_inherit
     """
 
     # =========================================================================
@@ -98,11 +99,11 @@ class TestUISetupIntegration(unittest.TestCase):
         self.assertEqual(completion.get("llm_model"), "gpt-4o-mini")
 
     # =========================================================================
-    # Test 2 – Graph admin: 403 on full config, success on chat_model only
+    # Test 2 – Graph admin: 403 on full config, success on chat_service
     # =========================================================================
 
     def test_graph_admin_chatbot_only_access(self):
-        """Graph admin cannot POST a full LLM config (403) but can POST chat_model."""
+        """Graph admin cannot POST a full LLM config (403) but can POST chat_service."""
         if GRAPH_ADMIN_USER == SUPERUSER:
             self.skipTest(
                 "GRAPH_ADMIN_USER is the same as SUPERUSER — set GRAPH_ADMIN_USER "
@@ -124,7 +125,9 @@ class TestUISetupIntegration(unittest.TestCase):
 
         chatbot_payload = {
             "graphname": GRAPH_ADMIN_GRAPH,
-            "completion_service": {"chat_model": "gpt-4o-mini"},
+            "chat_service": {
+                "llm_model": "gpt-4o-mini",
+            },
         }
         resp_chatbot = requests.post(
             f"{GRAPHRAG_URL}/ui/config/llm",
@@ -133,6 +136,66 @@ class TestUISetupIntegration(unittest.TestCase):
         )
         self.assertEqual(resp_chatbot.status_code, 200, resp_chatbot.text)
         self.assertEqual(resp_chatbot.json().get("status"), "success")
+
+    # =========================================================================
+    # Test 4 – Graph admin: save custom chat_service and revert to inherit
+    # =========================================================================
+
+    def test_graph_admin_chat_service_save_and_inherit(self):
+        """Graph admin saves a custom chat_service, verifies it in GET, then reverts to inherit."""
+        if GRAPH_ADMIN_USER == SUPERUSER:
+            self.skipTest(
+                "GRAPH_ADMIN_USER is the same as SUPERUSER — set GRAPH_ADMIN_USER "
+                "and GRAPH_ADMIN_PASSWORD env vars to a graph-level admin to run this test."
+            )
+        # Save custom chat_service
+        save_payload = {
+            "graphname": GRAPH_ADMIN_GRAPH,
+            "chat_service": {
+                "llm_service": "openai",
+                "llm_model": "gpt-4o-mini",
+                "model_kwargs": {"temperature": 0.5},
+            },
+        }
+        resp_save = requests.post(
+            f"{GRAPHRAG_URL}/ui/config/llm",
+            json=save_payload,
+            auth=(GRAPH_ADMIN_USER, GRAPH_ADMIN_PASSWORD),
+        )
+        self.assertEqual(resp_save.status_code, 200, resp_save.text)
+
+        # GET should return the custom config (without auth secrets)
+        resp_get = requests.get(
+            f"{GRAPHRAG_URL}/ui/config?graphname={GRAPH_ADMIN_GRAPH}",
+            auth=(GRAPH_ADMIN_USER, GRAPH_ADMIN_PASSWORD),
+        )
+        self.assertEqual(resp_get.status_code, 200, resp_get.text)
+        data = resp_get.json()
+        self.assertEqual(data.get("llm_config_access"), "chatbot_only")
+        self.assertIsNotNone(data.get("chatbot_config"), "chatbot_config should be present after save")
+        self.assertEqual(data["chatbot_config"].get("llm_model"), "gpt-4o-mini")
+        self.assertNotIn("authentication_configuration", data.get("chatbot_config", {}))
+        self.assertIn("global_chat_info", data)
+
+        # Revert to inherit by sending null chat_service
+        revert_payload = {
+            "graphname": GRAPH_ADMIN_GRAPH,
+            "chat_service": None,
+        }
+        resp_revert = requests.post(
+            f"{GRAPHRAG_URL}/ui/config/llm",
+            json=revert_payload,
+            auth=(GRAPH_ADMIN_USER, GRAPH_ADMIN_PASSWORD),
+        )
+        self.assertEqual(resp_revert.status_code, 200, resp_revert.text)
+
+        # GET should now show chatbot_config as None (inheriting)
+        resp_get2 = requests.get(
+            f"{GRAPHRAG_URL}/ui/config?graphname={GRAPH_ADMIN_GRAPH}",
+            auth=(GRAPH_ADMIN_USER, GRAPH_ADMIN_PASSWORD),
+        )
+        self.assertEqual(resp_get2.status_code, 200, resp_get2.text)
+        self.assertIsNone(resp_get2.json().get("chatbot_config"))
 
     # =========================================================================
     # Test 3 – DB connection test: valid creds succeed, invalid creds fail cleanly

@@ -2,6 +2,9 @@ import React, { useState, useEffect } from "react";
 import { FileText, Save, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import ConfigScopeToggle from "@/components/ConfigScopeToggle";
+import { useRoles } from "@/hooks/useRoles";
+import { useLocation } from "react-router-dom";
 
 const ALL_PROMPT_TYPES = [
   { id: "chatbot_response", name: "Chatbot Responses", description: "Customize how the chatbot responds to user questions" },
@@ -11,6 +14,9 @@ const ALL_PROMPT_TYPES = [
 ];
 
 const CustomizePrompts = () => {
+  const location = useLocation();
+  const { isSuperuser, isGlobalDesigner } = useRoles(location.pathname);
+  const graphOnly = !isSuperuser && !isGlobalDesigner;
   const [configuredProvider, setConfiguredProvider] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
@@ -39,7 +45,9 @@ const CustomizePrompts = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [saveMessageType, setSaveMessageType] = useState<"success" | "error" | "">("");
-  const selectedGraph = localStorage.getItem("selectedGraph") || "";
+  const [configScope, setConfigScope] = useState<"global" | "graph">("global");
+  const [selectedGraph, setSelectedGraph] = useState(sessionStorage.getItem("selectedGraph") || "");
+  const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
 
   const handleSavePrompt = async (promptId: string) => {
     setIsSaving(true);
@@ -47,7 +55,7 @@ const CustomizePrompts = () => {
     setSaveMessageType("");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const query = selectedGraph ? `?graphname=${encodeURIComponent(selectedGraph)}` : "";
       const response = await fetch(`/ui/prompts${query}`, {
         method: "POST",
@@ -85,71 +93,92 @@ const CustomizePrompts = () => {
     setPrompts(prev => ({ ...prev, [promptId]: value }));
   };
 
-  // Fetch prompts and configured LLM provider from server
-  useEffect(() => {
-    const fetchPrompts = async () => {
-      setIsLoading(true);
-      try {
-        const creds = localStorage.getItem("creds");
-        const query = selectedGraph ? `?graphname=${encodeURIComponent(selectedGraph)}` : "";
-        const response = await fetch(`/ui/prompts${query}`, {
-          headers: { Authorization: `Basic ${creds}` },
-        });
+  const fetchPrompts = async (graphname?: string) => {
+    setIsLoading(true);
+    const effectiveGraph = graphname ?? selectedGraph;
+    try {
+      const creds = sessionStorage.getItem("creds");
+      const query = effectiveGraph ? `?graphname=${encodeURIComponent(effectiveGraph)}` : "";
+      const response = await fetch(`/ui/prompts${query}`, {
+        headers: { Authorization: `Basic ${creds}` },
+      });
 
-        if (!response.ok) {
-          throw new Error("Failed to fetch prompts");
-        }
-
-        const data = await response.json();
-
-        // Track which prompts this user is allowed to see (backend filters by role)
-        setAvailablePromptIds(Object.keys(data.prompts));
-
-        // Update prompts with fetched data (editable content only)
-        setPrompts({
-          chatbot_response: data.prompts.chatbot_response?.editable_content !== undefined 
-            ? data.prompts.chatbot_response.editable_content 
-            : (typeof data.prompts.chatbot_response === 'string' ? data.prompts.chatbot_response : ""),
-          entity_relationship: data.prompts.entity_relationship?.editable_content !== undefined 
-            ? data.prompts.entity_relationship.editable_content 
-            : (typeof data.prompts.entity_relationship === 'string' ? data.prompts.entity_relationship : ""),
-          community_summarization: data.prompts.community_summarization?.editable_content !== undefined 
-            ? data.prompts.community_summarization.editable_content 
-            : (typeof data.prompts.community_summarization === 'string' ? data.prompts.community_summarization : ""),
-          query_generation: data.prompts.query_generation?.editable_content !== undefined 
-            ? data.prompts.query_generation.editable_content 
-            : (typeof data.prompts.query_generation === 'string' ? data.prompts.query_generation : ""),
-        });
-        
-        // Store template variables separately
-        setPromptTemplates({
-          chatbot_response: data.prompts.chatbot_response?.template_variables || "",
-          entity_relationship: data.prompts.entity_relationship?.template_variables || "",
-          community_summarization: data.prompts.community_summarization?.template_variables || "",
-          query_generation: data.prompts.query_generation?.template_variables || "",
-        });
-
-        // Set configured provider
-        const providerMap: Record<string, string> = {
-          openai: "OpenAI",
-          azure: "Azure OpenAI",
-          genai: "Google GenAI (Gemini)",
-          vertexai: "Google Vertex AI",
-          bedrock: "AWS Bedrock",
-          ollama: "Ollama",
-        };
-        const provider = data.configured_provider?.toLowerCase() || "openai";
-        setConfiguredProvider(providerMap[provider] || data.configured_provider || "OpenAI");
-      } catch (error) {
-        console.error("Error loading prompts:", error);
-        setConfiguredProvider("OpenAI");
-      } finally {
-        setIsLoading(false);
+      if (!response.ok) {
+        throw new Error("Failed to fetch prompts");
       }
-    };
 
-    fetchPrompts();
-  }, []);
+      const data = await response.json();
+
+      // Track which prompts this user is allowed to see (backend filters by role)
+      setAvailablePromptIds(Object.keys(data.prompts));
+
+      // Update prompts with fetched data (editable content only)
+      setPrompts({
+        chatbot_response: data.prompts.chatbot_response?.editable_content !== undefined
+          ? data.prompts.chatbot_response.editable_content
+          : (typeof data.prompts.chatbot_response === 'string' ? data.prompts.chatbot_response : ""),
+        entity_relationship: data.prompts.entity_relationship?.editable_content !== undefined
+          ? data.prompts.entity_relationship.editable_content
+          : (typeof data.prompts.entity_relationship === 'string' ? data.prompts.entity_relationship : ""),
+        community_summarization: data.prompts.community_summarization?.editable_content !== undefined
+          ? data.prompts.community_summarization.editable_content
+          : (typeof data.prompts.community_summarization === 'string' ? data.prompts.community_summarization : ""),
+        query_generation: data.prompts.query_generation?.editable_content !== undefined
+          ? data.prompts.query_generation.editable_content
+          : (typeof data.prompts.query_generation === 'string' ? data.prompts.query_generation : ""),
+      });
+
+      // Store template variables separately
+      setPromptTemplates({
+        chatbot_response: data.prompts.chatbot_response?.template_variables || "",
+        entity_relationship: data.prompts.entity_relationship?.template_variables || "",
+        community_summarization: data.prompts.community_summarization?.template_variables || "",
+        query_generation: data.prompts.query_generation?.template_variables || "",
+      });
+
+      // Set configured provider
+      const providerMap: Record<string, string> = {
+        openai: "OpenAI",
+        azure: "Azure OpenAI",
+        genai: "Google GenAI (Gemini)",
+        vertexai: "Google Vertex AI",
+        bedrock: "AWS Bedrock",
+        ollama: "Ollama",
+      };
+      const provider = data.configured_provider?.toLowerCase() || "openai";
+      setConfiguredProvider(providerMap[provider] || data.configured_provider || "OpenAI");
+    } catch (error) {
+      console.error("Error loading prompts:", error);
+      setConfiguredProvider("OpenAI");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Fetch prompts and graph list on mount
+  useEffect(() => {
+    const site = JSON.parse(sessionStorage.getItem("site") || "{}");
+    const graphs = site.graphs || [];
+    setAvailableGraphs(graphs);
+    const storedGraph = sessionStorage.getItem("selectedGraph") || "";
+    if (graphOnly) {
+      // Graph admins must use graph-specific scope
+      setConfigScope("graph");
+      const graph = storedGraph || (graphs.length > 0 ? graphs[0] : "");
+      if (graph) {
+        setSelectedGraph(graph);
+        sessionStorage.setItem("selectedGraph", graph);
+        window.dispatchEvent(new Event("graphrag:selectedGraph"));
+        fetchPrompts(graph);
+      }
+    } else if (storedGraph) {
+      setConfigScope("graph");
+      setSelectedGraph(storedGraph);
+      fetchPrompts(storedGraph);
+    } else {
+      fetchPrompts("");
+    }
+  }, [graphOnly]);
 
   return (
     <div className="p-8">
@@ -164,16 +193,42 @@ const CustomizePrompts = () => {
                 Customize Prompts
               </h1>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9]">
-                Customize the three core prompts used by GraphRAG
-              </p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                {selectedGraph
-                  ? `Editing prompt overrides for graph: ${selectedGraph}`
-                  : "Editing default prompts for all graphs"}
+                Customize the core prompts used by GraphRAG
               </p>
             </div>
           </div>
         </div>
+
+        {/* Config Scope Toggle */}
+        <ConfigScopeToggle
+          configScope={configScope}
+          selectedGraph={selectedGraph}
+          availableGraphs={availableGraphs}
+          graphOnly={graphOnly}
+          onScopeChange={(scope) => {
+            setConfigScope(scope);
+            setSaveMessage("");
+            setSaveMessageType("");
+            if (scope === "global") {
+              setSelectedGraph("");
+              sessionStorage.removeItem("selectedGraph");
+              window.dispatchEvent(new Event("graphrag:selectedGraph"));
+              fetchPrompts("");
+            } else if (selectedGraph) {
+              fetchPrompts(selectedGraph);
+            }
+          }}
+          onGraphChange={(value) => {
+            setConfigScope("graph");
+            setSelectedGraph(value);
+            sessionStorage.setItem("selectedGraph", value);
+            window.dispatchEvent(new Event("graphrag:selectedGraph"));
+            setSaveMessage("");
+            setSaveMessageType("");
+            fetchPrompts(value);
+          }}
+          graphSelectedHint="Only customized prompts are stored per graph. Others fall back to global defaults."
+        />
 
         <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
           <div className="space-y-6">

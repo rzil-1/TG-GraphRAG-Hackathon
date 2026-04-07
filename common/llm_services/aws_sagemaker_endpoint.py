@@ -54,15 +54,3 @@ class AWS_SageMaker_Endpoint(LLM_Model):
         LogWriter.info(
             f"request_id={req_id_cv.get()} instantiated AWS_SageMaker_Endpoint model_name={model_name}"
         )
-
-    @property
-    def map_question_schema_prompt(self):
-        return self._read_prompt_file(self.prompt_path + "map_question_to_schema.txt")
-
-    @property
-    def generate_function_prompt(self):
-        return self._read_prompt_file(self.prompt_path + "generate_function.txt")
-
-    @property
-    def model(self):
-        return self.llm

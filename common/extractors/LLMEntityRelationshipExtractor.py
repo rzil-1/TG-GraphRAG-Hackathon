@@ -278,7 +278,7 @@ class LLMEntityRelationshipExtractor(BaseExtractor):
         if self.allowed_edge_types:
             prompt.append(("human", f"Allowed Edge Types: {self.allowed_edge_types}"))
         prompt = ChatPromptTemplate.from_messages(prompt)
-        chain = prompt | self.llm_service.model  # | parser
+        chain = prompt | self.llm_service.llm  # | parser
         er = await self._aextract_kg_from_doc(document, chain, parser)
         return er
 
@@ -316,7 +316,7 @@ class LLMEntityRelationshipExtractor(BaseExtractor):
         if self.allowed_edge_types:
             prompt.append(("human", f"Allowed Edge Types: {self.allowed_edge_types}"))
         prompt = ChatPromptTemplate.from_messages(prompt)
-        chain = prompt | self.llm_service.model  # | parser
+        chain = prompt | self.llm_service.llm  # | parser
         er = self._extract_kg_from_doc(document, chain, parser)
         return er
 

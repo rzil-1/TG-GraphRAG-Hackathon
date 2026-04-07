@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import ConfigScopeToggle from "@/components/ConfigScopeToggle";
 
 // Type definitions for provider fields
 interface FieldConfig {
@@ -107,7 +108,8 @@ const PROVIDER_FIELDS: Record<string, ProviderConfig> = {
 };
 
 const LLMConfig = () => {
-  const selectedGraph = localStorage.getItem("selectedGraph") || "";
+  const [selectedGraph, setSelectedGraph] = useState(sessionStorage.getItem("selectedGraph") || "");
+  const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
   const [useMultipleProviders, setUseMultipleProviders] = useState(false);
   const [llmConfigAccess, setLlmConfigAccess] = useState<"full" | "chatbot_only">("full");
   const [isLoading, setIsLoading] = useState(true);
@@ -122,17 +124,13 @@ const LLMConfig = () => {
   const [singleProvider, setSingleProvider] = useState("openai");
   const [singleConfig, setSingleConfig] = useState<Record<string, string>>({});
   const [singleDefaultModel, setSingleDefaultModel] = useState("");
-  const [singleChatbotModel, setSingleChatbotModel] = useState("");
-  const [singleUseDifferentChatbotModel, setSingleUseDifferentChatbotModel] = useState(false);
   const [singleEmbeddingModel, setSingleEmbeddingModel] = useState("");
   const [multimodalModel, setMultimodalModel] = useState("");
-  
+
   // Multi-provider state
   const [completionProvider, setCompletionProvider] = useState("openai");
   const [completionConfig, setCompletionConfig] = useState<Record<string, string>>({});
   const [completionDefaultModel, setCompletionDefaultModel] = useState("");
-  const [completionChatbotModel, setCompletionChatbotModel] = useState("");
-  const [completionUseDifferentChatbotModel, setCompletionUseDifferentChatbotModel] = useState(false);
   
   const [embeddingProvider, setEmbeddingProvider] = useState("openai");
   const [embeddingConfig, setEmbeddingConfig] = useState<Record<string, string>>({});
@@ -143,18 +141,37 @@ const LLMConfig = () => {
   const [multimodalModelName, setMultimodalModelName] = useState("");
   const isChatbotOnlyMode = llmConfigAccess === "chatbot_only";
 
+  // Per-graph chatbot config state (chatbot_only mode)
+  const [useCustomChatbot, setUseCustomChatbot] = useState(false);
+  const [chatbotProvider, setChatbotProvider] = useState("openai");
+  const [chatbotProviderConfig, setChatbotProviderConfig] = useState<Record<string, string>>({});
+  const [chatbotModelName, setChatbotModelName] = useState("");
+  const [chatbotTemperature, setChatbotTemperature] = useState("0");
+  const [globalChatInfo, setGlobalChatInfo] = useState({ llm_service: "", llm_model: "" });
 
-  // Fetch current config on mount
+  // Superadmin scope: "global" edits global config, "graph" edits per-graph overrides
+  const [configScope, setConfigScope] = useState<"global" | "graph">("global");
+  const [graphOverrides, setGraphOverrides] = useState<Record<string, any>>({});
+
+
+  // Load available graphs and config on mount
   useEffect(() => {
+    const site = JSON.parse(sessionStorage.getItem("site") || "{}");
+    setAvailableGraphs(site.graphs || []);
     fetchConfig();
   }, []);
 
-  const fetchConfig = async () => {
+  const fetchConfig = async (scope?: "global" | "graph", graphname?: string) => {
     setIsLoading(true);
+    const effectiveScope = scope ?? configScope;
+    const effectiveGraph = graphname ?? selectedGraph;
     try {
-      const creds = localStorage.getItem("creds");
-      const graphParam = selectedGraph ? `?graphname=${encodeURIComponent(selectedGraph)}` : "";
-      const response = await fetch(`/ui/config${graphParam}`, {
+      const creds = sessionStorage.getItem("creds");
+      const params = new URLSearchParams();
+      if (effectiveGraph) params.set("graphname", effectiveGraph);
+      if (effectiveScope === "graph") params.set("scope", "graph");
+      const queryString = params.toString() ? `?${params.toString()}` : "";
+      const response = await fetch(`/ui/config${queryString}`, {
         headers: { Authorization: `Basic ${creds}` },
       });
 
@@ -165,84 +182,123 @@ const LLMConfig = () => {
       const data = await response.json();
       const llmConfig = data.llm_config;
       setLlmConfigAccess(data.llm_config_access === "chatbot_only" ? "chatbot_only" : "full");
+
+      // Parse per-graph chatbot config (chatbot_only mode)
+      if (data.global_chat_info) {
+        setGlobalChatInfo(data.global_chat_info);
+      }
+      if (data.chatbot_config) {
+        setUseCustomChatbot(true);
+        setChatbotProvider(data.chatbot_config.llm_service?.toLowerCase() || "openai");
+        setChatbotModelName(data.chatbot_config.llm_model || "");
+        setChatbotTemperature(String(data.chatbot_config.model_kwargs?.temperature ?? "0"));
+        // Load provider-specific config fields + masked auth
+        const cfg: Record<string, string> = {};
+        for (const key of ["base_url", "azure_deployment", "region_name", "project", "location", "endpoint_name", "endpoint_url"]) {
+          if (data.chatbot_config[key]) cfg[key] = data.chatbot_config[key];
+        }
+        if (data.chatbot_config.authentication_configuration) {
+          for (const [key, value] of Object.entries(data.chatbot_config.authentication_configuration)) {
+            if (typeof value === "string") cfg[key] = value;
+          }
+        }
+        setChatbotProviderConfig(cfg);
+      } else {
+        setUseCustomChatbot(false);
+      }
+
+      // Store graph overrides when in per-graph scope
+      if (data.graph_overrides) {
+        setGraphOverrides(data.graph_overrides);
+      } else {
+        setGraphOverrides({});
+      }
+
       const currentDefaultModel = llmConfig.completion_service?.llm_model || "";
-      const currentChatbotModel = llmConfig.completion_service?.chat_model || "";
       setSingleDefaultModel(currentDefaultModel);
-      setSingleChatbotModel(currentChatbotModel);
-      setSingleUseDifferentChatbotModel(
-        currentDefaultModel !== "" &&
-          currentChatbotModel !== "" &&
-          currentDefaultModel !== currentChatbotModel
-      );
+
+      // Load chat_service config for full mode (superadmin)
+      if (llmConfig.chat_service) {
+        setUseCustomChatbot(true);
+        setChatbotProvider(llmConfig.chat_service.llm_service?.toLowerCase() || "openai");
+        setChatbotModelName(llmConfig.chat_service.llm_model || "");
+        setChatbotTemperature(String(llmConfig.chat_service.model_kwargs?.temperature ?? "0"));
+        const chatCfg: Record<string, string> = {};
+        for (const key of ["base_url", "azure_deployment", "region_name", "project", "location", "endpoint_name", "endpoint_url"]) {
+          if (llmConfig.chat_service[key]) chatCfg[key] = llmConfig.chat_service[key];
+        }
+        if (llmConfig.chat_service.authentication_configuration) {
+          for (const [key, value] of Object.entries(llmConfig.chat_service.authentication_configuration)) {
+            if (typeof value === "string") chatCfg[key] = value;
+          }
+        }
+        setChatbotProviderConfig(chatCfg);
+      } else {
+        setUseCustomChatbot(false);
+        setChatbotProvider("openai");
+        setChatbotModelName("");
+        setChatbotTemperature("0");
+        setChatbotProviderConfig({});
+      }
 
       // Detect if using multiple providers
       const completionProv = llmConfig.completion_service?.llm_service?.toLowerCase();
       const embeddingProv = llmConfig.embedding_service?.embedding_model_service?.toLowerCase();
       const multimodalProv = llmConfig.multimodal_service?.llm_service?.toLowerCase();
-      
-      const allSameProvider = 
-        completionProv === embeddingProv && 
-        (!multimodalProv || completionProv === multimodalProv);
+      const chatProv = llmConfig.chat_service?.llm_service?.toLowerCase();
+
+      const allSameProvider =
+        completionProv === embeddingProv &&
+        (!multimodalProv || completionProv === multimodalProv) &&
+        (!chatProv || completionProv === chatProv);
       
       setUseMultipleProviders(!allSameProvider);
 
+      // Helper: load config fields + masked auth fields from a service config
+      const loadServiceConfig = (svc: any, configKeys: string[]) => {
+        const cfg: Record<string, string> = {};
+        for (const key of configKeys) {
+          if (svc?.[key]) cfg[key] = svc[key];
+        }
+        // Load masked auth fields from authentication_configuration
+        if (svc?.authentication_configuration) {
+          for (const [key, value] of Object.entries(svc.authentication_configuration)) {
+            if (typeof value === "string") cfg[key] = value;
+          }
+        }
+        return cfg;
+      };
+
+      const completionConfigKeys = ["base_url", "azure_deployment", "region_name", "project", "location", "endpoint_name", "endpoint_url"];
+      const embeddingConfigKeys = ["base_url", "azure_deployment", "region_name"];
+
       if (!allSameProvider) {
         // Multi-provider mode - Load from backend
-        const defaultModel = llmConfig.completion_service?.llm_model || "";
-        const chatbotModel = llmConfig.completion_service?.chat_model || "";
-        
         setCompletionProvider(completionProv || "openai");
-        setCompletionDefaultModel(defaultModel);
-        setCompletionChatbotModel(chatbotModel);
-        setCompletionUseDifferentChatbotModel(defaultModel !== "" && chatbotModel !== "" && defaultModel !== chatbotModel);
-        
-        // Load provider-specific config fields
-        const completionCfg: Record<string, string> = {};
-        if (llmConfig.completion_service?.base_url) completionCfg.base_url = llmConfig.completion_service.base_url;
-        if (llmConfig.completion_service?.azure_deployment) completionCfg.azure_deployment = llmConfig.completion_service.azure_deployment;
-        if (llmConfig.completion_service?.region_name) completionCfg.region_name = llmConfig.completion_service.region_name;
-        if (llmConfig.completion_service?.project) completionCfg.project = llmConfig.completion_service.project;
-        if (llmConfig.completion_service?.location) completionCfg.location = llmConfig.completion_service.location;
-        if (llmConfig.completion_service?.endpoint_name) completionCfg.endpoint_name = llmConfig.completion_service.endpoint_name;
-        if (llmConfig.completion_service?.endpoint_url) completionCfg.endpoint_url = llmConfig.completion_service.endpoint_url;
-        setCompletionConfig(completionCfg);
+        setCompletionDefaultModel(llmConfig.completion_service?.llm_model || "");
+        setCompletionConfig(loadServiceConfig(llmConfig.completion_service, completionConfigKeys));
 
         setEmbeddingProvider(embeddingProv || "openai");
         setEmbeddingModel(llmConfig.embedding_service?.model_name || "");
-        
-        const embeddingCfg: Record<string, string> = {};
-        if (llmConfig.embedding_service?.base_url) embeddingCfg.base_url = llmConfig.embedding_service.base_url;
-        if (llmConfig.embedding_service?.azure_deployment) embeddingCfg.azure_deployment = llmConfig.embedding_service.azure_deployment;
-        if (llmConfig.embedding_service?.region_name) embeddingCfg.region_name = llmConfig.embedding_service.region_name;
-        setEmbeddingConfig(embeddingCfg);
+        setEmbeddingConfig(loadServiceConfig(llmConfig.embedding_service, embeddingConfigKeys));
 
         setMultimodalProvider(multimodalProv || "openai");
         setMultimodalModelName(llmConfig.multimodal_service?.llm_model || "");
-        
-        const multimodalCfg: Record<string, string> = {};
-        if (llmConfig.multimodal_service?.azure_deployment) multimodalCfg.azure_deployment = llmConfig.multimodal_service.azure_deployment;
-        setMultimodalConfig(multimodalCfg);
+        setMultimodalConfig(loadServiceConfig(llmConfig.multimodal_service, ["azure_deployment"]));
       } else {
         // Single provider mode - Load from backend
-        const defaultModel = llmConfig.completion_service?.llm_model || "";
-        const chatbotModel = llmConfig.completion_service?.chat_model || "";
-        
         setSingleProvider(completionProv || "openai");
-        setSingleDefaultModel(defaultModel);
-        setSingleChatbotModel(chatbotModel);
-        setSingleUseDifferentChatbotModel(defaultModel !== "" && chatbotModel !== "" && defaultModel !== chatbotModel);
+        setSingleDefaultModel(llmConfig.completion_service?.llm_model || "");
         setSingleEmbeddingModel(llmConfig.embedding_service?.model_name || "");
         setMultimodalModel(llmConfig.multimodal_service?.llm_model || "");
-        
-        // Load provider-specific config fields
-        const singleCfg: Record<string, string> = {};
-        if (llmConfig.completion_service?.base_url) singleCfg.base_url = llmConfig.completion_service.base_url;
-        if (llmConfig.completion_service?.azure_deployment) singleCfg.azure_deployment = llmConfig.completion_service.azure_deployment;
-        if (llmConfig.completion_service?.region_name) singleCfg.region_name = llmConfig.completion_service.region_name;
-        if (llmConfig.completion_service?.project) singleCfg.project = llmConfig.completion_service.project;
-        if (llmConfig.completion_service?.location) singleCfg.location = llmConfig.completion_service.location;
-        if (llmConfig.completion_service?.endpoint_name) singleCfg.endpoint_name = llmConfig.completion_service.endpoint_name;
-        if (llmConfig.completion_service?.endpoint_url) singleCfg.endpoint_url = llmConfig.completion_service.endpoint_url;
+        // Load config + auth from completion_service (single provider shares auth)
+        const singleCfg = loadServiceConfig(llmConfig.completion_service, completionConfigKeys);
+        // Also load top-level authentication_configuration (used in single-provider mode)
+        if (llmConfig.authentication_configuration) {
+          for (const [key, value] of Object.entries(llmConfig.authentication_configuration)) {
+            if (typeof value === "string" && !singleCfg[key]) singleCfg[key] = value;
+          }
+        }
         setSingleConfig(singleCfg);
       }
     } catch (error: any) {
@@ -268,7 +324,6 @@ const LLMConfig = () => {
       setSingleConfig({});
       // Clear model names when switching provider
       setSingleDefaultModel("");
-      setSingleChatbotModel("");
       setSingleEmbeddingModel("");
       setMultimodalModel("");
     } else if (target === 'completion') {
@@ -276,7 +331,6 @@ const LLMConfig = () => {
       setCompletionConfig({});
       // Clear model names when switching provider
       setCompletionDefaultModel("");
-      setCompletionChatbotModel("");
     } else if (target === 'embedding') {
       setEmbeddingProvider(newProvider);
       setEmbeddingConfig({});
@@ -325,8 +379,46 @@ const LLMConfig = () => {
     setMessageType("");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       let llmConfigData: any;
+
+      // Graph admin saving chatbot config
+      if (isChatbotOnlyMode) {
+        if (useCustomChatbot) {
+          const chatService: any = {
+            llm_service: chatbotProvider,
+            llm_model: chatbotModelName,
+            authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
+            model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
+            ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
+          };
+          llmConfigData = { graphname: selectedGraph || undefined, chat_service: chatService };
+        } else {
+          // Revert to inherit: send null chat_service
+          llmConfigData = { graphname: selectedGraph || undefined, chat_service: null };
+        }
+
+        const response = await fetch("/ui/config/llm", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${creds}`,
+          },
+          body: JSON.stringify(llmConfigData),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || "Failed to save configuration");
+        }
+
+        setMessage("Configuration saved successfully!");
+        setMessageType("success");
+        setTestResults(null);
+        setConnectionTested(false);
+        setIsSaving(false);
+        return;
+      }
 
       if (useMultipleProviders) {
         const completionServiceConfig: any = {
@@ -337,11 +429,6 @@ const LLMConfig = () => {
           prompt_path: `./common/prompts/${getPromptPath(completionProvider)}/`,
           ...buildServiceConfig(completionProvider, completionConfig)
         };
-        
-        // Only add chat_model if user wants a different chatbot model
-        if (completionUseDifferentChatbotModel && completionChatbotModel && completionChatbotModel !== completionDefaultModel) {
-          completionServiceConfig.chat_model = completionChatbotModel;
-        }
         
         llmConfigData = {
           graphname: selectedGraph || undefined,
@@ -360,6 +447,19 @@ const LLMConfig = () => {
             ...buildServiceConfig(multimodalProvider, multimodalConfig)
           },
         };
+
+        // Save chat_service if not inheriting from completion service
+        if (useCustomChatbot) {
+          llmConfigData.chat_service = {
+            llm_service: chatbotProvider,
+            llm_model: chatbotModelName,
+            authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
+            model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
+            ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
+          };
+        } else {
+          llmConfigData.chat_service = null;
+        }
       } else {
         const completionServiceConfig: any = {
           llm_service: singleProvider,
@@ -368,11 +468,6 @@ const LLMConfig = () => {
           prompt_path: `./common/prompts/${getPromptPath(singleProvider)}/`,
           ...buildServiceConfig(singleProvider, singleConfig)
         };
-        
-        // Only add chat_model if user wants a different chatbot model
-        if (singleUseDifferentChatbotModel && singleChatbotModel && singleChatbotModel !== singleDefaultModel) {
-          completionServiceConfig.chat_model = singleChatbotModel;
-        }
         
         llmConfigData = {
           graphname: selectedGraph || undefined,
@@ -389,6 +484,20 @@ const LLMConfig = () => {
             ...buildServiceConfig(singleProvider, singleConfig)
           },
         };
+
+        // Save chat_service with just the model name (same provider as completion)
+        if (chatbotModelName.trim()) {
+          llmConfigData.chat_service = {
+            llm_model: chatbotModelName,
+          };
+        } else {
+          llmConfigData.chat_service = null;
+        }
+      }
+
+      // Add scope for superadmin per-graph saves
+      if (configScope === "graph") {
+        llmConfigData.scope = "graph";
       }
 
       const response = await fetch("/ui/config/llm", {
@@ -405,7 +514,8 @@ const LLMConfig = () => {
         throw new Error(errorData.detail || "Failed to save configuration");
       }
 
-      setMessage("✅ Configuration saved and reloaded successfully!");
+      const scopeLabel = configScope === "graph" ? `graph "${selectedGraph}"` : "global";
+      setMessage(`Configuration saved successfully (${scopeLabel})!`);
       setMessageType("success");
       setTestResults(null);
       setConnectionTested(false);
@@ -477,7 +587,7 @@ const LLMConfig = () => {
         }
       }
       
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       let llmConfigData: any;
 
       if (useMultipleProviders) {
@@ -496,15 +606,6 @@ const LLMConfig = () => {
             ...buildServiceConfig(embeddingProvider, embeddingConfig)
           },
         };
-        
-        if (completionUseDifferentChatbotModel && completionChatbotModel !== completionDefaultModel) {
-          llmConfigData.chatbot_service = {
-            llm_service: completionProvider,
-            llm_model: completionChatbotModel,
-            authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
-            ...buildServiceConfig(completionProvider, completionConfig)
-          };
-        }
         
         llmConfigData.multimodal_service = {
           llm_service: multimodalProvider,
@@ -532,21 +633,31 @@ const LLMConfig = () => {
           },
         };
         
-        if (singleUseDifferentChatbotModel && singleChatbotModel !== singleDefaultModel) {
-          llmConfigData.chatbot_service = {
-            llm_service: singleProvider,
-            llm_model: singleChatbotModel,
-          };
-        }
       }
 
-      if (isChatbotOnlyMode) {
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          completion_service: {
-            chat_model: useDifferentChatbotModel ? chatbotModel : "",
-          },
-        };
+      // Add chat_service to test config if custom chatbot is configured
+      // Add chat_service to test config if not inheriting
+      if (useCustomChatbot) {
+        if (useMultipleProviders) {
+          const chatbotError = validateProvider(chatbotProvider, chatbotProviderConfig, "Chatbot Service");
+          if (chatbotError) {
+            setMessage(`❌ ${chatbotError}`);
+            setMessageType("error");
+            setIsTesting(false);
+            return;
+          }
+          llmConfigData.chat_service = {
+            llm_service: chatbotProvider,
+            llm_model: chatbotModelName,
+            authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
+            model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
+            ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
+          };
+        } else if (chatbotModelName.trim()) {
+          llmConfigData.chat_service = {
+            llm_model: chatbotModelName,
+          };
+        }
       }
 
       const response = await fetch("/ui/config/llm/test", {
@@ -705,16 +816,6 @@ const LLMConfig = () => {
     );
   };
 
-  const chatbotDefaultModel = useMultipleProviders
-    ? completionDefaultModel
-    : singleDefaultModel;
-  const chatbotModel = useMultipleProviders
-    ? completionChatbotModel
-    : singleChatbotModel;
-  const useDifferentChatbotModel = useMultipleProviders
-    ? completionUseDifferentChatbotModel
-    : singleUseDifferentChatbotModel;
-
   if (isLoading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -734,83 +835,155 @@ const LLMConfig = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-black dark:text-white">
-                  LLM Configuration
+                  Chatbot LLM Configuration
                 </h1>
                 <p className="text-sm text-gray-600 dark:text-[#D9D9D9]">
-                  You can only update Chatbot model for selected graph.
+                  Configure the LLM provider and model for the chatbot.
                 </p>
               </div>
             </div>
           </div>
 
+          <ConfigScopeToggle
+            configScope="graph"
+            selectedGraph={selectedGraph}
+            availableGraphs={availableGraphs}
+            graphOnly={true}
+            className="mb-6"
+            onScopeChange={() => {}}
+            onGraphChange={(value) => {
+              setSelectedGraph(value);
+              sessionStorage.setItem("selectedGraph", value);
+              window.dispatchEvent(new Event("graphrag:selectedGraph"));
+              clearTestResults();
+              fetchConfig(undefined, value);
+            }}
+          />
+
           <div className="space-y-6">
+            {/* Mode toggle */}
             <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                    Default LLM Model (Read-only)
+                <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                  Configuration Mode
+                </label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="chatbotConfigMode"
+                      checked={!useCustomChatbot}
+                      onChange={() => { setUseCustomChatbot(false); clearTestResults(); }}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm text-black dark:text-white">Inherit from global config</span>
                   </label>
-                  <Input
-                    type="text"
-                    className="dark:border-[#3D3D3D] dark:bg-background"
-                    value={chatbotDefaultModel}
-                    readOnly
-                    disabled
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    This model is configured by global designer/superuser.
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="chatbotConfigMode"
+                      checked={useCustomChatbot}
+                      onChange={() => { setUseCustomChatbot(true); clearTestResults(); }}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm text-black dark:text-white">Use custom LLM provider</span>
+                  </label>
+                </div>
+                {!useCustomChatbot && globalChatInfo.llm_service && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Currently inherited: {globalChatInfo.llm_service} / {globalChatInfo.llm_model}
                   </p>
-                </div>
+                )}
+              </div>
+            </div>
 
-                <div className="flex items-center space-x-3 mt-3">
-                  <input
-                    type="checkbox"
-                    id="chatbotOnlyUseDifferentChatbot"
-                    checked={useDifferentChatbotModel}
-                    onChange={(e) => {
-                      if (useMultipleProviders) {
-                        setCompletionUseDifferentChatbotModel(e.target.checked);
-                      } else {
-                        setSingleUseDifferentChatbotModel(e.target.checked);
-                      }
-                      clearTestResults();
-                    }}
-                    className="h-4 w-4 rounded border-gray-300 dark:border-[#3D3D3D]"
-                  />
-                  <label htmlFor="chatbotOnlyUseDifferentChatbot" className="text-sm font-medium text-black dark:text-white">
-                    Use different model for Chatbot
-                  </label>
-                </div>
-
-                {useDifferentChatbotModel && (
+            {/* Custom provider config */}
+            {useCustomChatbot && (
+              <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
+                <h3 className="text-lg font-semibold mb-4 text-black dark:text-white">Custom Chatbot Provider</h3>
+                <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Chatbot LLM Model
+                      LLM Provider <span className="text-red-500">*</span>
+                    </label>
+                    <Select
+                      value={chatbotProvider}
+                      onValueChange={(value) => {
+                        setChatbotProvider(value);
+                        setChatbotProviderConfig({});
+                        setChatbotModelName("");
+                        clearTestResults();
+                      }}
+                    >
+                      <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="azure">Azure OpenAI</SelectItem>
+                        <SelectItem value="genai">Google GenAI (Gemini)</SelectItem>
+                        <SelectItem value="vertexai">Google Vertex AI</SelectItem>
+                        <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                        <SelectItem value="groq">Groq</SelectItem>
+                        <SelectItem value="ollama">Ollama</SelectItem>
+                        <SelectItem value="sagemaker">AWS SageMaker</SelectItem>
+                        <SelectItem value="huggingface">HuggingFace</SelectItem>
+                        <SelectItem value="watsonx">IBM WatsonX</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {renderProviderFields(chatbotProvider, chatbotProviderConfig, setChatbotProviderConfig)}
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      Model Name <span className="text-red-500">*</span>
                     </label>
                     <Input
                       type="text"
                       className="dark:border-[#3D3D3D] dark:bg-background"
-                      placeholder="e.g. gpt-4.1-mini"
-                      value={chatbotModel}
-                      onChange={(e) => {
-                        if (useMultipleProviders) {
-                          setCompletionChatbotModel(e.target.value);
-                        } else {
-                          setSingleChatbotModel(e.target.value);
-                        }
-                        clearTestResults();
-                      }}
+                      placeholder={getModelPlaceholder(chatbotProvider, 'llm')}
+                      value={chatbotModelName}
+                      onChange={(e) => { setChatbotModelName(e.target.value); clearTestResults(); }}
                     />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Leave unchecked to use the default model.
-                    </p>
-                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                      Make sure the chatbot model name is exact and supported by your configured provider.
-                    </p>
                   </div>
-                )}
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      Temperature
+                    </label>
+                    <Input
+                      type="number"
+                      className="dark:border-[#3D3D3D] dark:bg-background"
+                      placeholder="0"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={chatbotTemperature}
+                      onChange={(e) => { setChatbotTemperature(e.target.value); clearTestResults(); }}
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Test results */}
+            {testResults && (
+              <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
+                <h3 className="text-lg font-semibold mb-4 text-black dark:text-white">Test Results</h3>
+                {Object.entries(testResults).map(([key, result]: [string, any]) => (
+                  <div key={key} className={`p-3 rounded-lg text-sm mb-2 ${
+                    result.status === "success"
+                      ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
+                      : result.status === "error"
+                      ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
+                      : "bg-gray-50 dark:bg-gray-900/20 text-gray-500"
+                  }`}>
+                    {result.message || `${key}: ${result.status}`}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {message && (
               <div
@@ -825,9 +998,29 @@ const LLMConfig = () => {
             )}
 
             <div className="flex gap-3">
+              {useCustomChatbot && (
+                <Button
+                  onClick={handleTestConnection}
+                  disabled={isSaving || isTesting}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  {isTesting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Testing...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Test Connection
+                    </>
+                  )}
+                </Button>
+              )}
               <Button
                 onClick={handleSave}
-                disabled={isSaving || isTesting}
+                disabled={isSaving || isTesting || (useCustomChatbot && !connectionTested)}
                 className="gradient text-white flex-1"
               >
                 {isSaving ? (
@@ -870,6 +1063,36 @@ const LLMConfig = () => {
 
         <fieldset>
         <div className="space-y-6">
+          {/* Config Scope Toggle (superadmin) */}
+          <ConfigScopeToggle
+            configScope={configScope}
+            selectedGraph={selectedGraph}
+            availableGraphs={availableGraphs}
+            className=""
+            onScopeChange={(scope) => {
+              setConfigScope(scope);
+              clearTestResults();
+              if (scope === "global") {
+                fetchConfig("global");
+              } else if (selectedGraph) {
+                fetchConfig("graph", selectedGraph);
+              }
+            }}
+            onGraphChange={(value) => {
+              setConfigScope("graph");
+              setSelectedGraph(value);
+              sessionStorage.setItem("selectedGraph", value);
+              window.dispatchEvent(new Event("graphrag:selectedGraph"));
+              clearTestResults();
+              fetchConfig("graph", value);
+            }}
+            graphSelectedHint={
+              Object.keys(graphOverrides).length > 0
+                ? `Overridden services: ${Object.keys(graphOverrides).join(", ")}. Other settings are inherited from global.`
+                : "No per-graph overrides set. All settings are inherited from global defaults."
+            }
+          />
+
           {/* Multi-Provider Toggle */}
           <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
             <div className="flex items-center space-x-3">
@@ -931,69 +1154,60 @@ const LLMConfig = () => {
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                        Completion Models
+                        Completion Model
                       </label>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                        Configure the LLM models used by the ECC service for document processing (entity extraction and community summarization) and by the chatbot for user query responses
+                      <Input
+                        type="text"
+                        className="dark:border-[#3D3D3D] dark:bg-background"
+                        placeholder={getModelPlaceholder(singleProvider, 'llm')}
+                        value={singleDefaultModel}
+                        onChange={(e) => {
+                          setSingleDefaultModel(e.target.value);
+                          clearTestResults();
+                        }}
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Used by ECC for entity extraction and community summarization during document ingestion
                       </p>
-                      
-                      <div className="space-y-3 pl-4 border-l-2 border-gray-200 dark:border-[#3D3D3D]">
-                        <div>
-                          <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                            Default LLM Model
-                          </label>
-                          <Input
-                            type="text"
-                            className="dark:border-[#3D3D3D] dark:bg-background"
-                            placeholder={getModelPlaceholder(singleProvider, 'llm')}
-                            value={singleDefaultModel}
-                            onChange={(e) => {
-                              setSingleDefaultModel(e.target.value);
-                              clearTestResults();
-                            }}
-                          />
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                            Used by ECC for entity extraction and community summarization during document ingestion
-                          </p>
-                        </div>
+                    </div>
 
-                        <div className="flex items-center space-x-3 mt-3">
-                          <input
-                            type="checkbox"
-                            id="singleUseDifferentChatbot"
-                            checked={singleUseDifferentChatbotModel}
-                            onChange={(e) => {
-                              setSingleUseDifferentChatbotModel(e.target.checked);
-                              clearTestResults();
-                            }}
-                            className="h-4 w-4 rounded border-gray-300 dark:border-[#3D3D3D]"
-                          />
-                          <label htmlFor="singleUseDifferentChatbot" className="text-sm font-medium text-black dark:text-white">
-                            Use different model for Chatbot
-                          </label>
-                        </div>
-
-                        {singleUseDifferentChatbotModel && (
-                          <div>
-                            <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                              Chatbot LLM Model
-                            </label>
-                            <Input
-                              type="text"
-                              className="dark:border-[#3D3D3D] dark:bg-background"
-                              placeholder={getModelPlaceholder(singleProvider, 'llm')}
-                              value={singleChatbotModel}
-                              onChange={(e) => {
-                                setSingleChatbotModel(e.target.value);
-                                clearTestResults();
-                              }}
-                            />
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              Used by chatbot for answering user questions
-                            </p>
-                          </div>
-                        )}
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                        Chatbot Model
+                      </label>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <input
+                          type="checkbox"
+                          id="inheritChatbotModel"
+                          className="rounded border-gray-300 dark:border-[#3D3D3D]"
+                          checked={!useCustomChatbot}
+                          onChange={(e) => {
+                            setUseCustomChatbot(!e.target.checked);
+                            if (e.target.checked) {
+                              setChatbotModelName("");
+                            }
+                            clearTestResults();
+                          }}
+                        />
+                        <label htmlFor="inheritChatbotModel" className="text-sm text-black dark:text-white">
+                          Use same model as completion service
+                        </label>
                       </div>
+                      {useCustomChatbot && (
+                        <Input
+                          type="text"
+                          className="dark:border-[#3D3D3D] dark:bg-background"
+                          placeholder={getModelPlaceholder(singleProvider, 'llm')}
+                          value={chatbotModelName}
+                          onChange={(e) => {
+                            setChatbotModelName(e.target.value);
+                            clearTestResults();
+                          }}
+                        />
+                      )}
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Used by the chatbot for answering user questions
+                      </p>
                     </div>
 
                     <div>
@@ -1048,7 +1262,7 @@ const LLMConfig = () => {
                   Completion Service
                 </h2>
                 <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-6">
-                  Configure the LLM models used by the ECC service for document processing (entity extraction and community summarization) and by the chatbot for user query responses
+                  Configure the LLM provider used by the ECC service for document processing (entity extraction and community summarization)
                 </p>
 
                 <div className="space-y-4">
@@ -1079,67 +1293,120 @@ const LLMConfig = () => {
 
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Completion Models
+                      Completion Model
                     </label>
-                    
-                    <div className="space-y-3 pl-4 border-l-2 border-gray-200 dark:border-[#3D3D3D]">
+                    <Input
+                      type="text"
+                      className="dark:border-[#3D3D3D] dark:bg-background"
+                      placeholder={getModelPlaceholder(completionProvider, 'llm')}
+                      value={completionDefaultModel}
+                      onChange={(e) => {
+                        setCompletionDefaultModel(e.target.value);
+                        clearTestResults();
+                      }}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Used by ECC for entity extraction and community summarization during document ingestion
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chatbot Service */}
+              <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
+                <h2 className="text-lg font-semibold mb-4 text-black dark:text-white">
+                  Chatbot Service
+                </h2>
+                <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
+                  Configure the LLM provider and model used by the chatbot for answering user questions.
+                </p>
+
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="inheritChatbotService"
+                      className="rounded border-gray-300 dark:border-[#3D3D3D]"
+                      checked={!useCustomChatbot}
+                      onChange={(e) => {
+                        setUseCustomChatbot(!e.target.checked);
+                        if (e.target.checked) {
+                          setChatbotModelName("");
+                          setChatbotProviderConfig({});
+                        }
+                        clearTestResults();
+                      }}
+                    />
+                    <label htmlFor="inheritChatbotService" className="text-sm font-medium text-black dark:text-white">
+                      Inherit from completion service
+                    </label>
+                  </div>
+
+                  {useCustomChatbot && (
+                    <>
                       <div>
                         <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                          Default LLM Model
+                          Provider <span className="text-red-500">*</span>
+                        </label>
+                        <Select
+                          value={chatbotProvider}
+                          onValueChange={(value) => {
+                            setChatbotProvider(value);
+                            setChatbotProviderConfig({});
+                            setChatbotModelName("");
+                            clearTestResults();
+                          }}
+                        >
+                          <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="openai">OpenAI</SelectItem>
+                            <SelectItem value="azure">Azure OpenAI</SelectItem>
+                            <SelectItem value="genai">Google GenAI (Gemini)</SelectItem>
+                            <SelectItem value="vertexai">Google Vertex AI</SelectItem>
+                            <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                            <SelectItem value="groq">Groq</SelectItem>
+                            <SelectItem value="ollama">Ollama</SelectItem>
+                            <SelectItem value="sagemaker">AWS SageMaker</SelectItem>
+                            <SelectItem value="huggingface">HuggingFace</SelectItem>
+                            <SelectItem value="watsonx">IBM WatsonX</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {renderProviderFields(chatbotProvider, chatbotProviderConfig, setChatbotProviderConfig)}
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                          Model Name <span className="text-red-500">*</span>
                         </label>
                         <Input
                           type="text"
                           className="dark:border-[#3D3D3D] dark:bg-background"
-                          placeholder={getModelPlaceholder(completionProvider, 'llm')}
-                          value={completionDefaultModel}
-                          onChange={(e) => {
-                            setCompletionDefaultModel(e.target.value);
-                            clearTestResults();
-                          }}
+                          placeholder={getModelPlaceholder(chatbotProvider, 'llm')}
+                          value={chatbotModelName}
+                          onChange={(e) => { setChatbotModelName(e.target.value); clearTestResults(); }}
                         />
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Used by ECC for entity extraction and community summarization during document ingestion
-                        </p>
                       </div>
 
-                      <div className="flex items-center space-x-3 mt-3">
-                        <input
-                          type="checkbox"
-                          id="completionUseDifferentChatbot"
-                          checked={completionUseDifferentChatbotModel}
-                          onChange={(e) => {
-                            setCompletionUseDifferentChatbotModel(e.target.checked);
-                            clearTestResults();
-                          }}
-                          className="h-4 w-4 rounded border-gray-300 dark:border-[#3D3D3D]"
-                        />
-                        <label htmlFor="completionUseDifferentChatbot" className="text-sm font-medium text-black dark:text-white">
-                          Use different model for Chatbot
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                          Temperature
                         </label>
+                        <Input
+                          type="number"
+                          className="dark:border-[#3D3D3D] dark:bg-background"
+                          placeholder="0"
+                          min="0"
+                          max="2"
+                          step="0.1"
+                          value={chatbotTemperature}
+                          onChange={(e) => { setChatbotTemperature(e.target.value); clearTestResults(); }}
+                        />
                       </div>
-
-                      {completionUseDifferentChatbotModel && (
-                        <div>
-                          <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                            Chatbot LLM Model
-                          </label>
-                          <Input
-                            type="text"
-                            className="dark:border-[#3D3D3D] dark:bg-background"
-                            placeholder={getModelPlaceholder(completionProvider, 'llm')}
-                            value={completionChatbotModel}
-                            onChange={(e) => {
-                              setCompletionChatbotModel(e.target.value);
-                              clearTestResults();
-                            }}
-                          />
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                            Used by chatbot for answering user questions
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1243,6 +1510,7 @@ const LLMConfig = () => {
               </div>
             </>
           )}
+
 
           {message && (
             <div

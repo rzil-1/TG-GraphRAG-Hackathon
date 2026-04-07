@@ -200,7 +200,7 @@ class GenerateFunction(BaseTool):
 
         logger.debug(f"request_id={req_id_cv.get()} retrieved documents={docs}")
 
-        chain = PROMPT | self.llm.model | func_parser
+        chain = PROMPT | self.llm.llm | func_parser
         usage_data = {}
         with get_openai_callback() as cb:
             generated = chain.invoke(**inputs)

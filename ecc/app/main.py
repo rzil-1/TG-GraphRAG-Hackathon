@@ -36,6 +36,8 @@ from common.config import (
     embedding_service,
     get_llm_service,
     llm_config,
+    get_completion_config,
+    get_graphrag_config,
     reload_db_config,
 )
 from common.db.connections import elevate_db_connection_to_token, get_db_connection_id_token
@@ -98,28 +100,29 @@ def initialize_eventual_consistency_checker(
                 embedding_service,
                 support_ai_instance=False,
             )
-        index_names = graphrag_config.get(
+        graph_cfg = get_graphrag_config(graphname)
+        index_names = graph_cfg.get(
             "indexes",
             ["DocumentChunk", "Community"],
         )
 
-        if graphrag_config.get("extractor") == "llm":
+        if graph_cfg.get("extractor") == "llm":
             from common.extractors import LLMEntityRelationshipExtractor
 
-            extractor = LLMEntityRelationshipExtractor(get_llm_service(llm_config))
+            extractor = LLMEntityRelationshipExtractor(get_llm_service(get_completion_config()))
         else:
             raise ValueError("Invalid extractor type")
 
         checker = EventualConsistencyChecker(
-            graphrag_config.get("process_interval_seconds", 300),
-            graphrag_config.get("cleanup_interval_seconds", 300),
+            graph_cfg.get("process_interval_seconds", 300),
+            graph_cfg.get("cleanup_interval_seconds", 300),
             graphname,
             embedding_service,
             embedding_store,
             index_names,
             conn,
             extractor,
-            graphrag_config.get("checker_batch_size", graphrag_config.get("batch_size", 100)),
+            graph_cfg.get("checker_batch_size", graph_cfg.get("batch_size", 100)),
         )
         consistency_checkers[graphname] = checker
 

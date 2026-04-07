@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import boto3, botocore
 from langchain_aws import ChatBedrock
 import logging
@@ -57,53 +56,3 @@ class AWSBedrock(LLM_Model):
         LogWriter.info(
             f"request_id={req_id_cv.get()} instantiated AWSBedrock model_name={model_name}"
         )
-
-    @property
-    def map_question_schema_prompt(self):
-        return self._read_prompt_file(self.prompt_path + "map_question_to_schema.txt")
-
-    @property
-    def generate_function_prompt(self):
-        return self._read_prompt_file(self.prompt_path + "generate_function.txt")
-
-    @property
-    def entity_relationship_extraction_prompt(self):
-        return self._read_prompt_file(
-            self.prompt_path + "entity_relationship_extraction.txt"
-        )
-
-    @property
-    def generate_cypher_prompt(self):
-        filepath = self.prompt_path + "generate_cypher.txt"
-        if os.path.exists(filepath):
-            return self._read_prompt_file(filepath)
-        else:
-            return super().generate_cypher_prompt
-
-    @property
-    def generate_gsql_prompt(self):
-        filepath = self.prompt_path + "generate_gsql.txt"
-        if os.path.exists(filepath):
-            return self._read_prompt_file(filepath)
-        else:
-            return super().generate_gsql_prompt
-
-    @property
-    def chatbot_response_prompt(self):
-        filepath = self.prompt_path + "chatbot_response.txt"
-        if os.path.exists(filepath):
-            return self._read_prompt_file(filepath)
-        else:
-            return super().chatbot_response_prompt
-
-    @property
-    def graphrag_scoring_prompt(self):
-        filepath = self.prompt_path + "graphrag_scoring.txt"
-        if os.path.exists(filepath):
-            return self._read_prompt_file(filepath)
-        else:
-            return super().graphrag_scoring_prompt
-
-    @property
-    def model(self):
-        return self.llm

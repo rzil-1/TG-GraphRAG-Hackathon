@@ -46,9 +46,13 @@ class TestUISetupUnit(unittest.TestCase):
       2. test_resolve_llm_access_graph_admin_returns_chatbot_only
       3. test_resolve_llm_access_globalobserver_raises_403
 
-    GET /ui/config secret stripping (2)
+    GET /ui/config secret stripping (3)
       4. test_get_config_strips_db_password
       5. test_get_config_strips_llm_api_keys
+      8. test_get_config_strips_chat_service_api_keys
+
+    GET /ui/config chatbot_only response (1)
+      9. test_get_config_chatbot_only_returns_global_chat_info
 
     _require_prompt_access (1)
       6. test_graph_admin_entity_extraction_prompt_raises_403
@@ -132,6 +136,56 @@ class TestUISetupUnit(unittest.TestCase):
                 llm.get(svc, {}),
                 f"authentication_configuration must not be returned in {svc}",
             )
+
+    # =========================================================================
+    # Test 8 – GET /ui/config does NOT return chat_service API keys
+    # =========================================================================
+
+    @patch("app.routers.ui._get_user_role_details", return_value=(["superuser"], {}))
+    @patch(
+        "app.routers.ui.llm_config",
+        {
+            "authentication_configuration": {"OPENAI_API_KEY": "sk-top"},
+            "completion_service": {"llm_service": "openai"},
+            "chat_service": {"llm_service": "groq", "authentication_configuration": {"GROQ_API_KEY": "gsk-secret"}},
+        },
+    )
+    @patch("app.routers.ui.db_config", {"hostname": "http://test-db"})
+    @patch("app.routers.ui.graphrag_config", {})
+    def test_get_config_strips_chat_service_api_keys(self, _mock):
+        response = self.client.get("/ui/config", auth=("testuser", "testpass"))
+        self.assertEqual(response.status_code, 200)
+        llm = response.json().get("llm_config", {})
+        chat_svc = llm.get("chat_service", {})
+        self.assertNotIn(
+            "authentication_configuration",
+            chat_svc,
+            "authentication_configuration must not be returned in chat_service",
+        )
+
+    # =========================================================================
+    # Test 9 – GET /ui/config chatbot_only returns global_chat_info
+    # =========================================================================
+
+    @patch("app.routers.ui._get_user_role_details", return_value=([], {"mygraph": ["admin"]}))
+    @patch(
+        "app.routers.ui.llm_config",
+        {
+            "completion_service": {"llm_service": "openai", "llm_model": "gpt-4.1-mini"},
+        },
+    )
+    def test_get_config_chatbot_only_returns_global_chat_info(self, _mock):
+        response = self.client.get(
+            "/ui/config?graphname=mygraph", auth=("testuser", "testpass")
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data.get("llm_config_access"), "chatbot_only")
+        self.assertIn("global_chat_info", data)
+        self.assertEqual(data["global_chat_info"]["llm_service"], "openai")
+        self.assertEqual(data["global_chat_info"]["llm_model"], "gpt-4.1-mini")
+        # No graph-specific chat_service exists, so chatbot_config should be None
+        self.assertIsNone(data.get("chatbot_config"))
 
     # =========================================================================
     # Test 6 – graph admin editing entity_extraction prompt raises 403

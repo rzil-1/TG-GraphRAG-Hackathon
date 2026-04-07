@@ -89,7 +89,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     if (!ingestGraphName) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/uploads/list`, {
         headers: { Authorization: `Basic ${creds}` },
       });
@@ -146,7 +146,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     setUploadMessage("Uploading files...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const formData = new FormData();
       filesArray.forEach((file) => formData.append("files", file));
 
@@ -196,7 +196,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     setUploadMessage("Total size exceeds limit. Uploading files one by one...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       let uploadedCount = 0;
       let failedCount = 0;
       const totalFiles = filesArray.length;
@@ -273,7 +273,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     if (!ingestGraphName) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(
         `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}`,
         {
@@ -299,7 +299,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     if (!shouldDelete) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/uploads`, {
         method: "DELETE",
         headers: { Authorization: `Basic ${creds}` },
@@ -317,7 +317,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     if (!ingestGraphName) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/cloud/list`, {
         headers: { Authorization: `Basic ${creds}` },
       });
@@ -339,7 +339,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     setDownloadMessage("Downloading files from cloud storage...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       // Prepare request body based on provider
       let requestBody: any = { provider: cloudProvider };
@@ -430,7 +430,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     if (!ingestGraphName) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(
         `/ui/${ingestGraphName}/cloud/delete?filename=${encodeURIComponent(
           filename
@@ -458,7 +458,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     if (!shouldDelete) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/cloud/delete`, {
         method: "DELETE",
         headers: { Authorization: `Basic ${creds}` },
@@ -479,7 +479,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     setIsIngesting(true);
     setIngestMessage("Ingesting documents into knowledge graph...");
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
 
       // Use existing ingestJobData if available, otherwise construct from folder path
@@ -540,7 +540,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     setIngestMessage("Step 1/2: Creating ingest job...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       const createIngestConfig = {
         data_source: "server",
@@ -629,7 +629,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     console.log("fileCount:", fileCount);
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       const createIngestConfig = {
         data_source: "server",
@@ -735,7 +735,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     setIsIngesting(true);
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       let loadingInfo: any = {};
 
       if (skipBDAProcessing) {
@@ -856,9 +856,9 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     }
   };
 
-  // Load available graphs from localStorage on mount
+  // Load available graphs from sessionStorage on mount
   useEffect(() => {
-    const store = JSON.parse(localStorage.getItem("site") || "{}");
+    const store = JSON.parse(sessionStorage.getItem("site") || "{}");
     if (store.graphs && Array.isArray(store.graphs)) {
       setAvailableGraphs(store.graphs);
       // Auto-select first graph if available

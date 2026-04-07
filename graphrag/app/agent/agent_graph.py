@@ -36,7 +36,7 @@ from typing_extensions import TypedDict
 from common.logs.log import req_id_cv
 from common.py_schemas import GraphRAGResponse, MapQuestionToSchemaResponse
 from common.llm_services.aws_bedrock_service import AWSBedrock
-from common.config import graphrag_config
+from common.config import get_graphrag_config
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,7 @@ class TigerGraphAgentGraph:
         self.enable_human_in_loop = enable_human_in_loop
         self.q = q
 
+        self._graphrag_cfg = get_graphrag_config(db_connection.graphname)
         self.supportai_enabled = True
         self.supportai_retriever = supportai_retriever.lower().replace(" ", "")
         try:
@@ -161,7 +162,7 @@ class TigerGraphAgentGraph:
                 template=self.llm_provider.contextualize_question_prompt,
                 input_variables=["history", "question"],
             )
-            chain = prompt | self.llm_provider.model
+            chain = prompt | self.llm_provider.llm
             result = chain.invoke({"history": history_text, "question": question})
             standalone = result.content.strip() if hasattr(result, "content") else str(result).strip()
             logger.info(f"Contextualized question for KG search: {standalone}")
@@ -311,18 +312,18 @@ class TigerGraphAgentGraph:
         retriever = HybridRetriever(
             self.embedding_model,
             self.embedding_store,
-            self.llm_provider.model,
+            self.llm_provider,
             self.db_connection,
         )
-        chunk_only=graphrag_config.get("chunk_only", True)
+        chunk_only=self._graphrag_cfg.get("chunk_only", True)
         step = retriever.search(
             state["question"],
             indices=["DocumentChunk"],
-            top_k=graphrag_config.get("top_k", 5),
-            num_seen_min=graphrag_config.get("num_seen_min", 2),
-            num_hops=graphrag_config.get("num_hops", 2),
+            top_k=self._graphrag_cfg.get("top_k", 5),
+            num_seen_min=self._graphrag_cfg.get("num_seen_min", 2),
+            num_hops=self._graphrag_cfg.get("num_hops", 2),
             chunk_only=chunk_only,
-            doc_only=graphrag_config.get("doc_only", False),
+            doc_only=self._graphrag_cfg.get("doc_only", False),
         )
 
         query_name = "GraphRAG_Hybrid_Vector_Search"
@@ -351,7 +352,7 @@ class TigerGraphAgentGraph:
         step = retriever.search(
             state["question"],
             index="DocumentChunk",
-            top_k=graphrag_config.get("top_k", 5)
+            top_k=self._graphrag_cfg.get("top_k", 5)
         )
 
         query_name = "Content_Similarity_Vector_Search"
@@ -373,13 +374,13 @@ class TigerGraphAgentGraph:
         retriever = SiblingRetriever(
             self.embedding_model,
             self.embedding_store,
-            self.llm_provider.model,
+            self.llm_provider,
             self.db_connection,
         )
         step = retriever.search(
             state["question"],
             index="DocumentChunk",
-            top_k=graphrag_config.get("top_k", 5)
+            top_k=self._graphrag_cfg.get("top_k", 5)
         )
 
         query_name = "Chunk_Sibling_Vector_Search"
@@ -401,14 +402,14 @@ class TigerGraphAgentGraph:
         retriever = CommunityRetriever(
             self.embedding_model,
             self.embedding_store,
-            self.llm_provider.model,
+            self.llm_provider,
             self.db_connection,
         )
         step = retriever.search(
             state["question"],
-            community_level=graphrag_config.get("community_level", 2),
-            top_k=graphrag_config.get("top_k", 5),
-            with_chunk=graphrag_config.get("with_chunk", True),
+            community_level=self._graphrag_cfg.get("community_level", 2),
+            top_k=self._graphrag_cfg.get("top_k", 5),
+            with_chunk=self._graphrag_cfg.get("with_chunk", True),
         )
 
         query_name = "GraphRAG_Community_Vector_Search"

@@ -98,7 +98,7 @@ async def chunk_doc(
         
         # Use get_chunker for all types (including images)
         # For images, get_chunker returns SingleChunker which preserves markdown image references
-        chunker = ecc_util.get_chunker(chunker_type)
+        chunker = ecc_util.get_chunker(chunker_type, graphname=conn.graphname)
         # decode the text return from tigergraph as it was encoded when written into jsonl file for uploading
         chunks = chunker.chunk(doc["attributes"]["text"].encode('raw_unicode_escape').decode('unicode_escape'))
        
@@ -440,7 +440,8 @@ async def process_community(
         if len(children) == 1:
             summary = children[0]
         else:
-            llm = ecc_util.get_llm_service(conn.graphname)
+            from common.config import get_llm_service, get_completion_config
+            llm = get_llm_service(get_completion_config(conn.graphname))
             summarizer = community_summarizer.CommunitySummarizer(llm)
             summary = await summarizer.summarize(comm_id, children)
             if summary["error"]:

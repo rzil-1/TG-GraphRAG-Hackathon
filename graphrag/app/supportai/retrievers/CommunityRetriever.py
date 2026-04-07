@@ -112,7 +112,7 @@ class CommunityRetriever(BaseRetriever):
             partial_variables={"format_instructions": answer_parser.get_format_instructions()}
         )
 
-        model = self.llm_service.model
+        model = self.llm_service.llm
 
         chain = ANSWER_PROMPT | model | answer_parser
 

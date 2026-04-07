@@ -13,10 +13,12 @@ import GraphRAGConfig from "./pages/setup/GraphRAGConfig.tsx";
 import CustomizePrompts from "./pages/setup/CustomizePrompts.tsx";
 import { ThemeProvider } from "./components/ThemeProvider.tsx";
 import { ModeToggle } from "@/components/ModeToggle.tsx";
+import { useIdleTimeout } from "./hooks/useIdleTimeout.ts";
 
 import "./components/i18n";
 
 const Layout = () => {
+  useIdleTimeout();
   return (
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
       <ModeToggle />
@@ -83,6 +85,10 @@ const router = createBrowserRouter([
             element: <CustomizePrompts />,
           },
         ],
+      },
+      {
+        path: "*",
+        element: <Navigate to="/" replace />,
       },
     ],
   },

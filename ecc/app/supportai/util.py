@@ -12,10 +12,10 @@ from supportai import workers
 from pyTigerGraph import TigerGraphConnection
 
 from common.config import (
-    graphrag_config,
     embedding_service,
     get_llm_service,
-    llm_config,
+    get_completion_config,
+    get_graphrag_config,
 )
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.embeddings.tigergraph_embedding_store import TigerGraphEmbeddingStore
@@ -109,10 +109,11 @@ async def init(
     await install_queries(requried_queries, conn)
 
     # extractor
-    if graphrag_config.get("extractor") == "graphrag":
+    graph_cfg = get_graphrag_config(conn.graphname)
+    if graph_cfg.get("extractor") == "graphrag":
         extractor = GraphExtractor()
-    elif graphrag_config.get("extractor") == "llm":
-        extractor = LLMEntityRelationshipExtractor(get_llm_service(llm_config))
+    elif graph_cfg.get("extractor") == "llm":
+        extractor = LLMEntityRelationshipExtractor(get_llm_service(get_completion_config()))
     else:
         raise ValueError("Invalid extractor type")
 

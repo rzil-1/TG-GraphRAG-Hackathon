@@ -55,7 +55,7 @@ class TigerGraphAgentRouter:
             }
         )
 
-        question_router = prompt | self.llm.model | router_parser
+        question_router = prompt | self.llm.llm | router_parser
         usage_data = {}
         with get_openai_callback() as cb:
             res = question_router.invoke({"question": question, "v_types": v_types, "e_types": e_types, "conversation": conversation})

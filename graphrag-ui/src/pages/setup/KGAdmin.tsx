@@ -70,7 +70,7 @@ const KGAdmin = () => {
 
   // Load available graphs
   useEffect(() => {
-    const store = JSON.parse(localStorage.getItem("site") || "{}");
+    const store = JSON.parse(sessionStorage.getItem("site") || "{}");
     if (store.graphs && Array.isArray(store.graphs)) {
       setAvailableGraphs(store.graphs);
       if (store.graphs.length > 0 && !refreshGraphName) {
@@ -92,7 +92,7 @@ const KGAdmin = () => {
     setStatusType("");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       if (!creds) {
         throw new Error("Not authenticated. Please login first.");
       }
@@ -163,9 +163,9 @@ const KGAdmin = () => {
       setAvailableGraphs(prev => {
         if (!prev.includes(newGraph)) {
           const updated = [...prev, newGraph];
-          const store = JSON.parse(localStorage.getItem("site") || "{}");
+          const store = JSON.parse(sessionStorage.getItem("site") || "{}");
           store.graphs = updated;
-          localStorage.setItem("site", JSON.stringify(store));
+          sessionStorage.setItem("site", JSON.stringify(store));
           return updated;
         }
         return prev;
@@ -195,7 +195,7 @@ const KGAdmin = () => {
     }
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const statusResponse = await fetch(`/ui/${graphName}/rebuild_status`, {
         method: "GET",
         headers: { Authorization: `Basic ${creds}` },
@@ -268,7 +268,7 @@ const KGAdmin = () => {
     setRefreshMessage("Verifying rebuild status...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       // Final status check to prevent race conditions
       const statusCheckResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
@@ -340,7 +340,7 @@ const KGAdmin = () => {
       <div className="max-w-7xl mx-auto">
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-black dark:text-white mb-2">
-            Knowledge Graph Administration
+            Knowledge Graph Setup
           </h1>
           <p className="text-sm text-gray-600 dark:text-[#D9D9D9]">
             Configure and manage your knowledge graphs

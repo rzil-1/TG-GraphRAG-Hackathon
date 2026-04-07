@@ -43,7 +43,7 @@ Format your response in the following manner {format_instructions}""",
 
 
         # Chain
-        question_rewriter = re_write_prompt | self.llm.model | rewrite_parser
+        question_rewriter = re_write_prompt | self.llm.llm | rewrite_parser
 
         usage_data = {}
         with get_openai_callback() as cb:

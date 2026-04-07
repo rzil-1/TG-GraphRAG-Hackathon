@@ -2,7 +2,7 @@ import base64
 import io
 import logging
 from langchain_core.messages import HumanMessage, SystemMessage
-from common.config import get_multimodal_service
+from common.config import get_llm_service, get_multimodal_config
 
 logger = logging.getLogger(__name__)
 
@@ -10,8 +10,11 @@ _multimodal_client = None
 
 def _get_client():
     global _multimodal_client
-    if _multimodal_client is None:
-        _multimodal_client = get_multimodal_service()
+    if _multimodal_client is None and get_multimodal_config():
+        try:
+            _multimodal_client = get_llm_service(get_multimodal_config())
+        except Exception:
+            logger.warning("Failed to create multimodal LLM client")
     return _multimodal_client
 
 def describe_image_with_llm(file_path):

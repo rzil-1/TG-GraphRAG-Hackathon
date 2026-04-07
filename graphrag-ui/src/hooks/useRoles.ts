@@ -30,11 +30,11 @@ export function useRoles(refreshKey?: unknown): RolesState {
   const [rolesLoaded, setRolesLoaded] = useState(false);
   const [hasCreds, setHasCreds] = useState(false);
   const [selectedGraph, setSelectedGraph] = useState(
-    localStorage.getItem("selectedGraph") || ""
+    sessionStorage.getItem("selectedGraph") || ""
   );
 
-  const fetchRoles = useCallback(async () => {
-    const creds = localStorage.getItem("creds");
+  const loadRoles = useCallback(async () => {
+    const creds = sessionStorage.getItem("creds");
     if (!creds) {
       setUserRoles([]);
       setGraphRoles({});
@@ -42,6 +42,20 @@ export function useRoles(refreshKey?: unknown): RolesState {
       setRolesLoaded(true);
       return;
     }
+
+    // Try loading from sessionStorage first (populated at login)
+    const site = JSON.parse(sessionStorage.getItem("site") || "{}");
+    if (Array.isArray(site.roles)) {
+      const roles = site.roles.map((role: string) => role.toLowerCase());
+      setUserRoles(roles);
+      setGraphRoles(parseGraphRoles(site.graph_roles));
+      setSelectedGraph(sessionStorage.getItem("selectedGraph") || "");
+      setHasCreds(true);
+      setRolesLoaded(true);
+      return;
+    }
+
+    // Fallback: fetch from backend (for sessions created before login returned roles)
     try {
       const response = await fetch("/ui/roles", {
         headers: { Authorization: `Basic ${creds}` },
@@ -56,8 +70,13 @@ export function useRoles(refreshKey?: unknown): RolesState {
       const roles = Array.isArray(data.roles) ? data.roles : [];
       setUserRoles(roles.map((role: string) => role.toLowerCase()));
       setGraphRoles(parseGraphRoles(data.graph_roles));
-      setSelectedGraph(localStorage.getItem("selectedGraph") || "");
+      setSelectedGraph(sessionStorage.getItem("selectedGraph") || "");
       setHasCreds(true);
+
+      // Persist to site so subsequent reads don't need a fetch
+      site.roles = data.roles;
+      site.graph_roles = data.graph_roles;
+      sessionStorage.setItem("site", JSON.stringify(site));
     } catch (err) {
       console.error("Failed to fetch user roles:", err);
       setUserRoles([]);
@@ -69,12 +88,12 @@ export function useRoles(refreshKey?: unknown): RolesState {
   }, []);
 
   useEffect(() => {
-    fetchRoles();
-  }, [fetchRoles, refreshKey]);
+    loadRoles();
+  }, [loadRoles, refreshKey]);
 
   useEffect(() => {
     const handleGraphChange = () => {
-      setSelectedGraph(localStorage.getItem("selectedGraph") || "");
+      setSelectedGraph(sessionStorage.getItem("selectedGraph") || "");
     };
     window.addEventListener("graphrag:selectedGraph", handleGraphChange);
     return () => {
@@ -86,7 +105,8 @@ export function useRoles(refreshKey?: unknown): RolesState {
   const isSuperuser = userRoles.includes("superuser");
   const isGlobalDesigner = userRoles.includes("globaldesigner");
   const isGraphAdmin = selectedGraphRoles.includes("admin");
-  const canAccessSetup = isSuperuser || isGlobalDesigner || isGraphAdmin;
+  const isAdminOnAnyGraph = (Object.values(graphRoles) as string[][]).some(roles => roles.includes("admin"));
+  const canAccessSetup = isSuperuser || isGlobalDesigner || isAdminOnAnyGraph;
 
   return {
     userRoles,

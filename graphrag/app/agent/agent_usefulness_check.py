@@ -46,7 +46,7 @@ class TigerGraphAgentUsefulnessCheck:
         )
 
         # Chain
-        rag_chain = prompt | self.llm.model | usefulness_parser
+        rag_chain = prompt | self.llm.llm | usefulness_parser
 
         usage_data = {}
         with get_openai_callback() as cb:

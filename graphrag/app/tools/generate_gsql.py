@@ -124,7 +124,7 @@ Edge Types:
 
         logger.debug_pii("Prompt to LLM:\n" + PROMPT.invoke({"question": question, "schema": schema, "history": history}).to_string())
 
-        chain = PROMPT | self.llm.model | StrOutputParser()
+        chain = PROMPT | self.llm.llm | StrOutputParser()
         usage_data = {}
         with get_openai_callback() as cb:
             out = chain.invoke({"question": question, "schema": schema, "history": history}).strip("```gsql").strip("```")

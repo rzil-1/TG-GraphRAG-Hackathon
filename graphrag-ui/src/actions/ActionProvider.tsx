@@ -55,8 +55,8 @@ const conversationManager = {
     if (onNewConversationCallback) {
       onNewConversationCallback();
     }
-    // Clear conversation data from localStorage
-    localStorage.removeItem('selectedConversationData');
+    // Clear conversation data from sessionStorage
+    sessionStorage.removeItem('selectedConversationData');
     // Don't reload the page - just clear the chat state
   },
 
@@ -88,7 +88,7 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
   const { sendMessage, lastMessage, readyState } = useWebSocket(WS_URL, {
     onOpen: () => {
       // Send authentication credentials
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       console.log("Sending credentials, length:", creds ? creds.length : 0);
       queryGraphragWs2(creds!);
 
@@ -115,7 +115,7 @@ const ActionProvider: React.FC<ActionProviderProps> = ({
 
   // Initialize conversation manager and load conversation messages
   useEffect(() => {
-    const selectedConversationData = localStorage.getItem('selectedConversationData');
+    const selectedConversationData = sessionStorage.getItem('selectedConversationData');
     if (selectedConversationData) {
       try {
         const data = JSON.parse(selectedConversationData);

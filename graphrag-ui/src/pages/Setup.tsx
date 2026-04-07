@@ -102,7 +102,7 @@ const [activeTab, setActiveTab] = useState("upload");
     if (!ingestGraphName) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/uploads/list`, {
         headers: { Authorization: `Basic ${creds}` },
       });
@@ -151,7 +151,7 @@ const [activeTab, setActiveTab] = useState("upload");
     setUploadMessage("Uploading files...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const formData = new FormData();
       filesArray.forEach((file) => formData.append("files", file));
 
@@ -200,7 +200,7 @@ const [activeTab, setActiveTab] = useState("upload");
     setUploadMessage("Total size exceeds limit. Uploading files one by one...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       let uploadedCount = 0;
       let failedCount = 0;
       const totalFiles = filesArray.length;
@@ -273,7 +273,7 @@ const [activeTab, setActiveTab] = useState("upload");
     console.log("Deleting file:", filename);
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       // Delete original file
       const url = `/ui/${ingestGraphName}/uploads?filename=${encodeURIComponent(filename)}`;
@@ -301,7 +301,7 @@ const [activeTab, setActiveTab] = useState("upload");
     if (!shouldDelete) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/uploads`, {
         method: "DELETE",
         headers: { Authorization: `Basic ${creds}` },
@@ -323,7 +323,7 @@ const [activeTab, setActiveTab] = useState("upload");
     if (!ingestGraphName) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/cloud/list`, {
         headers: { Authorization: `Basic ${creds}` },
       });
@@ -345,7 +345,7 @@ const [activeTab, setActiveTab] = useState("upload");
     setDownloadMessage("Downloading files from cloud storage...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       
       // Prepare request body based on provider
       let requestBody: any = { provider: cloudProvider };
@@ -437,7 +437,7 @@ const [activeTab, setActiveTab] = useState("upload");
     if (!ingestGraphName) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       
       // Delete original file
       const url = `/ui/${ingestGraphName}/cloud/delete?filename=${encodeURIComponent(filename)}`;
@@ -462,7 +462,7 @@ const [activeTab, setActiveTab] = useState("upload");
     if (!shouldDelete) return;
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch(`/ui/${ingestGraphName}/cloud/delete`, {
         method: "DELETE",
         headers: { Authorization: `Basic ${creds}` },
@@ -485,7 +485,7 @@ const [activeTab, setActiveTab] = useState("upload");
     setIsIngesting(true);
     setIngestMessage("Ingesting documents into knowledge graph...");
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const folderPath = sourceType === "uploaded" ? `uploads/${ingestGraphName}` : `downloaded_files_cloud/${ingestGraphName}`;
       
       // Use existing ingestJobData if available, otherwise construct from folder path
@@ -547,7 +547,7 @@ const [activeTab, setActiveTab] = useState("upload");
     setIngestMessage("Step 1/2: Creating ingest job...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       // Step 1: Create ingest job
       const createIngestConfig = {
@@ -643,7 +643,7 @@ const [activeTab, setActiveTab] = useState("upload");
     console.log("fileCount:", fileCount);
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       // Call create_ingest to process files
       const createIngestConfig = {
@@ -741,7 +741,7 @@ const [activeTab, setActiveTab] = useState("upload");
     setIsIngesting(true);
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       let loadingInfo: any = {};
 
       if (skipBDAProcessing) {
@@ -859,7 +859,7 @@ const [activeTab, setActiveTab] = useState("upload");
     }
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const statusResponse = await fetch(`/ui/${graphName}/rebuild_status`, {
         method: "GET",
         headers: {
@@ -930,7 +930,7 @@ const [activeTab, setActiveTab] = useState("upload");
     setRefreshMessage("Verifying rebuild status...");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
 
       // Final status check to prevent race conditions
       const statusCheckResponse = await fetch(`/ui/${refreshGraphName}/rebuild_status`, {
@@ -1000,9 +1000,9 @@ const [activeTab, setActiveTab] = useState("upload");
     }
   }, [refreshOpen, refreshGraphName]);
 
-  // Load available graphs from localStorage on mount
+  // Load available graphs from sessionStorage on mount
   useEffect(() => {
-    const store = JSON.parse(localStorage.getItem("site") || "{}");
+    const store = JSON.parse(sessionStorage.getItem("site") || "{}");
     if (store.graphs && Array.isArray(store.graphs)) {
       setAvailableGraphs(store.graphs);
       // Auto-select first graph if available
@@ -1036,8 +1036,8 @@ const [activeTab, setActiveTab] = useState("upload");
     setStatusType("");
 
     try {
-      // Get credentials from localStorage
-      const creds = localStorage.getItem("creds");
+      // Get credentials from sessionStorage
+      const creds = sessionStorage.getItem("creds");
       if (!creds) {
         throw new Error("Not authenticated. Please login first.");
       }
@@ -1104,10 +1104,10 @@ const [activeTab, setActiveTab] = useState("upload");
       setAvailableGraphs(prev => {
         if (!prev.includes(newGraph)) {
           const updated = [...prev, newGraph];
-          // Update localStorage as well
-          const store = JSON.parse(localStorage.getItem("site") || "{}");
+          // Update sessionStorage as well
+          const store = JSON.parse(sessionStorage.getItem("site") || "{}");
           store.graphs = updated;
-          localStorage.setItem("site", JSON.stringify(store));
+          sessionStorage.setItem("site", JSON.stringify(store));
           return updated;
         }
         return prev;
@@ -1139,7 +1139,7 @@ const [activeTab, setActiveTab] = useState("upload");
             Back to Chat
           </Button>
           <h1 className="text-2xl font-bold mb-2 text-black dark:text-white">
-            Knowledge Graph Administration
+            Knowledge Graph Setup
           </h1>
           <p className="text-sm text-gray-600 dark:text-[#D9D9D9]">
             Configure and manage your knowledge graphs

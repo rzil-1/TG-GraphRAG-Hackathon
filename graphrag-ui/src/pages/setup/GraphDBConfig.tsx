@@ -4,15 +4,31 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 const GraphDBConfig = () => {
-  const [hostname, setHostname] = useState("http://tigergraph");
-  const [restppPort, setRestppPort] = useState("9000");
-  const [gsPort, setGsPort] = useState("14240");
+  // Default values for fields — shown as placeholders, used if user leaves field empty
+  const DEFAULTS = {
+    hostname: "http://tigergraph",
+    restppPort: "9000",
+    gsPort: "14240",
+    username: "tigergraph",
+    defaultTimeout: "300",
+    defaultMemThreshold: "5000",
+    defaultThreadLimit: "8",
+  };
+
+  const [hostname, setHostname] = useState("");
+  const [restppPort, setRestppPort] = useState("");
+  const [gsPort, setGsPort] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [getToken, setGetToken] = useState(false);
-  const [defaultTimeout, setDefaultTimeout] = useState("300");
-  const [defaultMemThreshold, setDefaultMemThreshold] = useState("5000");
-  const [defaultThreadLimit, setDefaultThreadLimit] = useState("8");
+  const [useApiToken, setUseApiToken] = useState(false);
+  const [apiToken, setApiToken] = useState("");
+  const [defaultTimeout, setDefaultTimeout] = useState("");
+  const [defaultMemThreshold, setDefaultMemThreshold] = useState("");
+  const [defaultThreadLimit, setDefaultThreadLimit] = useState("");
+
+  /** Return the effective value: user input if non-empty, otherwise the default */
+  const effective = (value: string, key: keyof typeof DEFAULTS) => value || DEFAULTS[key];
   
   // Track original values to detect changes
   const [originalHostname, setOriginalHostname] = useState("");
@@ -33,7 +49,7 @@ const GraphDBConfig = () => {
   const fetchConfig = async () => {
     setIsLoading(true);
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       const response = await fetch("/ui/config", {
         headers: { Authorization: `Basic ${creds}` },
       });
@@ -46,19 +62,26 @@ const GraphDBConfig = () => {
       const dbConfig = data.db_config;
 
       if (dbConfig) {
-        const loadedHostname = dbConfig.hostname || "http://tigergraph";
-        setHostname(loadedHostname);
-        setOriginalHostname(loadedHostname); // Track original hostname
-        setRestppPort(dbConfig.restppPort || "9000");
-        setGsPort(dbConfig.gsPort || "14240");
-        
-        setUsername(dbConfig.username || "");
-        setOriginalUsername(dbConfig.username || "");
-        
+        // Only populate state with non-default values; defaults show as placeholders
+        const h = dbConfig.hostname || "";
+        const u = dbConfig.username || "";
+        setHostname(h === DEFAULTS.hostname ? "" : h);
+        setOriginalHostname(h || DEFAULTS.hostname);
+        setRestppPort(dbConfig.restppPort === DEFAULTS.restppPort ? "" : (dbConfig.restppPort || ""));
+        setGsPort(dbConfig.gsPort === DEFAULTS.gsPort ? "" : (dbConfig.gsPort || ""));
+        setUsername(u === DEFAULTS.username ? "" : u);
+        setOriginalUsername(u || DEFAULTS.username);
+        setPassword(dbConfig.password || "");
         setGetToken(dbConfig.getToken || false);
-        setDefaultTimeout(String(dbConfig.default_timeout || 300));
-        setDefaultMemThreshold(String(dbConfig.default_mem_threshold || 5000));
-        setDefaultThreadLimit(String(dbConfig.default_thread_limit || 8));
+        const token = dbConfig.apiToken || "";
+        setApiToken(token);
+        setUseApiToken(!!token);
+        const t = String(dbConfig.default_timeout || "");
+        const m = String(dbConfig.default_mem_threshold || "");
+        const tl = String(dbConfig.default_thread_limit || "");
+        setDefaultTimeout(t === DEFAULTS.defaultTimeout ? "" : t);
+        setDefaultMemThreshold(m === DEFAULTS.defaultMemThreshold ? "" : m);
+        setDefaultThreadLimit(tl === DEFAULTS.defaultThreadLimit ? "" : tl);
       }
     } catch (error: any) {
       console.error("Error fetching config:", error);
@@ -76,15 +99,18 @@ const GraphDBConfig = () => {
     setConnectionTested(false);
 
     try {
-      const creds = localStorage.getItem("creds");
-      const testConfig = {
-        hostname,
-        restppPort,
-        gsPort,
-        username,
+      const creds = sessionStorage.getItem("creds");
+      const testConfig: any = {
+        hostname: effective(hostname, "hostname"),
+        restppPort: effective(restppPort, "restppPort"),
+        gsPort: effective(gsPort, "gsPort"),
+        username: effective(username, "username"),
         password,
         getToken,
       };
+      if (useApiToken && apiToken.trim()) {
+        testConfig.apiToken = apiToken.trim();
+      }
 
       const response = await fetch("/ui/config/db/test", {
         method: "POST",
@@ -124,18 +150,23 @@ const GraphDBConfig = () => {
     setMessageType("");
 
     try {
-      const creds = localStorage.getItem("creds");
-      const dbConfigData = {
-        hostname,
-        restppPort,
-        gsPort,
-        username,
+      const creds = sessionStorage.getItem("creds");
+      const effectiveHostname = effective(hostname, "hostname");
+      const effectiveUsername = effective(username, "username");
+      const dbConfigData: any = {
+        hostname: effectiveHostname,
+        restppPort: effective(restppPort, "restppPort"),
+        gsPort: effective(gsPort, "gsPort"),
+        username: effectiveUsername,
         password,
         getToken,
-        default_timeout: parseInt(defaultTimeout),
-        default_mem_threshold: parseInt(defaultMemThreshold),
-        default_thread_limit: parseInt(defaultThreadLimit),
+        default_timeout: parseInt(effective(defaultTimeout, "defaultTimeout")),
+        default_mem_threshold: parseInt(effective(defaultMemThreshold, "defaultMemThreshold")),
+        default_thread_limit: parseInt(effective(defaultThreadLimit, "defaultThreadLimit")),
       };
+      if (useApiToken && apiToken.trim()) {
+        dbConfigData.apiToken = apiToken.trim();
+      }
 
       const response = await fetch("/ui/config/db", {
         method: "POST",
@@ -154,8 +185,8 @@ const GraphDBConfig = () => {
         setConnectionTested(false); // Reset after save
         
         // Check if hostname or username changed from what was loaded
-        const hostnameChanged = originalHostname && hostname !== originalHostname;
-        const usernameChanged = originalUsername && username !== originalUsername;
+        const hostnameChanged = originalHostname && effectiveHostname !== originalHostname;
+        const usernameChanged = originalUsername && effectiveUsername !== originalUsername;
         
         // If hostname OR username changed, redirect to login so services reconnect
         if (hostnameChanged || usernameChanged) {
@@ -164,15 +195,15 @@ const GraphDBConfig = () => {
             : "GraphDB username changed. Please relogin with the new credentials.";
           
           setTimeout(() => {
-            // Clear localStorage and redirect to login
-            localStorage.removeItem("creds");
+            // Clear sessionStorage and redirect to login
+            sessionStorage.removeItem("creds");
             alert(reason);
             window.location.href = "/"; // Redirect to root (login page)
           }, 2000); // Give user 2 seconds to see the success message
         } else {
           // Update originals after successful save (only if no redirect)
-          setOriginalHostname(hostname);
-          setOriginalUsername(username);
+          setOriginalHostname(effectiveHostname);
+          setOriginalUsername(effectiveUsername);
         }
       } else {
         setMessage(result.detail || "Failed to save configuration");
@@ -196,7 +227,7 @@ const GraphDBConfig = () => {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-black dark:text-white">
-                GraphDB Configuration
+                Graph Database Configuration
               </h1>
               <p className="text-sm text-gray-600 dark:text-[#D9D9D9]">
                 Configure your TigerGraph database connection and settings
@@ -276,43 +307,105 @@ const GraphDBConfig = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Username
-                    </label>
-                    <Input
-                      type="text"
-                      className="dark:border-[#3D3D3D] dark:bg-background"
-                      placeholder="tigergraph"
-                      value={username}
-                      onChange={(e) => {
-                        setUsername(e.target.value);
-                        setConnectionTested(false);
-                        setMessage("");
-                        setMessageType("");
-                      }}
-                    />
-                  </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="useApiToken"
+                    className="rounded border-gray-300 dark:border-[#3D3D3D]"
+                    checked={useApiToken}
+                    onChange={(e) => {
+                      setUseApiToken(e.target.checked);
+                      if (!e.target.checked) setApiToken("");
+                      setConnectionTested(false);
+                      setMessage("");
+                      setMessageType("");
+                    }}
+                  />
+                  <label htmlFor="useApiToken" className="text-sm font-medium text-black dark:text-white">
+                    Use pre-generated API Token
+                  </label>
+                </div>
 
+                {useApiToken ? (
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Password
+                      API Token
                     </label>
                     <Input
                       type="password"
                       className="dark:border-[#3D3D3D] dark:bg-background"
-                      placeholder="Enter password to test and save"
-                      value={password}
+                      placeholder="Enter API token"
+                      value={apiToken}
                       onChange={(e) => {
-                        setPassword(e.target.value);
+                        setApiToken(e.target.value);
                         setConnectionTested(false);
                         setMessage("");
                         setMessageType("");
                       }}
                     />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Token-based auth is used instead of username/password for API requests
+                    </p>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                          Username
+                        </label>
+                        <Input
+                          type="text"
+                          className="dark:border-[#3D3D3D] dark:bg-background"
+                          placeholder={DEFAULTS.username}
+                          value={username}
+                          onChange={(e) => {
+                            setUsername(e.target.value);
+                            setConnectionTested(false);
+                            setMessage("");
+                            setMessageType("");
+                          }}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                          Password
+                        </label>
+                        <Input
+                          type="password"
+                          className="dark:border-[#3D3D3D] dark:bg-background"
+                          placeholder="Enter password"
+                          value={password}
+                          onChange={(e) => {
+                            setPassword(e.target.value);
+                            setConnectionTested(false);
+                            setMessage("");
+                            setMessageType("");
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="getToken"
+                        className="rounded border-gray-300 dark:border-[#3D3D3D]"
+                        checked={getToken}
+                        onChange={(e) => {
+                          setGetToken(e.target.checked);
+                          setConnectionTested(false);
+                          setMessage("");
+                          setMessageType("");
+                        }}
+                      />
+                      <label htmlFor="getToken" className="text-sm font-medium text-black dark:text-white">
+                        Get Token
+                      </label>
+                    </div>
+                  </>
+                )}
 
                 <div className="grid grid-cols-3 gap-4">
                   <div>
@@ -364,24 +457,6 @@ const GraphDBConfig = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="getToken"
-                    className="rounded border-gray-300 dark:border-[#3D3D3D]"
-                    checked={getToken}
-                    onChange={(e) => {
-                      setGetToken(e.target.checked);
-                      setConnectionTested(false);
-                      setMessage("");
-                      setMessageType("");
-                    }}
-                  />
-                  <label htmlFor="getToken" className="text-sm font-medium text-black dark:text-white">
-                    Get Token
-                  </label>
-                </div>
-
                 {message && (
                   <div
                     className={`p-4 rounded-lg ${
@@ -394,10 +469,10 @@ const GraphDBConfig = () => {
                   </div>
                 )}
 
-                <div className="flex gap-4">
+                <div className="flex items-center gap-4">
                   <Button
                     onClick={handleTestConnection}
-                    disabled={isTesting || !username || !password}
+                    disabled={isTesting || (!password.trim() && !(useApiToken && apiToken.trim()))}
                     className="bg-blue-600 hover:bg-blue-700 text-white"
                   >
                     <CheckCircle2 className="h-4 w-4 mr-2" />
@@ -412,6 +487,12 @@ const GraphDBConfig = () => {
                     <Save className="h-4 w-4 mr-2" />
                     {isSaving ? "Saving..." : "Save Configuration"}
                   </Button>
+
+                  {!password.trim() && !(useApiToken && apiToken.trim()) && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Enter password or API token to test connection
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

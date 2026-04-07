@@ -20,14 +20,14 @@ from langchain_core.prompts import PromptTemplate
 
 from common.llm_services import LLM_Model
 from common.py_schemas import CommunitySummary
-from common.config import completion_config
+from common.config import get_completion_config
 
 logger = logging.getLogger(__name__)
 
 
 # Load prompt from file
 def load_community_prompt():
-    prompt_path = completion_config.get("prompt_path", "./common/prompts/openai_gpt4/")
+    prompt_path = get_completion_config().get("prompt_path", "./common/prompts/openai_gpt4/")
     if prompt_path.startswith("./"):
         prompt_path = prompt_path[2:]
     prompt_path = prompt_path.rstrip("/")
@@ -64,7 +64,7 @@ class CommunitySummarizer:
     async def summarize(self, name: str, text: list[str]) -> CommunitySummary:
         # Load prompt at call time so config reloads and prompt edits take effect
         prompt = PromptTemplate.from_template(load_community_prompt())
-        structured_llm = self.llm_service.model.with_structured_output(CommunitySummary)
+        structured_llm = self.llm_service.llm.with_structured_output(CommunitySummary)
         chain = prompt | structured_llm
 
         # remove iteration tags from name

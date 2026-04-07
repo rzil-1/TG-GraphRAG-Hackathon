@@ -60,10 +60,10 @@ const AuthenticatedImage: FC<{ src: string; alt: string }> = ({ src, alt }) => {
   useEffect(() => {
     const fetchImage = async () => {
       try {
-        // Get credentials from localStorage (same pattern as Interact.tsx and SideMenu.tsx)
-        const creds = localStorage.getItem("creds");
+        // Get credentials from sessionStorage (same pattern as Interact.tsx and SideMenu.tsx)
+        const creds = sessionStorage.getItem("creds");
         if (!creds) {
-          console.error("No credentials found in localStorage");
+          console.error("No credentials found in sessionStorage");
           setError(true);
           setLoading(false);
           return;

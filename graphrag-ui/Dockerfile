@@ -12,4 +12,4 @@ RUN pnpm run build
 RUN pnpm i -g serve
 
 
-CMD [ "serve", "dist" ]
+CMD [ "serve", "-s", "dist" ]

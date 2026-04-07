@@ -5,6 +5,7 @@ from common.metrics.prometheus_metrics import metrics
 from common.logs.logwriter import LogWriter
 import logging
 from common.logs.log import req_id_cv
+from common.config import db_config
 
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,9 @@ class TigerGraphConnectionProxy:
         metrics.tg_inprogress_requests.labels(query_name=query_name).inc()
         try:
             restppid = self._tg_connection.runInstalledQuery(
-                query_name, params, runAsync=True, usePost=usePost, sizeLimit=sizeLimit
+                query_name, params, runAsync=True, usePost=usePost, sizeLimit=sizeLimit,
+                threadLimit=db_config.get("default_thread_limit", 8),
+                memoryLimit=db_config.get("default_mem_threshold", 5000),
             )
             LogWriter.info(
                 f"request_id={req_id_cv.get()} query {query_name} started with RESTPP ID {restppid}"

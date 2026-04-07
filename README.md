@@ -31,7 +31,7 @@
 - [More Detailed Configurations](#more-detailed-configurations)
   - [DB configuration](#db-configuration)
   - [GraphRAG configuration](#graphrag-configuration)
-  - [Chat configuration](#chat-configuration)
+  - [Chat History Configuration](#chat-history-configuration)
   - [LLM provider configuration](#llm-provider-configuration)
     - [Supported parameters](#supported-parameters)
     - [Provider examples](#provider-examples)
@@ -55,7 +55,7 @@
 ---
 
 ## Releases
-* **2/28/2025**: GraphRAG v1.2.0 released. Added Admin UI for graph initialization, document ingestion, and knowledge graph rebuild, along with many other improvements and bug fixes. See [release notes](https://github.com/tigergraph/graphrag/releases/tag/v1.2.0) for details.
+* **2/28/2026**: GraphRAG v1.2.0 released. Added Admin UI for graph initialization, document ingestion, and knowledge graph rebuild, along with many other improvements and bug fixes. See [release notes](https://github.com/tigergraph/graphrag/releases/tag/v1.2.0) for details.
 * **9/22/2025**: GraphRAG is available now officially v1.1 (v1.1.0). AWS Bedrock support is completed with BDA integration for multimodal document ingestion. See [release notes](https://github.com/tigergraph/graphrag/releases/tag/v1.1.0) for details.
 * **6/18/2025**: GraphRAG is available now officially v1.0 (v1.0.0). TigerGraph database is the only graph and vector storagge supported.
 Please see [Release Notes](https://docs.tigergraph.com/tg-graphrag/current/release-notes/) for details.
@@ -105,7 +105,7 @@ Organizing the data as a knowledge graph allows a chatbot to access accurate, fa
 ### Quick Start
 
 #### Use TigerGraph Docker-Based Instance
-Set your LLM Provider (supported `openai` or `gemini`) api key as environment varabiel LLM_API_KEY and use the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
+Set your LLM Provider (supported `openai` or `gemini`) api key as environment variable LLM_API_KEY and use the following command for a one-step quick deployment with TigerGraph Community Edition and default configurations:
 ```
 curl -k https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/setup_graphrag.sh | bash
 ```
@@ -489,7 +489,7 @@ Copy the below code into `configs/server_config.json`. You shouldn’t need to c
 | `enable_consistency_checker` | bool | `false` | Enable the background consistency checker. |
 | `graph_names` | list | `[]` | Graphs to monitor when consistency checker is enabled. |
 
-### Chat configuration
+### Chat History Configuration
 Copy the below code into `configs/server_config.json`. You shouldn’t need to change anything unless you change the port of the chat history service in the Docker Compose file.
 
 ```json
@@ -510,6 +510,41 @@ Copy the below code into `configs/server_config.json`. You shouldn’t need to c
 ### LLM provider configuration
 In the `llm_config` section of `configs/server_config.json` file, copy JSON config template from below for your LLM provider, and fill out the appropriate fields. Only one provider is needed.
 
+#### Structure overview
+
+```json
+{
+  "llm_config": {
+    "authentication_configuration": {
+      "OPENAI_API_KEY": "sk-..."
+    },
+    "completion_service": {
+      "llm_service": "openai",
+      "llm_model": "gpt-4.1-mini",
+      "model_kwargs": { "temperature": 0 },
+      "prompt_path": "./common/prompts/openai_gpt4/"
+    },
+    "embedding_service": {
+      "embedding_model_service": "openai",
+      "model_name": "text-embedding-3-small"
+    },
+    "chat_service": {
+      "llm_model": "gpt-4.1"
+    },
+    "multimodal_service": {
+      "llm_service": "openai",
+      "llm_model": "gpt-4o"
+    }
+  }
+}
+```
+
+- `authentication_configuration`: Shared credentials, merged into all service configs. Service-level keys take precedence over top-level keys.
+- `completion_service` **(required)**: LLM for ECC/GraphRAG ingestion tasks.
+- `embedding_service` **(required)**: Text embedding model for document indexing.
+- `chat_service` *(optional)*: Chatbot LLM override. Missing keys are inherited from `completion_service`. Graph admins can configure this per graph.
+- `multimodal_service` *(optional)*: Vision/image model for document ingestion.
+
 #### Supported parameters
 
 **Top-level `llm_config` parameters:**
@@ -525,7 +560,6 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 | --- | --- | --- | --- | --- |
 | `llm_service` | string | **Yes** | — | LLM provider. Options: `openai`, `azure`, `vertexai`, `genai`, `bedrock`, `sagemaker`, `groq`, `ollama`, `huggingface`, `watsonx`. |
 | `llm_model` | string | **Yes** | — | Model name for ECC/GraphRAG tasks (e.g., `gpt-4.1-mini`). |
-| `chat_model` | string | No | same as `llm_model` | Model name for the chatbot. If not set, falls back to `llm_model`. Allows using a different (e.g., cheaper/faster) model for chat vs. ingestion. |
 | `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials (overrides top-level). |
 | `model_kwargs` | object | No | `{}` | Additional keyword arguments passed to the LLM (e.g., `{"temperature": 0}`). |
 | `prompt_path` | string | No | `"./common/prompts/openai_gpt4/"` | Path to prompt template files. |
@@ -540,6 +574,20 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 | `model_name` | string | **Yes** | — | Embedding model name (e.g., `text-embedding-3-small`). |
 | `dimensions` | int | No | `1536` | Embedding vector dimensions. |
 | `authentication_configuration` | object | No | inherited from top-level | Service-specific auth credentials (overrides top-level). |
+
+**`chat_service` parameters (optional):**
+
+Per-graph chatbot LLM override. If not configured, the chatbot inherits from `completion_service`. When partially specified, missing keys are inherited from `completion_service`. Graph admins can configure this per graph via the UI.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `llm_service` | string | No | same as completion | LLM provider for the chatbot. |
+| `llm_model` | string | No | same as completion | Model name for the chatbot. |
+| `authentication_configuration` | object | No | inherited from completion | Auth credentials. Lower-level keys take precedence; missing keys fall back to upper level. |
+| `model_kwargs` | object | No | inherited from completion | Additional keyword arguments (e.g., `{"temperature": 0}`). |
+| `prompt_path` | string | No | inherited from completion | Path to prompt template files. |
+| `base_url` | string | No | inherited from completion | Custom API base URL. |
+| `token_limit` | int | No | inherited from completion | Max token limit for chatbot responses. |
 
 **`multimodal_service` parameters (optional):**
 

@@ -46,7 +46,7 @@ class TigerGraphAgentHallucinationCheck:
         )
 
         # Chain
-        rag_chain = prompt | self.llm.model | hallucination_parser
+        rag_chain = prompt | self.llm.llm | hallucination_parser
 
         usage_data = {}
         with get_openai_callback() as cb:

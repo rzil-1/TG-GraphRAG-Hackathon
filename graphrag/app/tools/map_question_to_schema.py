@@ -93,7 +93,7 @@ class MapQuestionToSchema(BaseTool):
             partial_variables={"format_instructions": parser.get_format_instructions()},
         )
 
-        restate_chain = RESTATE_QUESTION_PROMPT | self.llm.model | parser
+        restate_chain = RESTATE_QUESTION_PROMPT | self.llm.llm | parser
 
         schema_ver = get_schema_ver(self.conn)
         if schema_ver is None or self.schema_ver != schema_ver:
@@ -153,7 +153,7 @@ class MapQuestionToSchema(BaseTool):
             },
         )
 
-        attr_map_chain = ATTR_MAP_PROMPT | self.llm.model | attr_parser
+        attr_map_chain = ATTR_MAP_PROMPT | self.llm.llm | attr_parser
         if parsed_q.target_vertex_attributes:
             for vertex in parsed_q.target_vertex_attributes.keys():
                 with get_openai_callback() as cb:

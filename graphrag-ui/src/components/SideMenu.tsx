@@ -72,8 +72,8 @@ const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetCon
 
   const fetchHistory2 = useCallback(async () => {
     setConversationId([]);
-    const creds = localStorage.getItem("creds");
-    const username = localStorage.getItem("username");
+    const creds = sessionStorage.getItem("creds");
+    const username = sessionStorage.getItem("username");
 
     if (!username) {
       return;
@@ -165,7 +165,7 @@ const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetCon
   const handleNewChat = () => {
     conversationManager.startNewConversation();
     // Clear any selected conversation data
-    localStorage.removeItem('selectedConversationData');
+    sessionStorage.removeItem('selectedConversationData');
     // Force navigation by reloading if already on chat page
     if (window.location.pathname === "/chat") {
       window.location.reload();
@@ -186,7 +186,7 @@ const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetCon
       setExpandedConversations(prev => new Set([...prev, id]));
 
       // Store conversation data for the chat component
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       if (!creds) {
         return;
       }
@@ -207,8 +207,8 @@ const SideMenu = ({ height, setGetConversationId }: { height?: string, setGetCon
       const data = await response.json();
       setConversationId2(data);
 
-      // Store the conversation data in localStorage for the chat component
-      localStorage.setItem('selectedConversationData', JSON.stringify(data));
+      // Store the conversation data in sessionStorage for the chat component
+      sessionStorage.setItem('selectedConversationData', JSON.stringify(data));
 
       // Force reload to restart the WebSocket connection with the conversation ID
       // This ensures the Bot component re-initializes and loads the conversation messages

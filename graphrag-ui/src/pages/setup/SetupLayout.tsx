@@ -21,7 +21,7 @@ const SetupLayout = () => {
 
   const menuItems = [
     {
-      title: "Knowledge Graph Administration",
+      title: "Knowledge Graph Setup",
       icon: Database,
       path: "/setup/kg-admin",
       subItems: [],
@@ -31,9 +31,9 @@ const SetupLayout = () => {
       icon: Settings,
       path: "/setup/server-config",
       subItems: [
-        ...(canAccessLlmConfig ? [{ title: "LLM Config", path: "/setup/server-config/llm" }] : []),
-        ...(isSuperuser ? [{ title: "GraphDB Config", path: "/setup/server-config/graphdb" }] : []),
+        ...(isSuperuser ? [{ title: "Graph Database Config", path: "/setup/server-config/graphdb" }] : []),
         ...(isSuperuser || isGlobalDesigner ? [{ title: "GraphRAG Config", path: "/setup/server-config/graphrag" }] : []),
+        ...(canAccessLlmConfig ? [{ title: "LLM Config", path: "/setup/server-config/llm" }] : []),
       ],
     },
     {

@@ -9,18 +9,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import ConfigScopeToggle from "@/components/ConfigScopeToggle";
 
 const GraphRAGConfig = () => {
+  const [selectedGraph, setSelectedGraph] = useState(sessionStorage.getItem("selectedGraph") || "");
+  const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
   const [reuseEmbedding, setReuseEmbedding] = useState(false);
   const [eccUrl, setEccUrl] = useState("http://graphrag-ecc:8001");
   const [chatHistoryUrl, setChatHistoryUrl] = useState("http://chat-history:8002");
-  
+
   // Default chunker (used when no chunker specified in document)
   const [defaultChunker, setDefaultChunker] = useState("semantic");
-  
+
   // Retrieval settings
   const [topK, setTopK] = useState("5");
   const [numHops, setNumHops] = useState("2");
+  const [numSeenMin, setNumSeenMin] = useState("2");
+  const [communityLevel, setCommunityLevel] = useState("2");
+  const [docOnly, setDocOnly] = useState(false);
+
+  // Advanced ingestion settings
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [loadBatchSize, setLoadBatchSize] = useState("500");
+  const [upsertDelay, setUpsertDelay] = useState("0");
+  const [tgConcurrency, setTgConcurrency] = useState("10");
 
   // Chunker-specific settings
   const [chunkSize, setChunkSize] = useState("1024");
@@ -28,22 +40,57 @@ const GraphRAGConfig = () => {
   const [semanticMethod, setSemanticMethod] = useState("percentile");
   const [semanticThreshold, setSemanticThreshold] = useState("0.95");
   const [regexPattern, setRegexPattern] = useState("\\r?\\n");
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "">("");
 
+  // Scope: "global" edits global config, "graph" edits per-graph overrides
+  const [configScope, setConfigScope] = useState<"global" | "graph">("global");
+  const [graphOverrides, setGraphOverrides] = useState<Record<string, any>>({});
+
   useEffect(() => {
+    const site = JSON.parse(sessionStorage.getItem("site") || "{}");
+    setAvailableGraphs(site.graphs || []);
     fetchConfig();
   }, []);
 
 
-  const fetchConfig = async () => {
+  const applyGraphragConfig = (graphragConfig: any) => {
+    if (!graphragConfig) return;
+    setReuseEmbedding(graphragConfig.reuse_embedding || false);
+    setEccUrl(graphragConfig.ecc || "http://graphrag-ecc:8001");
+    setChatHistoryUrl(graphragConfig.chat_history_api || "http://chat-history:8002");
+    setDefaultChunker(graphragConfig.chunker || "semantic");
+    setTopK(String(graphragConfig.top_k ?? 5));
+    setNumHops(String(graphragConfig.num_hops ?? 2));
+    setNumSeenMin(String(graphragConfig.num_seen_min ?? 2));
+    setCommunityLevel(String(graphragConfig.community_level ?? 2));
+    setDocOnly(graphragConfig.doc_only || false);
+    setLoadBatchSize(String(graphragConfig.load_batch_size ?? 500));
+    setUpsertDelay(String(graphragConfig.upsert_delay ?? 0));
+    setTgConcurrency(String(graphragConfig.tg_concurrency ?? 10));
+
+    const chunkerConfig = graphragConfig.chunker_config || {};
+    setChunkSize(String(chunkerConfig.chunk_size || 1024));
+    setOverlapSize(String(chunkerConfig.overlap_size || 0));
+    setSemanticMethod(chunkerConfig.method || "percentile");
+    setSemanticThreshold(String(chunkerConfig.threshold || 0.95));
+    setRegexPattern(chunkerConfig.pattern || "\\r?\\n");
+  };
+
+  const fetchConfig = async (scope?: "global" | "graph", graphname?: string) => {
     setIsLoading(true);
+    const effectiveScope = scope ?? configScope;
+    const effectiveGraph = graphname ?? selectedGraph;
     try {
-      const creds = localStorage.getItem("creds");
-      const response = await fetch("/ui/config", {
+      const creds = sessionStorage.getItem("creds");
+      const params = new URLSearchParams();
+      if (effectiveGraph) params.set("graphname", effectiveGraph);
+      if (effectiveScope === "graph") params.set("scope", "graph");
+      const queryString = params.toString() ? `?${params.toString()}` : "";
+      const response = await fetch(`/ui/config${queryString}`, {
         headers: { Authorization: `Basic ${creds}` },
       });
 
@@ -52,22 +99,15 @@ const GraphRAGConfig = () => {
       }
 
       const data = await response.json();
-      const graphragConfig = data.graphrag_config;
 
-      if (graphragConfig) {
-        setReuseEmbedding(graphragConfig.reuse_embedding || false);
-        setEccUrl(graphragConfig.ecc || "http://graphrag-ecc:8001");
-        setChatHistoryUrl(graphragConfig.chat_history_api || "http://chat-history:8002");
-        setDefaultChunker(graphragConfig.chunker || "semantic");
-        setTopK(String(graphragConfig.top_k ?? 5));
-        setNumHops(String(graphragConfig.num_hops ?? 2));
-
-        const chunkerConfig = graphragConfig.chunker_config || {};
-        setChunkSize(String(chunkerConfig.chunk_size || 1024));
-        setOverlapSize(String(chunkerConfig.overlap_size || 0));
-        setSemanticMethod(chunkerConfig.method || "percentile");
-        setSemanticThreshold(String(chunkerConfig.threshold || 0.95));
-        setRegexPattern(chunkerConfig.pattern || "\\r?\\n");
+      if (effectiveScope === "graph" && data.graphrag_overrides) {
+        setGraphOverrides(data.graphrag_overrides);
+        // Show per-graph values: merge global + overrides for display
+        const merged = { ...data.graphrag_config, ...data.graphrag_overrides };
+        applyGraphragConfig(merged);
+      } else {
+        setGraphOverrides({});
+        applyGraphragConfig(data.graphrag_config);
       }
     } catch (error: any) {
       console.error("Error fetching config:", error);
@@ -84,7 +124,7 @@ const GraphRAGConfig = () => {
     setMessageType("");
 
     try {
-      const creds = localStorage.getItem("creds");
+      const creds = sessionStorage.getItem("creds");
       
       // Prepare chunker config based on selected chunker type
       const chunkerConfig: any = {};
@@ -102,7 +142,7 @@ const GraphRAGConfig = () => {
         // but we keep it consistent
       }
       
-      const graphragConfigData = {
+      const graphragConfigData: any = {
         reuse_embedding: reuseEmbedding,
         ecc: eccUrl,
         chat_history_api: chatHistoryUrl,
@@ -110,7 +150,18 @@ const GraphRAGConfig = () => {
         chunker_config: chunkerConfig,
         top_k: parseInt(topK),
         num_hops: parseInt(numHops),
+        num_seen_min: parseInt(numSeenMin),
+        community_level: parseInt(communityLevel),
+        doc_only: docOnly,
+        load_batch_size: parseInt(loadBatchSize),
+        upsert_delay: parseInt(upsertDelay),
+        tg_concurrency: parseInt(tgConcurrency),
       };
+
+      if (configScope === "graph") {
+        graphragConfigData.scope = "graph";
+        graphragConfigData.graphname = selectedGraph;
+      }
 
       const response = await fetch("/ui/config/graphrag", {
         method: "POST",
@@ -163,6 +214,33 @@ const GraphRAGConfig = () => {
           </div>
         </div>
 
+        {/* Config Scope Toggle */}
+        <ConfigScopeToggle
+          configScope={configScope}
+          selectedGraph={selectedGraph}
+          availableGraphs={availableGraphs}
+          onScopeChange={(scope) => {
+            setConfigScope(scope);
+            if (scope === "global") {
+              fetchConfig("global");
+            } else if (selectedGraph) {
+              fetchConfig("graph", selectedGraph);
+            }
+          }}
+          onGraphChange={(value) => {
+            setConfigScope("graph");
+            setSelectedGraph(value);
+            sessionStorage.setItem("selectedGraph", value);
+            window.dispatchEvent(new Event("graphrag:selectedGraph"));
+            fetchConfig("graph", value);
+          }}
+          graphSelectedHint={
+            Object.keys(graphOverrides).length > 0
+              ? `Overridden keys: ${Object.keys(graphOverrides).join(", ")}. Other settings are inherited from global.`
+              : "No per-graph overrides set. All settings are inherited from global defaults."
+          }
+        />
+
         {/* Success/Error Message */}
         {message && (
           <div
@@ -206,38 +284,6 @@ const GraphRAGConfig = () => {
                 </p>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                  ECC Service URL
-                </label>
-                <Input
-                  type="text"
-                  className="dark:border-[#3D3D3D] dark:bg-background"
-                  placeholder="http://graphrag-ecc:8001"
-                  value={eccUrl}
-                  onChange={(e) => setEccUrl(e.target.value)}
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Entity-Context-Community service endpoint
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                  Chat History API URL
-                </label>
-                <Input
-                  type="text"
-                  className="dark:border-[#3D3D3D] dark:bg-background"
-                  placeholder="http://chat-history:8002"
-                  value={chatHistoryUrl}
-                  onChange={(e) => setChatHistoryUrl(e.target.value)}
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Chat history service endpoint
-                </p>
-              </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2 text-black dark:text-white">
@@ -272,6 +318,60 @@ const GraphRAGConfig = () => {
                     Number of graph hops to traverse when expanding retrieved results
                   </p>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                    Min Seen Count
+                  </label>
+                  <Input
+                    type="number"
+                    min="1"
+                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    placeholder="2"
+                    value={numSeenMin}
+                    onChange={(e) => setNumSeenMin(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Minimum times a node must appear across retrievals to be included in results
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                    Community Level
+                  </label>
+                  <Input
+                    type="number"
+                    min="1"
+                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    placeholder="2"
+                    value={communityLevel}
+                    onChange={(e) => setCommunityLevel(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Community hierarchy level used for community search
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="docOnly"
+                    className="rounded border-gray-300 dark:border-[#3D3D3D]"
+                    checked={docOnly}
+                    onChange={(e) => setDocOnly(e.target.checked)}
+                  />
+                  <label htmlFor="docOnly" className="text-sm font-medium text-black dark:text-white">
+                    Document Only Search
+                  </label>
+                </div>
+                <p className="text-xs text-gray-600 dark:text-[#D9D9D9] mt-1 ml-6">
+                  Skip entity graph traversal and use only document chunks for hybrid search
+                </p>
               </div>
             </div>
           </div>
@@ -425,6 +525,134 @@ const GraphRAGConfig = () => {
               }`}
             >
               {message}
+            </div>
+          )}
+
+          {/* Advanced Ingestion Settings */}
+          <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="w-full flex items-center justify-between"
+            >
+              <h2 className="text-lg font-semibold text-black dark:text-white">
+                Advanced Ingestion Settings
+              </h2>
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                {showAdvanced ? "▲ Collapse" : "▼ Expand"}
+              </span>
+            </button>
+            {!showAdvanced && (
+              <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mt-2">
+                Performance tuning for document ingestion and batch processing.
+              </p>
+            )}
+
+            {showAdvanced && (
+              <div className="space-y-4 mt-4">
+                <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-2">
+                  Performance tuning for document ingestion and batch processing.
+                </p>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      Batch Size
+                    </label>
+                    <Input
+                      type="number"
+                      min="1"
+                      className="dark:border-[#3D3D3D] dark:bg-background"
+                      placeholder="500"
+                      value={loadBatchSize}
+                      onChange={(e) => setLoadBatchSize(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Vertices per upsert batch
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      Upsert Delay
+                    </label>
+                    <Input
+                      type="number"
+                      min="0"
+                      className="dark:border-[#3D3D3D] dark:bg-background"
+                      placeholder="0"
+                      value={upsertDelay}
+                      onChange={(e) => setUpsertDelay(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Seconds between batches
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                      TG Concurrency
+                    </label>
+                    <Input
+                      type="number"
+                      min="1"
+                      className="dark:border-[#3D3D3D] dark:bg-background"
+                      placeholder="10"
+                      value={tgConcurrency}
+                      onChange={(e) => setTgConcurrency(e.target.value)}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Max concurrent TigerGraph requests
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Service Endpoints (global only) */}
+          {configScope !== "graph" && (
+            <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
+              <h2 className="text-lg font-semibold mb-4 text-black dark:text-white">
+                Service Endpoints
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-6">
+                Configure internal service URLs. These are global settings and cannot be overridden per graph.
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                    ECC Service URL
+                  </label>
+                  <Input
+                    type="text"
+                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    placeholder="http://graphrag-ecc:8001"
+                    value={eccUrl}
+                    onChange={(e) => setEccUrl(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Entity-Context-Community service endpoint
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                    Chat History API URL
+                  </label>
+                  <Input
+                    type="text"
+                    className="dark:border-[#3D3D3D] dark:bg-background"
+                    placeholder="http://chat-history:8002"
+                    value={chatHistoryUrl}
+                    onChange={(e) => setChatHistoryUrl(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Chat history service endpoint
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 

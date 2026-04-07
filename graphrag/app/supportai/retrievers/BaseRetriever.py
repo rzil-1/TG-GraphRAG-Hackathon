@@ -4,7 +4,7 @@ from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.llm_services.base_llm import LLM_Model
 from common.py_schemas import CandidateScore, CandidateGenerator, GraphRAGAnswerOutput
 from common.utils.token_calculator import get_token_calculator
-from common.config import completion_config
+from common.config import get_chat_config
 
 from langchain_core.output_parsers import StrOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
@@ -29,7 +29,10 @@ class BaseRetriever:
         self.embedding_store = embedding_store
         self.embedding_store.set_graphname(connection.graphname)
         self.logger = logging.getLogger(__name__)
-        self.token_calculator = get_token_calculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
+        # Use llm_service's own config when available (chatbot path);
+        # fall back to get_chat_config() (direct supportai API path).
+        llm_cfg = getattr(llm_service, "config", None) or get_chat_config()
+        self.token_calculator = get_token_calculator(token_limit=llm_cfg.get("token_limit"), model_name=llm_cfg.get("llm_model"))
 
     def _install_query(self, query_name):
         self.logger.info(f"Installing query {query_name}")
@@ -68,7 +71,7 @@ class BaseRetriever:
         if verbose:
             self.logger.info("Prompt to LLM:\n" + keyword_prompt.invoke({"question": question}).to_string())
 
-        model = self.llm_service.model
+        model = self.llm_service.llm
 
         chain = keyword_prompt | model | keyword_parser
 
@@ -102,7 +105,7 @@ class BaseRetriever:
             partial_variables={"format_instructions": question_parser.get_format_instructions()}
         )
 
-        model = self.llm_service.model
+        model = self.llm_service.llm
 
         chain = QUESTION_PROMPT | model | question_parser
         #chain = QUESTION_PROMPT | model

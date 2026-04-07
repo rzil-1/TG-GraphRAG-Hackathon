@@ -36,12 +36,12 @@ const WS_URL = "/ui/ui-login";
 export function Login() {
   const { i18n, t } = useTranslation();
   const [user, setUser] = useState("");
-  const [token, setToken] = useState(localStorage.getItem("site") || "");
+  const [token, setToken] = useState(sessionStorage.getItem("site") || "");
   const [hint, setHint] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
-    const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
+    const parseStore = JSON.parse(sessionStorage.getItem("site") || "{}");
     setToken(parseStore);
   }, []);
 
@@ -58,10 +58,10 @@ export function Login() {
 
     if (res.ok) {
       const data = await res.json();
-      localStorage.setItem("creds", creds);
-      localStorage.setItem("site", JSON.stringify(data));
+      sessionStorage.setItem("creds", creds);
+      sessionStorage.setItem("site", JSON.stringify(data));
       setUser(username);
-      localStorage.setItem("username", username);
+      sessionStorage.setItem("username", username);
       navigate("/chat");
     } else {
       // setError("Invalid credentials"); // This line was removed from the new_code, so it's removed here.
@@ -73,7 +73,7 @@ export function Login() {
   const logOut = () => {
     setUser("");
     setToken("");
-    localStorage.removeItem("site");
+    sessionStorage.removeItem("site");
     navigate("/");
   };
 
