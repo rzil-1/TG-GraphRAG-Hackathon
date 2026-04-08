@@ -8,21 +8,9 @@ from agent.Q import Q
 from fastapi import WebSocket
 from tools import GenerateCypher, GenerateFunction, MapQuestionToSchema
 
-from common.config import embedding_service, embedding_store, llm_config
+from common.config import embedding_service, embedding_store, llm_config, get_completion_config, get_chat_config, get_llm_service
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.embeddings.embedding_services import EmbeddingModel
-from common.llm_services import (
-    AWS_SageMaker_Endpoint,
-    AWSBedrock,
-    AzureOpenAI,
-    GoogleVertexAI,
-    GoogleGenAI,
-    Groq,
-    HuggingFaceEndpoint,
-    Ollama,
-    OpenAI,
-    IBMWatsonX
-)
 from common.llm_services.base_llm import LLM_Model
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
@@ -166,47 +154,12 @@ class TigerGraphAgent:
 
 
 def make_agent(graphname, conn, use_cypher, ws: WebSocket = None, supportai_retriever="hybridsearch") -> TigerGraphAgent:
-    if "chat_model" in llm_config["completion_service"]:
-        llm_config["completion_service"]["llm_model"] = llm_config["completion_service"]["chat_model"]
+    llm_provider = get_llm_service(get_chat_config(graphname))
+    chat_config = llm_provider.config
 
-    if llm_config["completion_service"]["llm_service"].lower() == "openai":
-        llm_service_name = "openai"
-        llm_provider = OpenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "azure":
-        llm_service_name = "azure"
-        llm_provider = AzureOpenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "sagemaker":
-        llm_service_name = "sagemaker"
-        llm_provider = AWS_SageMaker_Endpoint(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "vertexai":
-        llm_service_name = "vertexai"
-        llm_provider = GoogleVertexAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "genai":
-        llm_service_name = "genai"
-        llm_provider = GoogleGenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "bedrock":
-        llm_service_name = "bedrock"
-        llm_provider = AWSBedrock(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "groq":
-        llm_service_name = "groq"
-        llm_provider = Groq(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "ollama":
-        llm_service_name = "ollama"
-        llm_provider = Ollama(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "huggingface":
-        llm_service_name = "huggingface"
-        llm_provider = HuggingFaceEndpoint(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "watsonx":
-        llm_service_name = "watsonx"
-        llm_provider = IBMWatsonX(llm_config["completion_service"])
-    else:
-        LogWriter.error(
-            f"/{graphname}/query_with_history request_id={req_id_cv.get()} agent creation failed due to invalid llm_service"
-        )
-        raise Exception("LLM Completion Service Not Supported")
-
-    logger.debug(
-        f"/{graphname}/query_with_history request_id={req_id_cv.get()} llm_service={llm_service_name} agent created"
+    logger.info(
+        f"[CHATBOT] graph={graphname} model={chat_config['llm_model']} "
+        f"provider={chat_config['llm_service']} prompt_path={chat_config.get('prompt_path', 'unknown')}"
     )
 
     agent = TigerGraphAgent(

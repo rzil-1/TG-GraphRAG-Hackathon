@@ -16,13 +16,11 @@ import json
 import logging
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_community.callbacks.manager import get_openai_callback
 from typing import Optional
 from pydantic import BaseModel, Field
 from common.logs.logwriter import LogWriter
 from common.logs.log import req_id_cv
 from common.utils.token_calculator import get_token_calculator
-from common.config import completion_config
 from common.py_schemas import GraphRAGAnswerOutput
 
 logger = logging.getLogger(__name__)
@@ -30,7 +28,8 @@ logger = logging.getLogger(__name__)
 class TigerGraphAgentGenerator:
     def __init__(self, llm_model):
         self.llm = llm_model
-        self.token_calculator = get_token_calculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
+        llm_config = getattr(llm_model, "config", {})
+        self.token_calculator = get_token_calculator(token_limit=llm_config.get("token_limit"), model_name=llm_config.get("llm_model"))
 
     def generate_answer(self, question: str, context: str | dict, query: str = "") -> dict:
         """Generate an answer based on the question and context.
@@ -55,7 +54,6 @@ class TigerGraphAgentGenerator:
                     logger.info(f"Truncated context from {context_tokens} to {max_context_tokens} tokens")
 
         answer_parser = PydanticOutputParser(pydantic_object=GraphRAGAnswerOutput)
-
         prompt = PromptTemplate(
             template=self.llm.chatbot_response_prompt,
             input_variables=["question", "context", "query"],
@@ -64,28 +62,19 @@ class TigerGraphAgentGenerator:
             }
         )
 
-        full_prompt = prompt.format(
-            question=question,
-            context=context,
-            query=query,
-            format_instructions=answer_parser.get_format_instructions()
-        )
-
-        # Chain
-        rag_chain = prompt | self.llm.model | answer_parser
-
         if isinstance(context, dict):
             context = json.dumps(context)
 
-        usage_data = {}
-        with get_openai_callback() as cb:
-            generation = rag_chain.invoke({"question": question, "context": context, "query": query})
+        try:
+            generation = self.llm.invoke_with_parser(
+                prompt, answer_parser,
+                {"question": question, "context": context, "query": query},
+                caller_name="generate_answer",
+            )
+        except Exception:
+            logger.warning("generate_answer: all parsing failed, using raw context as answer")
+            generation = GraphRAGAnswerOutput(generated_answer=str(context).strip(), citation=[])
 
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            logger.info(f"generate_answer usage: {usage_data}")
         LogWriter.info(f"request_id={req_id_cv.get()} EXIT generate_answer")
 
         return generation

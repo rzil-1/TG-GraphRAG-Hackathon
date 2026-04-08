@@ -14,10 +14,14 @@
 
 import asyncio
 import base64
+import copy
+import hashlib
 import json
 import logging
 import os
 import re
+import shutil
+import threading
 import time
 import traceback
 import uuid
@@ -35,6 +39,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Path,
     Request,
     UploadFile,
     WebSocket,
@@ -46,7 +51,7 @@ from fastapi.security.http import HTTPBase
 from pyTigerGraph import TigerGraphConnection
 from tools.validation_utils import MapQuestionToSchemaException
 
-from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status
+from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status, SERVER_CONFIG, get_chat_config, validate_graphname
 from common.db.connections import get_db_connection_pwd_manual
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
@@ -65,11 +70,204 @@ from common.py_schemas.schemas import (
 
 logger = logging.getLogger(__name__)
 
+# Validated graph name path parameter — rejects path traversal characters
+ValidGraphName = Annotated[str, Path(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
+
 use_cypher = os.getenv("USE_CYPHER", "false").lower() == "true"
 route_prefix = "/ui"  # APIRouter's prefix doesn't work with the websocket, so it has to be done here
 router = APIRouter(tags=["UI"])
 security = HTTPBasic()
 GRAPH_NAME_RE = re.compile(r"- Graph (.*)\(")
+llm_config_lock = asyncio.Lock()
+
+# Cache for user role lookups (avoids repeated GSQL calls)
+# Key: (username, password_hash) -> (timestamp, (global_roles, graph_roles))
+_role_cache: dict[tuple[str, str], tuple[float, tuple[list[str], dict[str, list[str]]]]] = {}
+_role_cache_lock = threading.Lock()
+_ROLE_CACHE_TTL = 60  # seconds
+
+def _normalize_roles(raw_roles: str) -> list[str]:
+    cleaned = re.sub(r"[\[\]]", "", raw_roles).strip()
+    if not cleaned or cleaned.lower() == "none":
+        return []
+    return [r.strip().lower() for r in re.split(r"[,\s]+", cleaned) if r.strip()]
+
+
+def _parse_user_roles_detail(user_info: str, username: str) -> tuple[list[str], dict[str, list[str]]]:
+    global_roles: list[str] = []
+    graph_roles: dict[str, list[str]] = {}
+    is_user_section = False
+    for line in user_info.splitlines():
+        line_stripped = line.strip()
+        match = re.match(
+            r"^[\*\-]?\s*\-?\s*(Name|User Name|User)\s*:\s*(.+)$",
+            line_stripped,
+            re.IGNORECASE,
+        )
+        if match:
+            current_name = match.group(2).strip()
+            is_user_section = current_name == username
+            continue
+        if not is_user_section:
+            continue
+
+        roles_match = re.match(
+            r"^[\*\-]?\s*\-?\s*(Global Roles|Roles)\s*:\s*(.+)$",
+            line_stripped,
+            re.IGNORECASE,
+        )
+        if roles_match:
+            global_roles.extend(_normalize_roles(roles_match.group(2)))
+            continue
+
+        graph_roles_match = re.match(
+            r"^[\*\-]?\s*\-?\s*Graph\s+'([^']+)'\s+Roles\s*:\s*(.+)$",
+            line_stripped,
+            re.IGNORECASE,
+        )
+        if graph_roles_match:
+            graph_name = graph_roles_match.group(1).strip()
+            roles = _normalize_roles(graph_roles_match.group(2))
+            if roles:
+                graph_roles[graph_name] = roles
+
+    return global_roles, graph_roles
+
+
+def _parse_user_roles(user_info: str, username: str) -> list[str]:
+    global_roles, _ = _parse_user_roles_detail(user_info, username)
+    return global_roles
+
+def _get_user_role_details(username: str, password: str) -> tuple[list[str], dict[str, list[str]]]:
+    """Get user roles with short TTL cache to avoid repeated GSQL calls."""
+    pwd_hash = hashlib.sha256(password.encode()).hexdigest()[:16]
+    cache_key = (username, pwd_hash)
+    now = time.time()
+
+    with _role_cache_lock:
+        cached = _role_cache.get(cache_key)
+        if cached and (now - cached[0]) < _ROLE_CACHE_TTL:
+            return cached[1]
+
+    conn = TigerGraphConnection(
+        host=db_config.get("hostname"),
+        username=username,
+        password=password,
+        gsPort=db_config.get("gsPort"),
+        restppPort=db_config.get("restppPort"),
+        graphname="",
+    )
+    user_info = conn.gsql("SHOW USER")
+    result = _parse_user_roles_detail(user_info, username)
+
+    with _role_cache_lock:
+        _role_cache[cache_key] = (now, result)
+
+    return result
+
+
+def _get_user_roles(username: str, password: str) -> list[str]:
+    global_roles, _ = _get_user_role_details(username, password)
+    return global_roles
+
+def _require_roles(credentials: HTTPBasicCredentials, allowed_roles: set[str]) -> list[str]:
+    try:
+        roles = _get_user_roles(credentials.username, credentials.password)
+    except Exception as e:
+        logger.error(f"Failed to resolve user roles: {e}")
+        raise HTTPException(status_code=403, detail="Unable to verify user roles.")
+    if not any(role in allowed_roles for role in roles):
+        raise HTTPException(status_code=403, detail="Insufficient permissions.")
+    return roles
+
+
+def _create_llm_service(provider: str, config: dict):
+    """Instantiate an LLM provider, returning None for unsupported providers."""
+    try:
+        return get_llm_service(config)
+    except Exception:
+        return None
+
+
+def _create_embedding_service(provider: str, config: dict):
+    from common.embeddings.embedding_services import (
+        OpenAI_Embedding, AzureOpenAI_Ada002, GenAI_Embedding,
+        VertexAI_PaLM_Embedding, AWS_Bedrock_Embedding, Ollama_Embedding
+    )
+    providers = {
+        "openai": OpenAI_Embedding,
+        "azure": AzureOpenAI_Ada002,
+        "genai": GenAI_Embedding,
+        "vertexai": VertexAI_PaLM_Embedding,
+        "bedrock": AWS_Bedrock_Embedding,
+        "ollama": Ollama_Embedding,
+    }
+    cls = providers.get(provider.lower())
+    return cls(config) if cls else None
+
+
+def _require_prompt_access(credentials: HTTPBasicCredentials, graphname: str | None) -> str:
+    """
+    Check if user can access prompts. Returns access level: 'full' or 'chatbot_only'.
+    Raises 403 for globalobserver or any user without sufficient access.
+    - superuser / globaldesigner  → 'full'   (can edit all prompts)
+    - graph admin on graphname    → 'chatbot_only'  (can only edit chatbot_response)
+    """
+    if graphname:
+        validate_graphname(graphname)
+    try:
+        global_roles, graph_roles = _get_user_role_details(credentials.username, credentials.password)
+    except Exception as e:
+        logger.error(f"Failed to resolve user roles: {e}")
+        raise HTTPException(status_code=403, detail="Unable to verify user roles.")
+    if any(role in {"superuser", "globaldesigner"} for role in global_roles):
+        return "full"
+    if graphname and any(role in {"admin"} for role in graph_roles.get(graphname, [])):
+        return "chatbot_only"
+    raise HTTPException(status_code=403, detail="Insufficient permissions.")
+
+
+def _resolve_llm_config_access(
+    credentials: HTTPBasicCredentials, graphname: str | None
+) -> str:
+    if graphname:
+        validate_graphname(graphname)
+    try:
+        global_roles, graph_roles = _get_user_role_details(
+            credentials.username, credentials.password
+        )
+    except Exception as e:
+        logger.error(f"Failed to resolve user roles: {e}")
+        raise HTTPException(status_code=403, detail="Unable to verify user roles.")
+
+    if any(role in {"superuser", "globaldesigner"} for role in global_roles):
+        return "full"
+    if graphname:
+        roles_for_graph = graph_roles.get(graphname, [])
+        if any(role in {"admin"} for role in roles_for_graph):
+            return "chatbot_only"
+    raise HTTPException(status_code=403, detail="Insufficient permissions.")
+
+def _ecc_jobs_running(graphs: list[str], auth_header: str) -> bool:
+    if not graphs:
+        return False
+    ecc_base = graphrag_config.get("ecc", "http://graphrag-ecc:8001")
+    for graphname in graphs:
+        try:
+            status_url = f"{ecc_base}/{graphname}/graphrag/rebuild_status"
+            response = httpx.get(
+                status_url,
+                headers={"Authorization": auth_header},
+                timeout=5.0,
+            )
+            if response.status_code == 200:
+                payload = response.json()
+                if payload.get("is_running"):
+                    return True
+        except Exception as e:
+            logger.warning(f"ECC status check failed for {graphname}: {e}")
+            continue
+    return False
 
 
 def auth(usr: str, password: str, conn=None) -> tuple[list[str], TigerGraphConnection]:
@@ -119,7 +317,14 @@ def ui_basic_auth(
 @router.post(f"{route_prefix}/ui-login")
 def login(auth: Annotated[list[str], Depends(ui_basic_auth)]):
     graphs = auth[0]
-    return {"graphs": graphs}
+    creds = auth[1]
+    # Fetch roles at login so frontend doesn't need separate /roles calls
+    try:
+        global_roles, graph_roles = _get_user_role_details(creds.username, creds.password)
+    except Exception as e:
+        logger.warning(f"Failed to fetch roles at login: {e}")
+        global_roles, graph_roles = [], {}
+    return {"graphs": graphs, "roles": global_roles, "graph_roles": graph_roles}
 
 
 @router.post(f"{route_prefix}/feedback")
@@ -148,7 +353,7 @@ def add_feedback(
 
 @router.post(route_prefix + "/{graphname}/create_graph")
 def create_graph(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -193,7 +398,7 @@ def create_graph(
 
 @router.post(route_prefix + "/{graphname}/initialize_graph")
 def init_graph(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -235,7 +440,7 @@ def init_graph(
 
 @router.post(route_prefix + "/{graphname}/rebuild_graph")
 async def forceupdate(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     bg_tasks: BackgroundTasks,
 ):
@@ -271,7 +476,7 @@ async def forceupdate(
     creds = creds[1]
     auth = base64.b64encode(f"{creds.username}:{creds.password}".encode()).decode()
 
-    ecc_base = graphrag_config.get("ecc", "http://localhost:8001")
+    ecc_base = graphrag_config.get("ecc", "http://graphrag-ecc:8001")
     ecc_update_url = f"{ecc_base}/{graphname}/graphrag/consistency_update"
     ecc_status_url = f"{ecc_base}/{graphname}/graphrag/rebuild_status"
     
@@ -343,7 +548,7 @@ async def forceupdate(
 
 @router.get(route_prefix + "/{graphname}/rebuild_status")
 def get_rebuild_status(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -357,7 +562,7 @@ def get_rebuild_status(
 
     try:
         ecc_status_url = (
-            graphrag_config.get("ecc", "http://localhost:8001")
+            graphrag_config.get("ecc", "http://graphrag-ecc:8001")
             + f"/{graphname}/graphrag/rebuild_status"
         )
         LogWriter.info(f"Checking ECC status at: {ecc_status_url}")
@@ -365,7 +570,7 @@ def get_rebuild_status(
         response = httpx.get(
             ecc_status_url,
             headers={"Authorization": f"Basic {auth}"},
-            timeout=10.0
+            timeout=30.0
         )
         
         if response.status_code == 200:
@@ -378,6 +583,15 @@ def get_rebuild_status(
                 "status": "unknown",
                 "error": f"ECC service returned status {response.status_code}"
             }
+    except httpx.TimeoutException as e:
+        # ECC is busy (heavy processing) - assume rebuild is still running
+        LogWriter.warning(f"ECC status check timed out (ECC may be busy): {str(e)}")
+        return {
+            "graphname": graphname,
+            "is_running": True,
+            "status": "unknown",
+            "error": "ECC is busy processing, status check timed out. Rebuild likely still in progress."
+        }
     except Exception as e:
         LogWriter.error(f"Failed to check ECC status: {str(e)}")
         return {
@@ -390,7 +604,7 @@ def get_rebuild_status(
 
 @router.post(route_prefix + "/{graphname}/create_ingest")
 def create_ingest(
-    graphname: str,
+    graphname: ValidGraphName,
     cfg: CreateIngestConfig,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -440,7 +654,7 @@ def create_ingest(
 
 @router.post(route_prefix + "/{graphname}/ingest")
 def ingest(
-    graphname: str,
+    graphname: ValidGraphName,
     loader_info: LoadingInfo,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -490,7 +704,7 @@ def ingest(
 
 @router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
 async def serve_image_from_vertex(
-    graphname: str,
+    graphname: ValidGraphName,
     image_id: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -571,6 +785,16 @@ async def get_user_conversations(
         raise e
 
     return res.json()
+
+
+@router.get(route_prefix + "/roles")
+async def get_user_roles(
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)]
+):
+    roles, graph_roles = _get_user_role_details(
+        credentials.username, credentials.password
+    )
+    return {"roles": roles, "graph_roles": graph_roles}
 
 
 @router.get(route_prefix + "/conversation/{conversation_id}")
@@ -800,7 +1024,7 @@ async def write_message_to_history(message: Message, usr_auth: str):
 
 @router.get(route_prefix + "/{graphname}/query")
 async def graph_query(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     q: str | None = None,
     rag_pattern: str | None = None,
@@ -834,7 +1058,7 @@ async def graph_query(
             conversation_id=convo_id,
             message_id=str(uuid.uuid4()),
             parent_id=prev_id,
-            model=llm_config["model_name"],
+            model=get_chat_config(graphname).get("llm_model", "unknown"),
             content=data,
             role=Role.USER,
         )
@@ -854,7 +1078,7 @@ async def graph_query(
             conversation_id=convo_id,
             message_id=str(uuid.uuid4()),
             parent_id=prev_id,
-            model=llm_config["model_name"],
+            model=get_chat_config(graphname).get("llm_model", "unknown"),
             content=resp.natural_language_response,
             role=Role.SYSTEM,
             response_time=elapsed,
@@ -876,7 +1100,7 @@ async def graph_query(
 
 @router.websocket(route_prefix + "/{graphname}/chat")
 async def chat(
-    graphname: str,
+    graphname: ValidGraphName,
     websocket: WebSocket,
     rag_pattern: str | None = None,
 ):
@@ -918,6 +1142,10 @@ async def chat(
     
     # Get conversation ID
     conversation_id = await websocket.receive_text()
+    logger.info(
+        f"WebSocket conversation_id received: {conversation_id or 'empty'} "
+        f"(graph={graphname}, rag_pattern={rag_pattern})"
+    )
     
     # Load conversation history if not a new conversation
     conversation_history = await load_conversation_history(conversation_id, usr_auth)
@@ -946,7 +1174,7 @@ async def chat(
                 conversation_id=convo_id,
                 message_id=str(uuid.uuid4()),
                 parent_id=prev_id,
-                model=llm_config["model_name"],
+                model=get_chat_config(graphname).get("llm_model", "unknown"),
                 content=data,
                 role=Role.USER,
             )
@@ -966,7 +1194,7 @@ async def chat(
                 conversation_id=convo_id,
                 message_id=str(uuid.uuid4()),
                 parent_id=prev_id,
-                model=llm_config["model_name"],
+                model=get_chat_config(graphname).get("llm_model", "unknown"),
                 content=resp.natural_language_response,
                 role=Role.SYSTEM,
                 response_time=elapsed,
@@ -985,8 +1213,16 @@ async def chat(
                 {"query": data, "response": resp.natural_language_response}
             )
     except WebSocketDisconnect as e:
-        logger.info(f"Websocket disconnected: {str(e)}")
-    except:
+        close_code = getattr(e, "code", None)
+        close_reason = getattr(e, "reason", None)
+        logger.info(
+            f"Websocket disconnected (code={close_code}, reason={close_reason})"
+        )
+    except Exception as e:
+        exc = traceback.format_exc()
+        logger.error(
+            f"Websocket error (graph={graphname}, conversation_id={convo_id}): {e}\n{exc}"
+        )
         await websocket.close()
 
 
@@ -996,7 +1232,7 @@ async def chat(
 
 @router.get(route_prefix + "/{graphname}/uploads/list")
 async def list_uploaded_files(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -1037,7 +1273,7 @@ async def list_uploaded_files(
 
 @router.post(route_prefix + "/{graphname}/uploads")
 async def upload_files(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     files: list[UploadFile] = File(...),
     overwrite: bool = False,
@@ -1121,7 +1357,7 @@ async def upload_files(
 
 @router.delete(route_prefix + "/{graphname}/uploads")
 async def clear_uploaded_files(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     filename: str | None = None,
 ):
@@ -1210,7 +1446,7 @@ async def clear_uploaded_files(
 
 @router.post(route_prefix + "/{graphname}/cloud/download")
 async def download_from_cloud(
-    graphname: str,
+    graphname: ValidGraphName,
     credentials: Annotated[HTTPBase, Depends(security)],
     request_body: dict = Body(...),
 ):
@@ -1439,7 +1675,7 @@ async def download_from_cloud(
 
 @router.get(route_prefix + "/{graphname}/cloud/list")
 async def list_cloud_downloads(
-    graphname: str,
+    graphname: ValidGraphName,
     credentials: Annotated[HTTPBase, Depends(security)],
 ):
     """
@@ -1486,7 +1722,7 @@ async def list_cloud_downloads(
 
 @router.delete(route_prefix + "/{graphname}/cloud/delete")
 async def delete_cloud_downloads(
-    graphname: str,
+    graphname: ValidGraphName,
     credentials: Annotated[HTTPBase, Depends(security)],
     filename: str = None,
 ):
@@ -1570,3 +1806,878 @@ async def delete_cloud_downloads(
         logger.debug_pii(f"Delete error trace:\n{exc}")
         raise HTTPException(status_code=500, detail=f"Error deleting files: {str(e)}")
 
+
+@router.post(f"{route_prefix}/config/llm")
+async def save_llm_config(
+    request: Request,
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    llm_config_data: dict = Body(...)
+):
+    """
+    Save LLM configuration and reload services.
+    """
+    try:
+        graphname = llm_config_data.pop("graphname", None)
+        llm_access_mode = _resolve_llm_config_access(credentials, graphname)
+        graphs = auth(credentials.username, credentials.password)[0]
+        auth_header = "Basic " + base64.b64encode(
+            f"{credentials.username}:{credentials.password}".encode()
+        ).decode()
+        if _ecc_jobs_running(graphs, auth_header):
+            raise HTTPException(
+                status_code=409,
+                detail="ECC rebuild in progress. Please wait for it to complete before updating config."
+            )
+        if llm_config_lock.locked():
+            raise HTTPException(
+                status_code=409,
+                detail="LLM config update already in progress. Please try again shortly."
+            )
+        async with llm_config_lock:
+            # Save and reload in graphrag service
+            from common.config import reload_llm_config
+
+            scope = llm_config_data.pop("scope", None)
+
+            # Substitute masked sentinel values with real stored values
+            _unmask_auth(llm_config_data, llm_config)
+
+            if llm_access_mode == "chatbot_only" or (llm_access_mode == "full" and scope == "graph"):
+                # Per-graph save: write only overrides to graph config file.
+                # chatbot_only: can only set chat_service
+                # full + scope=graph: can set completion_service, chat_service, multimodal_service
+                from common.config import _config_file_lock
+
+                if not graphname:
+                    raise HTTPException(status_code=400, detail="graphname is required for per-graph config")
+
+                graph_config_dir = f"configs/graph_configs/{graphname}"
+                os.makedirs(graph_config_dir, exist_ok=True)
+                graph_config_path = os.path.join(graph_config_dir, "server_config.json")
+
+                with _config_file_lock:
+                    if os.path.exists(graph_config_path):
+                        with open(graph_config_path, "r") as f:
+                            graph_server_config = json.load(f)
+                    else:
+                        graph_server_config = {}
+
+                    graph_llm = graph_server_config.setdefault("llm_config", {})
+
+                    # Also unmask against the graph's own stored config
+                    _unmask_auth(llm_config_data, graph_llm)
+
+                    if llm_access_mode == "chatbot_only":
+                        # Graph admin: only chat_service
+                        svc_keys = ["chat_service"]
+                    else:
+                        # Superadmin per-graph: all services
+                        svc_keys = ["completion_service", "chat_service", "multimodal_service"]
+
+                    for svc_key in svc_keys:
+                        incoming = llm_config_data.get(svc_key)
+                        if incoming:
+                            graph_llm[svc_key] = incoming
+                        else:
+                            # Revert to inherit: remove override
+                            graph_llm.pop(svc_key, None)
+
+                    temp_file = f"{graph_config_path}.tmp"
+                    with open(temp_file, "w") as f:
+                        json.dump(graph_server_config, f, indent=2)
+                    os.replace(temp_file, graph_config_path)
+
+                result = {"status": "success"}
+            else:
+                # Superadmin global save
+                result = reload_llm_config(llm_config_data)
+
+            if result["status"] != "success":
+                raise HTTPException(status_code=500, detail=result["message"])
+        
+            return {
+                "status": "success",
+                "message": "Configuration saved successfully"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving config: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(f"{route_prefix}/config/llm/test")
+async def test_llm_config(
+    request: Request,
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    llm_test_config: dict = Body(...)
+):
+    """
+    Test LLM configuration by making actual API calls to the provider.
+    Tests completion, embedding, and multimodal services.
+    """
+    try:
+        graphname = llm_test_config.pop("graphname", None)
+        llm_access_mode = _resolve_llm_config_access(credentials, graphname)
+        # Substitute masked sentinel values with real stored values
+        _unmask_auth(llm_test_config, llm_config)
+        from common import config as cfg
+
+        test_results = {
+            "completion": {"status": "not_tested", "message": ""},
+            "chatbot": {"status": "not_tested", "message": ""},
+            "embedding": {"status": "not_tested", "message": ""},
+            "multimodal": {"status": "not_tested", "message": ""}
+        }
+
+        # Graph admins (chatbot_only) can only test chat_service
+        if llm_access_mode == "chatbot_only":
+            if "chat_service" in llm_test_config:
+                try:
+                    test_chat_config = llm_test_config["chat_service"].copy()
+                    provider = test_chat_config.get("llm_service", "openai").lower()
+                    model = test_chat_config.get("llm_model", "gpt-4o-mini")
+
+                    if "authentication_configuration" not in test_chat_config:
+                        test_chat_config["authentication_configuration"] = {}
+
+                    if hasattr(cfg, 'completion_config') and cfg.completion_config:
+                        for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
+                            if key not in test_chat_config and key in cfg.completion_config:
+                                test_chat_config[key] = cfg.completion_config[key]
+
+                    if "model_kwargs" not in test_chat_config:
+                        test_chat_config["model_kwargs"] = {"temperature": 0}
+                    if "prompt_path" not in test_chat_config:
+                        test_chat_config["prompt_path"] = "common/prompts/openai_gpt4/"
+
+                    llm_service = _create_llm_service(provider, test_chat_config)
+                    if llm_service:
+                        response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
+                        if not response or not str(response).strip():
+                            raise ValueError("LLM returned an empty response")
+                        test_results["chatbot"]["status"] = "success"
+                        test_results["chatbot"]["message"] = f"Chatbot LLM ({model}) connected successfully"
+                    else:
+                        test_results["chatbot"]["status"] = "error"
+                        test_results["chatbot"]["message"] = f"Provider '{provider}' not supported"
+                except Exception as e:
+                    test_results["chatbot"]["status"] = "error"
+                    test_results["chatbot"]["message"] = f"Chatbot test failed: {str(e)}"
+                    logger.error(f"Chatbot test failed for graph {graphname}: {str(e)}")
+
+            overall_status = "success" if test_results["chatbot"]["status"] == "success" else "error"
+            return {
+                "status": overall_status,
+                "message": "Connection test completed",
+                "results": {"chatbot": test_results["chatbot"]}
+            }
+
+        # Full access: test all services
+        # Test Completion Service (Default LLM Model)
+        if "completion_service" in llm_test_config or "llm_service" in llm_test_config:
+            try:
+                if "completion_service" in llm_test_config:
+                    test_completion_config = llm_test_config["completion_service"].copy()
+                    provider = test_completion_config.get("llm_service", "openai").lower()
+                    model = test_completion_config.get("llm_model", "gpt-4o-mini")
+                else:
+                    test_completion_config = {
+                        "llm_service": llm_test_config.get("llm_service", "openai"),
+                        "llm_model": llm_test_config.get("llm_model", "gpt-4o-mini"),
+                        "authentication_configuration": llm_test_config.get("authentication_configuration", {})
+                    }
+                    provider = test_completion_config["llm_service"].lower()
+                    model = test_completion_config["llm_model"]
+                
+                # Ensure authentication_configuration exists (may be at top level in single-provider mode)
+                if "authentication_configuration" not in test_completion_config:
+                    test_completion_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
+                
+                # Merge with existing config to get model_kwargs and prompt_path
+                if hasattr(cfg, 'completion_config') and cfg.completion_config:
+                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
+                        if key not in test_completion_config and key in cfg.completion_config:
+                            test_completion_config[key] = cfg.completion_config[key]
+                
+                # Ensure required fields exist
+                if "model_kwargs" not in test_completion_config:
+                    test_completion_config["model_kwargs"] = {"temperature": 0}
+                if "prompt_path" not in test_completion_config:
+                    test_completion_config["prompt_path"] = "common/prompts/openai_gpt4/"
+                
+                llm_service = _create_llm_service(provider, test_completion_config)
+                
+                if llm_service:
+                    response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
+                    if not response or not str(response).strip():
+                        raise ValueError("LLM returned an empty response")
+                    test_results["completion"]["status"] = "success"
+                    test_results["completion"]["message"] = f"✅ Default LLM model ({model}) connected successfully"
+                else:
+                    test_results["completion"]["status"] = "error"
+                    test_results["completion"]["message"] = f"Provider '{provider}' not supported for completion"
+                    
+            except Exception as e:
+                test_results["completion"]["status"] = "error"
+                test_results["completion"]["message"] = f"❌ Completion test failed: {str(e)}"
+                logger.error(f"Completion test failed: {str(e)}")
+        
+        # Test Chatbot Service (if different model is provided)
+        if "chatbot_service" in llm_test_config:
+            try:
+                test_chatbot_config = llm_test_config["chatbot_service"].copy()
+                provider = test_chatbot_config.get("llm_service", "openai").lower()
+                model = test_chatbot_config.get("llm_model", "gpt-4o-mini")
+                
+                # Ensure authentication_configuration exists
+                if "authentication_configuration" not in test_chatbot_config:
+                    test_chatbot_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
+                
+                # Merge with existing config to get model_kwargs and prompt_path
+                if hasattr(cfg, 'completion_config') and cfg.completion_config:
+                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
+                        if key not in test_chatbot_config and key in cfg.completion_config:
+                            test_chatbot_config[key] = cfg.completion_config[key]
+                
+                # Ensure required fields exist
+                if "model_kwargs" not in test_chatbot_config:
+                    test_chatbot_config["model_kwargs"] = {"temperature": 0}
+                if "prompt_path" not in test_chatbot_config:
+                    test_chatbot_config["prompt_path"] = "common/prompts/openai_gpt4/"
+                
+                llm_service = _create_llm_service(provider, test_chatbot_config)
+                
+                if llm_service:
+                    response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
+                    if not response or not str(response).strip():
+                        raise ValueError("LLM returned an empty response")
+                    test_results["chatbot"]["status"] = "success"
+                    test_results["chatbot"]["message"] = f"✅ Chatbot LLM model ({model}) connected successfully"
+                else:
+                    test_results["chatbot"]["status"] = "error"
+                    test_results["chatbot"]["message"] = f"Provider '{provider}' not supported for chatbot"
+                    
+            except Exception as e:
+                test_results["chatbot"]["status"] = "error"
+                test_results["chatbot"]["message"] = f"❌ Chatbot test failed: {str(e)}"
+                logger.error(f"Chatbot test failed: {str(e)}")
+        
+        # Test Embedding Service
+        if "embedding_service" in llm_test_config:
+            try:
+                test_embedding_config = llm_test_config["embedding_service"].copy()
+                provider = test_embedding_config.get("embedding_model_service", "openai").lower()
+                model = test_embedding_config.get("model_name", "text-embedding-3-small")
+                
+                # Ensure authentication_configuration exists
+                if "authentication_configuration" not in test_embedding_config:
+                    test_embedding_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
+                
+                # Merge with existing config
+                if hasattr(cfg, 'embedding_config') and cfg.embedding_config:
+                    for key in ["dimensions", "token_limit"]:
+                        if key not in test_embedding_config and key in cfg.embedding_config:
+                            test_embedding_config[key] = cfg.embedding_config[key]
+                
+                embedding_service_test = _create_embedding_service(provider, test_embedding_config)
+                
+                if embedding_service_test:
+                    # Test with a simple text
+                    embeddings = embedding_service_test.embed_query("test connection")
+                    if embeddings and len(embeddings) > 0:
+                        test_results["embedding"]["status"] = "success"
+                        test_results["embedding"]["message"] = f"✅ Embedding model ({model}) connected successfully"
+                    else:
+                        test_results["embedding"]["status"] = "error"
+                        test_results["embedding"]["message"] = "❌ Embedding returned empty result"
+                else:
+                    test_results["embedding"]["status"] = "error"
+                    test_results["embedding"]["message"] = f"Provider '{provider}' not supported for embeddings"
+                    
+            except Exception as e:
+                test_results["embedding"]["status"] = "error"
+                test_results["embedding"]["message"] = f"❌ Embedding test failed: {str(e)}"
+                logger.error(f"Embedding test failed: {str(e)}")
+        
+        # Test Multimodal Service
+        if "multimodal_service" in llm_test_config:
+            try:
+                test_multimodal_config = llm_test_config["multimodal_service"].copy()
+                provider = test_multimodal_config.get("llm_service", "openai").lower()
+                model = test_multimodal_config.get("llm_model", "gpt-4o")
+                
+                # Ensure authentication_configuration exists
+                if "authentication_configuration" not in test_multimodal_config:
+                    test_multimodal_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
+                
+                # Merge with existing config to get model_kwargs and prompt_path
+                if hasattr(cfg, 'multimodal_config') and cfg.multimodal_config:
+                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
+                        if key not in test_multimodal_config and key in cfg.multimodal_config:
+                            test_multimodal_config[key] = cfg.multimodal_config[key]
+                elif hasattr(cfg, 'completion_config') and cfg.completion_config:
+                    # Fallback to completion config
+                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
+                        if key not in test_multimodal_config and key in cfg.completion_config:
+                            test_multimodal_config[key] = cfg.completion_config[key]
+                
+                # Ensure required fields exist
+                if "model_kwargs" not in test_multimodal_config:
+                    test_multimodal_config["model_kwargs"] = {"temperature": 0}
+                if "prompt_path" not in test_multimodal_config:
+                    test_multimodal_config["prompt_path"] = "common/prompts/openai_gpt4/"
+                
+                multimodal_service = _create_llm_service(provider, test_multimodal_config)
+                
+                if multimodal_service:
+                    response = multimodal_service.llm.invoke("Say 'Connection successful' in 2 words")
+                    if not response or not str(response).strip():
+                        raise ValueError("Multimodal LLM returned an empty response")
+                    test_results["multimodal"]["status"] = "success"
+                    test_results["multimodal"]["message"] = f"✅ Multimodal model ({model}) connected successfully"
+                else:
+                    test_results["multimodal"]["status"] = "error"
+                    test_results["multimodal"]["message"] = f"Provider '{provider}' not supported for multimodal"
+                    
+            except Exception as e:
+                test_results["multimodal"]["status"] = "error"
+                test_results["multimodal"]["message"] = f"❌ Multimodal test failed: {str(e)}"
+                logger.error(f"Multimodal test failed: {str(e)}")
+        
+        # Determine overall status
+        all_success = all(result["status"] == "success" for result in test_results.values() if result["status"] != "not_tested")
+        any_error = any(result["status"] == "error" for result in test_results.values())
+        
+        overall_status = "success" if all_success and not any_error else "error" if any_error else "partial"
+        
+        return {
+            "status": overall_status,
+            "message": "Connection test completed",
+            "results": test_results
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"LLM connection test failed: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Test failed: {str(e)}",
+            "results": test_results
+        }
+
+
+MASKED_SECRET = "********"
+
+
+def _mask_secret_values(auth_config: dict) -> dict:
+    """Replace all values in an authentication_configuration dict with the masked sentinel."""
+    return {k: MASKED_SECRET for k in auth_config}
+
+
+def _unmask_auth(incoming: dict, stored_config: dict):
+    """
+    In-place: replace MASKED_SECRET values in incoming authentication_configuration
+    with the real values from stored_config.
+
+    Works on both top-level and per-service authentication_configuration.
+    """
+    def _unmask_dict(incoming_auth, stored_auth):
+        if not isinstance(incoming_auth, dict) or not isinstance(stored_auth, dict):
+            return
+        for k, v in incoming_auth.items():
+            if v == MASKED_SECRET:
+                incoming_auth[k] = stored_auth.get(k, "")
+
+    # Top-level authentication_configuration
+    if "authentication_configuration" in incoming:
+        stored_top = stored_config.get("authentication_configuration", {})
+        _unmask_dict(incoming["authentication_configuration"], stored_top)
+
+    # Per-service authentication_configuration
+    for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+        svc = incoming.get(svc_key)
+        if svc and "authentication_configuration" in svc:
+            stored_svc = stored_config.get(svc_key, {})
+            stored_svc_auth = stored_svc.get("authentication_configuration", {})
+            _unmask_dict(svc["authentication_configuration"], stored_svc_auth)
+
+
+def _strip_auth(config: dict) -> dict:
+    """Deep copy a config dict and mask all secret values in authentication_configuration sections."""
+    result = copy.deepcopy(config)
+    if "authentication_configuration" in result and isinstance(result["authentication_configuration"], dict):
+        result["authentication_configuration"] = _mask_secret_values(result["authentication_configuration"])
+    for service_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+        svc = result.get(service_key)
+        if svc and "authentication_configuration" in svc and isinstance(svc["authentication_configuration"], dict):
+            svc["authentication_configuration"] = _mask_secret_values(svc["authentication_configuration"])
+    return result
+
+
+@router.get(f"{route_prefix}/config")
+async def get_config(
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    graphname: str | None = None,
+    scope: str | None = None,
+):
+    """
+    Get current server configuration to display in UI.
+    Returns config WITHOUT any API keys or secrets.
+
+    Query params:
+        scope: "graph" to get per-graph overrides (superadmin only).
+               Default (None or "global") returns global config.
+    """
+    try:
+        llm_access_mode = _resolve_llm_config_access(credentials, graphname)
+        safe_llm_config = _strip_auth(llm_config)
+
+        if llm_access_mode == "chatbot_only":
+            # Load graph-specific chat_service if it exists
+            graph_chat_service = None
+            if graphname:
+                from common.config import _load_graph_llm_config
+                graph_llm = _load_graph_llm_config(graphname)
+                graph_chat_service = graph_llm.get("chat_service")
+                if graph_chat_service:
+                    graph_chat_service = copy.deepcopy(graph_chat_service)
+                    if "authentication_configuration" in graph_chat_service and isinstance(graph_chat_service["authentication_configuration"], dict):
+                        graph_chat_service["authentication_configuration"] = _mask_secret_values(graph_chat_service["authentication_configuration"])
+
+            # Global chat info for "Inherited from" display
+            global_chat = llm_config.get("chat_service", llm_config.get("completion_service", {}))
+            global_chat_info = {
+                "llm_service": global_chat.get("llm_service", ""),
+                "llm_model": global_chat.get("llm_model", ""),
+            }
+
+            return {
+                "llm_config": safe_llm_config,
+                "llm_config_access": "chatbot_only",
+                "chatbot_config": graph_chat_service,
+                "global_chat_info": global_chat_info,
+            }
+
+        # Full access (superadmin/globaldesigner)
+        if scope == "graph" and graphname:
+            # Return per-graph overrides + global config for reference
+            from common.config import _load_graph_config
+            graph_cfg = _load_graph_config(graphname)
+            graph_llm = graph_cfg.get("llm_config", {})
+            # Mask auth in graph overrides
+            safe_graph_overrides = {}
+            for svc_key in ["completion_service", "chat_service", "embedding_service", "multimodal_service"]:
+                svc_override = graph_llm.get(svc_key)
+                if svc_override:
+                    svc_copy = copy.deepcopy(svc_override)
+                    if "authentication_configuration" in svc_copy and isinstance(svc_copy["authentication_configuration"], dict):
+                        svc_copy["authentication_configuration"] = _mask_secret_values(svc_copy["authentication_configuration"])
+                    safe_graph_overrides[svc_key] = svc_copy
+
+            return {
+                "llm_config": safe_llm_config,
+                "graph_overrides": safe_graph_overrides,
+                "graphrag_config": graphrag_config,
+                "graphrag_overrides": graph_cfg.get("graphrag_config", {}),
+                "llm_config_access": "full",
+                "scope": "graph",
+            }
+
+        safe_db_config = copy.deepcopy(db_config)
+        if safe_db_config.get("password"):
+            safe_db_config["password"] = MASKED_SECRET
+        if safe_db_config.get("apiToken"):
+            safe_db_config["apiToken"] = MASKED_SECRET
+
+        return {
+            "llm_config": safe_llm_config,
+            "db_config": safe_db_config,
+            "graphrag_config": graphrag_config,
+            "llm_config_access": "full",
+            "scope": "global",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error returning config: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to return config: {str(e)}")
+
+
+@router.post(f"{route_prefix}/config/db/test")
+async def test_db_connection(
+    request: Request,
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    db_test_config: dict = Body(...)
+):
+    """
+    Test database connection with provided credentials from UI.
+    """
+    try:
+        _require_roles(credentials, {"superuser"})
+        # Substitute masked sentinel with stored values
+        if db_test_config.get("password") == MASKED_SECRET:
+            db_test_config["password"] = db_config.get("password", "")
+        if db_test_config.get("apiToken") == MASKED_SECRET:
+            db_test_config["apiToken"] = db_config.get("apiToken", "")
+        test_conn = TigerGraphConnection(
+            host=db_test_config["hostname"],
+            username=db_test_config["username"],
+            password=db_test_config["password"],
+            gsPort=db_test_config["gsPort"],
+            restppPort=db_test_config["restppPort"],
+            graphname="",
+        )
+        
+        # Test connection by listing users
+        if db_test_config.get("getToken", False):
+            test_conn.getToken()
+        
+        test_conn.gsql("LS USER")
+        
+        return {
+            "status": "success",
+            "message": "Connection successful"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"DB connection test failed: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Connection failed: {str(e)}"
+        }
+
+
+@router.post(f"{route_prefix}/config/db")
+async def save_db_config(
+    request: Request,
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    db_config_data: dict = Body(...)
+):
+    """
+    Save GraphDB configuration to server_config.json.
+    """
+    try:
+        _require_roles(credentials, {"superuser"})
+        graphs = auth(credentials.username, credentials.password)[0]
+        auth_header = "Basic " + base64.b64encode(
+            f"{credentials.username}:{credentials.password}".encode()
+        ).decode()
+        if _ecc_jobs_running(graphs, auth_header):
+            raise HTTPException(
+                status_code=409,
+                detail="ECC rebuild in progress. Please wait for it to complete before updating config."
+            )
+        from common.config import reload_db_config
+        # Substitute masked sentinel with stored values
+        if db_config_data.get("password") == MASKED_SECRET:
+            db_config_data["password"] = db_config.get("password", "")
+        if db_config_data.get("apiToken") == MASKED_SECRET:
+            db_config_data["apiToken"] = db_config.get("apiToken", "")
+
+        result = reload_db_config(db_config_data)
+        if result["status"] != "success":
+            raise HTTPException(status_code=500, detail=result["message"])
+        
+        logger.info("GraphDB configuration saved successfully")
+        
+        return {
+            "status": "success",
+            "message": "GraphDB configuration saved successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving GraphDB config: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save GraphDB config: {str(e)}")
+
+
+@router.post(f"{route_prefix}/config/graphrag")
+async def save_graphrag_config(
+    request: Request,
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    graphrag_config_data: dict = Body(...)
+):
+    """
+    Save GraphRAG configuration.
+    scope=graph saves per-graph overrides; default saves to global config.
+    """
+    try:
+        _require_roles(credentials, {"superuser", "globaldesigner"})
+        graphs = auth(credentials.username, credentials.password)[0]
+        auth_header = "Basic " + base64.b64encode(
+            f"{credentials.username}:{credentials.password}".encode()
+        ).decode()
+        if _ecc_jobs_running(graphs, auth_header):
+            raise HTTPException(
+                status_code=409,
+                detail="ECC rebuild in progress. Please wait for it to complete before updating config."
+            )
+        from common.config import SERVER_CONFIG, reload_graphrag_config, _config_file_lock
+
+        scope = graphrag_config_data.pop("scope", None)
+        graphname = graphrag_config_data.pop("graphname", None)
+
+        if scope == "graph":
+            if not graphname:
+                raise HTTPException(status_code=400, detail="graphname is required for per-graph config")
+
+            graph_config_dir = f"configs/graph_configs/{graphname}"
+            os.makedirs(graph_config_dir, exist_ok=True)
+            graph_config_path = os.path.join(graph_config_dir, "server_config.json")
+
+            with _config_file_lock:
+                if os.path.exists(graph_config_path):
+                    with open(graph_config_path, "r") as f:
+                        graph_server_config = json.load(f)
+                else:
+                    graph_server_config = {}
+
+                if graphrag_config_data:
+                    graph_server_config["graphrag_config"] = graphrag_config_data
+                else:
+                    # Revert to inherit: remove overrides
+                    graph_server_config.pop("graphrag_config", None)
+
+                temp_file = f"{graph_config_path}.tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(graph_server_config, f, indent=2)
+                os.replace(temp_file, graph_config_path)
+
+            return {
+                "status": "success",
+                "message": f"GraphRAG configuration saved for graph {graphname}"
+            }
+        else:
+            # Global save
+            with _config_file_lock:
+                with open(SERVER_CONFIG, "r") as f:
+                    server_config = json.load(f)
+
+                server_config["graphrag_config"] = graphrag_config_data
+
+                temp_file = f"{SERVER_CONFIG}.tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(server_config, f, indent=2)
+                os.replace(temp_file, SERVER_CONFIG)
+
+            # Reload from file (applies defaults for missing keys like chunker/extractor)
+            result = reload_graphrag_config()
+            if result["status"] != "success":
+                raise HTTPException(status_code=500, detail=result["message"])
+
+            return {
+                "status": "success",
+                "message": "GraphRAG configuration saved successfully"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving GraphRAG config: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save GraphRAG config: {str(e)}")
+
+
+def split_prompt_template(prompt_content: str, prompt_type: str) -> dict:
+    """
+    Split prompt into editable content and template variables that users should not modify.
+    Returns: {"editable_content": str, "template_variables": str}
+    """
+    if prompt_type == "chatbot_response":
+        pattern = r'(Question: \{question\}.*?)$'
+        match = re.search(pattern, prompt_content, re.DOTALL)
+        if match:
+            template_vars = match.group(1).strip()
+            editable = prompt_content[:match.start()].strip()
+            return {"editable_content": editable, "template_variables": template_vars}
+
+    elif prompt_type == "query_generation":
+        pattern = r'(\{format_instructions\}.*?)$'
+        match = re.search(pattern, prompt_content, re.DOTALL)
+        if match:
+            template_vars = match.group(1).strip()
+            editable = prompt_content[:match.start()].strip()
+            return {"editable_content": editable, "template_variables": template_vars}
+
+    elif prompt_type == "community_summarization":
+        pattern = r'(#######\s*-Data-.*?)$'
+        match = re.search(pattern, prompt_content, re.DOTALL)
+        if match:
+            template_vars = match.group(1).strip()
+            editable = prompt_content[:match.start()].strip()
+            return {"editable_content": editable, "template_variables": template_vars}
+
+    return {"editable_content": prompt_content, "template_variables": ""}
+
+
+@router.get(f"{route_prefix}/prompts")
+async def get_prompts(
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    graphname: str | None = None,
+):
+    """
+    Get all customizable prompts.
+    Returns chatbot_response, entity_relationship, community_summarization, and query_generation prompts.
+    """
+    try:
+        access_level = _require_prompt_access(credentials, graphname)
+        active_config = get_chat_config(graphname)
+        default_prompt_path = active_config.get("prompt_path", "./common/prompts/openai_gpt4/")
+        if default_prompt_path.startswith("./"):
+            default_prompt_path = default_prompt_path[2:]
+        default_prompt_path = default_prompt_path.rstrip("/")
+
+        # Per-graph prompt overrides directory (only contains customized files)
+        graph_prompt_dir = f"configs/graph_configs/{graphname}/prompts" if graphname else None
+
+        def _resolve_prompt_file(filename: str) -> str | None:
+            """Find prompt file: graph override first, then default."""
+            if graph_prompt_dir:
+                graph_file = os.path.join(graph_prompt_dir, filename)
+                if os.path.exists(graph_file):
+                    return graph_file
+            default_file = os.path.join(default_prompt_path, filename)
+            if os.path.exists(default_file):
+                return default_file
+            return None
+
+        def _read_prompt(filename: str, prompt_type: str) -> dict:
+            filepath = _resolve_prompt_file(filename)
+            if filepath:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    return split_prompt_template(f.read(), prompt_type)
+            return {"editable_content": "", "template_variables": ""}
+
+        prompts = {}
+        prompts["chatbot_response"] = _read_prompt("chatbot_response.txt", "chatbot_response")
+        prompts["entity_relationship"] = _read_prompt("entity_relationship_extraction.txt", "entity_relationship")
+        prompts["community_summarization"] = _read_prompt("community_summarization.txt", "community_summarization")
+
+        query_gen = _read_prompt("map_question_to_schema.txt", "query_generation")
+        if not query_gen["editable_content"]:
+            query_gen = _read_prompt("query_generation.txt", "query_generation")
+        prompts["query_generation"] = query_gen
+
+        # Graph-admin (chatbot_only) only sees chatbot_response
+        if access_level == "chatbot_only":
+            prompts = {"chatbot_response": prompts.get("chatbot_response", {"editable_content": "", "template_variables": ""})}
+
+        return {
+            "prompts": prompts,
+            "prompt_path": default_prompt_path,
+            "configured_provider": active_config.get("llm_service", "openai")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching prompts: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch prompts: {str(e)}")
+
+
+@router.post(f"{route_prefix}/prompts")
+async def save_prompts(
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    prompt_data: dict = Body(...)
+):
+    """
+    Save customized prompts.
+    Expects: {
+        "prompt_type": "chatbot_response|entity_relationship|community_summarization|query_generation",
+        "editable_content": "...",
+        "template_variables": "...",
+        "graphname": "..."  (optional - graph-admin users must supply this)
+    }
+    """
+    try:
+        graphname = prompt_data.get("graphname")
+        access_level = _require_prompt_access(credentials, graphname)
+        prompt_type = prompt_data.get("prompt_type")
+
+        # Graph-admin (chatbot_only) can only edit chatbot_response prompt
+        if access_level == "chatbot_only" and prompt_type != "chatbot_response":
+            raise HTTPException(status_code=403, detail="Graph admins can only edit the chatbot response prompt.")
+        editable_content = prompt_data.get("editable_content")
+        template_variables = prompt_data.get("template_variables", "")
+
+        if not editable_content:
+            editable_content = prompt_data.get("content")
+
+        if not prompt_type or not editable_content:
+            raise HTTPException(status_code=400, detail="prompt_type and editable_content are required")
+
+        if template_variables:
+            content = editable_content + "\n\n" + template_variables
+        else:
+            content = editable_content
+
+        if graphname:
+            # Per-graph: only write the single customized prompt file to the override dir.
+            # Non-customized prompts fall back to the global prompt_path at runtime.
+            graph_prompt_dir = f"configs/graph_configs/{graphname}/prompts"
+            os.makedirs(graph_prompt_dir, exist_ok=True)
+            prompt_path = graph_prompt_dir
+        else:
+            # Global: seed persistent dir from defaults if needed
+            default_prompt_path = get_chat_config().get("prompt_path", "./common/prompts/openai_gpt4/")
+            if default_prompt_path.startswith("./"):
+                default_prompt_path = default_prompt_path[2:]
+            default_prompt_path = default_prompt_path.rstrip("/")
+
+            persistent_prompt_dir = "configs/prompts"
+            if not default_prompt_path.startswith("configs/"):
+                os.makedirs(persistent_prompt_dir, exist_ok=True)
+                if os.path.exists(default_prompt_path):
+                    for fname in os.listdir(default_prompt_path):
+                        src = os.path.join(default_prompt_path, fname)
+                        dst = os.path.join(persistent_prompt_dir, fname)
+                        if os.path.isfile(src) and not os.path.exists(dst):
+                            shutil.copy2(src, dst)
+                from common.config import reload_llm_config, _config_file_lock
+                with _config_file_lock:
+                    with open(SERVER_CONFIG, "r") as f:
+                        server_cfg = json.load(f)
+                    server_cfg["llm_config"]["completion_service"]["prompt_path"] = f"./{persistent_prompt_dir}/"
+                    temp_file = f"{SERVER_CONFIG}.tmp"
+                    with open(temp_file, "w") as f:
+                        json.dump(server_cfg, f, indent=2)
+                    os.replace(temp_file, SERVER_CONFIG)
+                reload_llm_config()
+                prompt_path = persistent_prompt_dir
+            else:
+                prompt_path = default_prompt_path
+
+        prompt_type_to_file = {
+            "chatbot_response": "chatbot_response.txt",
+            "entity_relationship": "entity_relationship_extraction.txt",
+            "community_summarization": "community_summarization.txt",
+            "query_generation": "map_question_to_schema.txt",
+        }
+
+        if prompt_type not in prompt_type_to_file:
+            raise HTTPException(status_code=400, detail=f"Invalid prompt_type: {prompt_type}")
+
+        file_path = os.path.join(prompt_path, prompt_type_to_file[prompt_type])
+        temp_file = f"{file_path}.tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(temp_file, file_path)
+
+        messages = {
+            "chatbot_response": "Chatbot response prompt saved successfully",
+            "entity_relationship": "Entity relationship prompt saved successfully",
+            "community_summarization": "Community summarization prompt saved successfully",
+            "query_generation": "Schema instructions prompt saved successfully",
+        }
+        return {"status": "success", "message": messages[prompt_type]}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save prompt: {str(e)}")

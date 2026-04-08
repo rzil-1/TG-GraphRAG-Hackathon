@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "@/components/ThemeProvider";
 import { useConfirm } from "@/hooks/useConfirm";
+import { useRoles } from "@/hooks/useRoles";
 
 export function ModeToggle() {
   const { setTheme } = useTheme();
@@ -17,6 +18,7 @@ export function ModeToggle() {
   const location = useLocation();
   const isLoginRoute = location.pathname === "/";
   const [confirm, confirmDialog] = useConfirm();
+  const { rolesLoaded, canAccessSetup } = useRoles(location.pathname);
 
   const handleLogout = async () => {
     // Show confirmation dialog
@@ -46,7 +48,7 @@ export function ModeToggle() {
 
   return (
     <div className="absolute right-4 top-[13px] flex items-center gap-2">
-      {!isLoginRoute && (
+      {!isLoginRoute && rolesLoaded && canAccessSetup && (
         <Button 
           variant="outline" 
           className="dark:border-[#3D3D3D]"
@@ -57,14 +59,16 @@ export function ModeToggle() {
         </Button>
       )}
       
-      <Button 
-        variant="outline" 
-        className="dark:border-[#3D3D3D]"
-        onClick={handleLogout}
-        title="Logout"
-      >
-        <LogOut className="h-[1rem] w-[1rem]" />
-      </Button>
+      {!isLoginRoute && (
+        <Button 
+          variant="outline" 
+          className="dark:border-[#3D3D3D]"
+          onClick={handleLogout}
+          title="Logout"
+        >
+          <LogOut className="h-[1rem] w-[1rem]" />
+        </Button>
+      )}
       
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

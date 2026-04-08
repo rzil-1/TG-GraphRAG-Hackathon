@@ -22,15 +22,15 @@ import {
 const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getConversationId?:any }) => {
   const [store, setStore] = useState<any>();
   const [currentDate, setCurrentDate] = useState('');
-  const [selectedGraph, setSelectedGraph] = useState(localStorage.getItem("selectedGraph") || '');
-  const [ragPattern, setRagPattern] = useState(localStorage.getItem("ragPattern") || '');
+  const [selectedGraph, setSelectedGraph] = useState(sessionStorage.getItem("selectedGraph") || '');
+  const [ragPattern, setRagPattern] = useState(sessionStorage.getItem("ragPattern") || '');
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    // Function to load store from localStorage
+    // Function to load store from sessionStorage
     const loadStore = () => {
-      const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
+      const parseStore = JSON.parse(sessionStorage.getItem("site") || "{}");
       setStore(parseStore);
       return parseStore;
     };
@@ -39,23 +39,23 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
     const parseStore = loadStore();
 
     // Validate selectedGraph against the current graph list
-    const storedGraph = localStorage.getItem("selectedGraph");
+    const storedGraph = sessionStorage.getItem("selectedGraph");
     const availableGraphs = parseStore?.graphs || [];
     if (!storedGraph || !availableGraphs.includes(storedGraph)) {
       if (availableGraphs.length > 0) {
         const firstGraph = availableGraphs[0];
         setSelectedGraph(firstGraph);
-        localStorage.setItem("selectedGraph", firstGraph);
+        sessionStorage.setItem("selectedGraph", firstGraph);
       } else {
         setSelectedGraph('');
-        localStorage.removeItem("selectedGraph");
+        sessionStorage.removeItem("selectedGraph");
       }
     }
 
-    // Set default ragPattern if no value in localStorage
-    if (!localStorage.getItem("ragPattern")) {
+    // Set default ragPattern if no value in sessionStorage
+    if (!sessionStorage.getItem("ragPattern")) {
       setRagPattern("Hybrid Search");
-      localStorage.setItem("ragPattern", "Hybrid Search");
+      sessionStorage.setItem("ragPattern", "Hybrid Search");
     }
 
     const date = new Date();
@@ -78,20 +78,21 @@ const Bot = ({ layout, getConversationId }: { layout?: string | undefined, getCo
 
   // Reload graph list when navigating back to chat (location change)
   useEffect(() => {
-    const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
+    const parseStore = JSON.parse(sessionStorage.getItem("site") || "{}");
     setStore(parseStore);
   }, [location]);
 
   const handleSelect = (value) => {
     setSelectedGraph(value);
-    localStorage.setItem("selectedGraph", value);
+    sessionStorage.setItem("selectedGraph", value);
+    window.dispatchEvent(new Event("graphrag:selectedGraph"));
     navigate("/chat");
     //window.location.reload();
   };
 
   const handleSelectRag = (value) => {
     setRagPattern(value);
-    localStorage.setItem("ragPattern", value);
+    sessionStorage.setItem("ragPattern", value);
     navigate("/chat");
     //window.location.reload();
   };

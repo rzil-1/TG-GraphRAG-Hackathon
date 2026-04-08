@@ -97,7 +97,7 @@ class TigerGraphReportAgent:
             )
 
 
-        chain = SECTION_GENERATION_PROMPT | self.llm.model | section_parser
+        chain = SECTION_GENERATION_PROMPT | self.llm.llm | section_parser
 
         if message_context:
             sections = chain.invoke({"persona": persona,
@@ -159,7 +159,7 @@ class TigerGraphReportAgent:
             input_variables=["persona", "topic", "section_name", "section_description", "qa_pairs"],
         )
 
-        chain = SECTION_PROMPT | self.llm.model | StrOutputParser()
+        chain = SECTION_PROMPT | self.llm.llm | StrOutputParser()
         try:
             section_text = chain.invoke({"persona": persona,
                                         "topic": topic,
@@ -206,7 +206,7 @@ class TigerGraphReportAgent:
             }
         )
             
-        chain = FINALIZE_PROMPT | self.llm.model | report_parser
+        chain = FINALIZE_PROMPT | self.llm.llm | report_parser
 
         try:
             report = chain.invoke({"persona": persona,

@@ -91,7 +91,7 @@ class EventualConsistencyChecker:
             return True
 
     def _chunk_document(self, content):
-        chunker = ecc_util.get_chunker(content["ctype"])
+        chunker = ecc_util.get_chunker(content["ctype"], graphname=self.graphname)
         return chunker.chunk(content["text"])
 
     def _extract_entities(self, content):

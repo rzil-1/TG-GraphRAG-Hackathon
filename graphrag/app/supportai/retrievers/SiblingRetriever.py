@@ -70,8 +70,10 @@ class SiblingRetriever(BaseRetriever):
         context = ["\n".join(content[x]) for x in content]
         if combine:
             context = ["\n ".join(context)]
-
-        resp = self._generate_response(question, context, verbose=verbose)
+            resp = self._generate_response(question, context, verbose=verbose)
+        else:
+            scored = self._score_candidates(question, context, top_k=top_k)
+            resp = self._generate_response(question, scored, verbose=verbose)
 
         if verbose and len(retrieved) > 1 and "verbose" in retrieved[1]:
             resp["verbose"] = retrieved[1]["verbose"]

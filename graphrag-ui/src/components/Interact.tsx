@@ -29,7 +29,7 @@ export const Interactions: FC<Interactions> = ({
   const [feedback, setFeedback] = useState(Feedback.NoFeedback);
 
   const sendFeedback = async (action: Feedback, message: Message) => {
-    const creds = localStorage.getItem("creds");
+    const creds = sessionStorage.getItem("creds");
     setFeedback(action);
     message.feedback = action;
     await fetch(`${GRAPHRAG_URL}/ui/feedback`, {

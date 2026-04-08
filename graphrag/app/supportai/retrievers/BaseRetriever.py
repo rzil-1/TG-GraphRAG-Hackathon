@@ -2,18 +2,16 @@ from common.embeddings.embedding_services import EmbeddingModel
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.llm_services.base_llm import LLM_Model
-from common.py_schemas import CandidateScore, CandidateGenerator, GraphRAGAnswerOutput
+from common.py_schemas import CandidateScore, CandidateGenerator, GraphRAGAnswerOutput, CommunityAnswer
 from common.utils.token_calculator import get_token_calculator
-from common.config import completion_config
+from common.config import get_chat_config, get_graphrag_config
 
 from langchain_core.output_parsers import StrOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
-from langchain.output_parsers import OutputFixingParser
-from langchain_community.callbacks.manager import get_openai_callback
-
 
 import re
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 class BaseRetriever:
     def __init__(
@@ -29,7 +27,10 @@ class BaseRetriever:
         self.embedding_store = embedding_store
         self.embedding_store.set_graphname(connection.graphname)
         self.logger = logging.getLogger(__name__)
-        self.token_calculator = get_token_calculator(token_limit=completion_config.get("token_limit"), model_name=completion_config.get("llm_model"))
+        # Use llm_service's own config when available (chatbot path);
+        # fall back to get_chat_config() (direct supportai API path).
+        llm_cfg = getattr(llm_service, "config", None) or get_chat_config()
+        self.token_calculator = get_token_calculator(token_limit=llm_cfg.get("token_limit"), model_name=llm_cfg.get("llm_model"))
 
     def _install_query(self, query_name):
         self.logger.info(f"Installing query {query_name}")
@@ -58,9 +59,8 @@ class BaseRetriever:
 
     def _question_to_keywords(self, question, top_k, verbose):
         keyword_parser = PydanticOutputParser(pydantic_object=CandidateGenerator)
-
         keyword_prompt = PromptTemplate(
-            template = self.llm_service.keyword_extraction_prompt,
+            template=self.llm_service.keyword_extraction_prompt,
             input_variables=["question"],
             partial_variables={"format_instructions": keyword_parser.get_format_instructions()}
         )
@@ -68,65 +68,74 @@ class BaseRetriever:
         if verbose:
             self.logger.info("Prompt to LLM:\n" + keyword_prompt.invoke({"question": question}).to_string())
 
-        model = self.llm_service.model
-
-        chain = keyword_prompt | model | keyword_parser
-
-        usage_data = {}
-        with get_openai_callback() as cb:
-            answer = chain.invoke({"question": question})
-
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            self.logger.info(f"question_to_keywords usage: {usage_data}")
+        answer = self.llm_service.invoke_with_parser(
+            keyword_prompt, keyword_parser,
+            {"question": question}, caller_name="question_to_keywords",
+        )
 
         if verbose:
             self.logger.info(f"Extracted keywords \"{answer}\" from question \"{question}\" by LLM")
 
-        # sort list by quality score
         res = answer.candidates
         res.sort(key=lambda x: x.quality_score, reverse=True)
-
-        keywords = [x.candidate for x in res[:top_k]]
-
-        return keywords
+        return [x.candidate for x in res[:top_k]]
 
     def _expand_question(self, question, top_k, verbose):
-        question_parser = PydanticOutputParser(pydantic_object=CandidateGenerator)
-
-        QUESTION_PROMPT = PromptTemplate(
-            template = self.llm_service.question_expansion_prompt,
+        expansion_parser = PydanticOutputParser(pydantic_object=CandidateGenerator)
+        prompt = PromptTemplate(
+            template=self.llm_service.question_expansion_prompt,
             input_variables=["question"],
-            partial_variables={"format_instructions": question_parser.get_format_instructions()}
+            partial_variables={"format_instructions": expansion_parser.get_format_instructions()}
         )
 
-        model = self.llm_service.model
-
-        chain = QUESTION_PROMPT | model | question_parser
-        #chain = QUESTION_PROMPT | model
-
-        usage_data = {}
-        with get_openai_callback() as cb:
-            answer = chain.invoke({"question": question})
-
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            self.logger.info(f"expand_question usage: {usage_data}")
+        answer = self.llm_service.invoke_with_parser(
+            prompt, expansion_parser,
+            {"question": question}, caller_name="expand_question",
+        )
 
         if verbose:
             self.logger.info(f"Expanded question \"{question}\" from LLM: {answer}")
 
-        # sort list by quality score
         res = answer.candidates
         res.sort(key=lambda x: x.quality_score, reverse=True)
+        return [x.candidate for x in res[:top_k]]
 
-        questions = [x.candidate for x in res[:top_k]]
+    def _score_candidate(self, question, context):
+        """Score a single context chunk against the question using the LLM."""
+        scoring_parser = PydanticOutputParser(pydantic_object=CommunityAnswer)
+        prompt = PromptTemplate(
+            template=self.llm_service.graphrag_scoring_prompt,
+            input_variables=["question", "context"],
+            partial_variables={"format_instructions": scoring_parser.get_format_instructions()}
+        )
 
-        return questions
+        try:
+            return self.llm_service.invoke_with_parser(
+                prompt, scoring_parser,
+                {"question": question, "context": context},
+                caller_name="score_candidate",
+            )
+        except Exception:
+            self.logger.warning("score_candidate: all parsing failed, returning score 0")
+            return CommunityAnswer(answer=str(context).strip(), quality_score=0)
+
+    def _score_candidates(self, question, contexts, top_k=None):
+        """Score multiple context chunks in parallel and return top-k ranked candidates."""
+        if not contexts:
+            return []
+
+        graphrag_cfg = get_graphrag_config(self.conn.graphname if self.conn else None)
+        max_workers = graphrag_cfg.get("default_concurrency", 10)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(self._score_candidate, question, c) for c in contexts]
+            results = [f.result() for f in futures]
+
+        results.sort(key=lambda x: x.quality_score, reverse=True)
+        if top_k is not None:
+            results = results[:top_k]
+
+        return [{"candidate_answer": x.answer, "score": x.quality_score} for x in results]
 
     def _generate_response(self, question, retrieved, query = "", verbose = False):
         # Truncate retrieved sources to fit within token limit
@@ -140,24 +149,20 @@ class BaseRetriever:
                     retrieved = self.token_calculator.truncate_to_token_limit(retrieved, max_context_tokens)
                     self.logger.info(f"Truncated retrieved text from {retrieved_tokens} to {max_context_tokens} tokens")
 
-        model = self.llm_service.llm
+        response_parser = PydanticOutputParser(pydantic_object=GraphRAGAnswerOutput)
         prompt = ChatPromptTemplate.from_template(self.llm_service.chatbot_response_prompt)
-        output_parser = PydanticOutputParser(pydantic_object=GraphRAGAnswerOutput)
+        input_vars = {
+            "question": question, "context": retrieved, "query": query,
+            "format_instructions": response_parser.get_format_instructions(),
+        }
 
         if verbose:
-            self.logger.info("Prompt to LLM:\n" + prompt.invoke({"question": question, "context": retrieved, "query": query, "format_instructions": output_parser.get_format_instructions()}).to_string())
+            self.logger.info("Prompt to LLM:\n" + prompt.invoke(input_vars).to_string())
 
-        chain = prompt | model | output_parser
-
-        usage_data = {}
-        with get_openai_callback() as cb:
-            generated = chain.invoke({"question": question, "context": retrieved, "query": query, "format_instructions": output_parser.get_format_instructions()})
-
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            self.logger.info(f"generate_response usage: {usage_data}")
+        generated = self.llm_service.invoke_with_parser(
+            prompt, response_parser,
+            input_vars, caller_name="generate_response",
+        )
 
         return {"response": generated.generated_answer, "retrieved": retrieved}
 
@@ -174,23 +179,12 @@ class BaseRetriever:
             return embedding
 
     def _hyde_embedding(self, text, str_mode: bool = False) -> str:
-        model = self.llm_service.llm
-        prompt = self.llm_service.hyde_prompt
+        prompt = ChatPromptTemplate.from_template(self.llm_service.hyde_prompt)
 
-        prompt = ChatPromptTemplate.from_template(prompt)
-        output_parser = StrOutputParser()
-
-        chain = prompt | model | output_parser
-
-        usage_data = {}
-        with get_openai_callback() as cb:
-            generated = chain.invoke({"question": text})
-
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            self.logger.info(f"hyde_embedding usage: {usage_data}")
+        generated = self.llm_service.invoke_with_parser(
+            prompt, StrOutputParser(),
+            {"question": text}, caller_name="hyde_embedding",
+        )
 
         return self._generate_embedding(generated, str_mode)
 

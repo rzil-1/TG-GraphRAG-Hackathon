@@ -5,7 +5,7 @@ from fastapi.security.http import HTTPBase
 from fastapi import APIRouter, Request, Depends, Response
 from typing import Annotated
 
-from common.config import llm_config, get_llm_service
+from common.config import get_completion_config, get_llm_service
 from common.py_schemas import ReportCreationRequest
 
 from report_agent.agent import TigerGraphReportAgent
@@ -41,7 +41,7 @@ def create_report(graphname: str,
                   create_report_request: ReportCreationRequest, 
                   conn: Request, credentials: Annotated[HTTPBase, Depends(security)]):
     
-    agent = TigerGraphReportAgent(conn.state.conn, get_llm_service(llm_config))
+    agent = TigerGraphReportAgent(conn.state.conn, get_llm_service(get_completion_config()))
     sections = create_report_request.sections
     if isinstance(sections, str):
         sections = retrieve_template(sections)

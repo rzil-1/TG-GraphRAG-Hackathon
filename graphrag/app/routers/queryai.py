@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Request, Depends
 from fastapi.security.http import HTTPBase
 
-from common.config import get_llm_service, llm_config
+from common.config import get_chat_config, get_llm_service
 from common.logs.log import req_id_cv
 from common.py_schemas.schemas import (
     GraphRAGResponse,
@@ -34,7 +34,7 @@ def generate_cypher(
         f"/{graphname}/generate_cypher request_id={req_id_cv.get()} database connection created"
     )
 
-    llm = get_llm_service(llm_config)
+    llm = get_llm_service(get_chat_config(graphname))
 
     cypher_gen_tool = GenerateCypher(conn, llm)
 

@@ -60,10 +60,10 @@ const AuthenticatedImage: FC<{ src: string; alt: string }> = ({ src, alt }) => {
   useEffect(() => {
     const fetchImage = async () => {
       try {
-        // Get credentials from localStorage (same pattern as Interact.tsx and SideMenu.tsx)
-        const creds = localStorage.getItem("creds");
+        // Get credentials from sessionStorage (same pattern as Interact.tsx and SideMenu.tsx)
+        const creds = sessionStorage.getItem("creds");
         if (!creds) {
-          console.error("No credentials found in localStorage");
+          console.error("No credentials found in sessionStorage");
           setError(true);
           setLoading(false);
           return;
@@ -173,7 +173,7 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
     <>
       {typeof message === "string" ? (
         <div className="prose dark:prose-invert text-sm max-w-[230px] md:max-w-[80%] mt-7 mb-7">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} className="typewriter">{message}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message}</ReactMarkdown>
         </div>
       ) : message.key === null ? (
         message
@@ -181,9 +181,9 @@ export const CustomChatMessage: FC<IChatbotMessageProps> = ({
         <div className="flex flex-col w-full relative">
           <div className="prose dark:prose-invert text-sm w-full mt-7 mb-7">
             {message.response_type === "progress" ? (
-              <p className="graphrag-thinking typewriter">{message.content}</p>
+              <p className={`graphrag-thinking${message.response_type !== "history" ? " typewriter" : ""}`}>{message.content}</p>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} className="typewriter">{message.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} className={message.response_type === "history" ? undefined : "typewriter"}>{message.content}</ReactMarkdown>
             )}
             <Interactions
               message={message} 

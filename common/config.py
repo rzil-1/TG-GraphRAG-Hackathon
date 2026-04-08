@@ -13,9 +13,18 @@
 # limitations under the License.
 
 import json
+import logging
 import os
+import re
+import threading
 
 from fastapi.security import HTTPBasic
+
+logger = logging.getLogger(__name__)
+
+# Lock for all reads/writes to SERVER_CONFIG to prevent concurrent modifications
+# from different endpoints (LLM, DB, GraphRAG config saves) from overwriting each other.
+_config_file_lock = threading.Lock()
 from pyTigerGraph import TigerGraphConnection
 
 from common.embeddings.embedding_services import (
@@ -40,7 +49,6 @@ from common.llm_services import (
     OpenAI,
     IBMWatsonX
 )
-from common.logs.logwriter import LogWriter
 from common.session import SessionHandler
 from common.status import StatusManager
 
@@ -51,6 +59,202 @@ service_status = {}
 
 # Configs
 SERVER_CONFIG = os.getenv("SERVER_CONFIG", "configs/server_config.json")
+
+
+_VALID_GRAPHNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def validate_graphname(graphname: str) -> str:
+    """Validate graphname to prevent path traversal.
+
+    Raises ValueError if graphname contains path separators or other unsafe characters.
+    Returns the graphname unchanged if valid.
+    """
+    if not graphname:
+        return graphname
+    if not _VALID_GRAPHNAME_RE.match(graphname):
+        raise ValueError(f"Invalid graph name: {graphname!r}")
+    return graphname
+
+
+def _load_graph_config(graphname):
+    """Load entire graph-specific server config overrides, or empty dict if none exist."""
+    if not graphname:
+        return {}
+    validate_graphname(graphname)
+    graph_path = f"configs/graph_configs/{graphname}/server_config.json"
+    if not os.path.exists(graph_path):
+        return {}
+    with open(graph_path, "r") as f:
+        return json.load(f)
+
+
+def _load_graph_llm_config(graphname):
+    """Load graph-specific llm_config overrides, or empty dict if none exist."""
+    return _load_graph_config(graphname).get("llm_config", {})
+
+
+def _resolve_service_config(base_config, override=None):
+    """
+    Merge a service override on top of a base config (typically completion_service).
+
+    - Starts with base_config as the foundation
+    - Overlays override keys on top (if provided)
+    - authentication_configuration: override keys take precedence,
+      missing keys fall back to base auth
+    """
+    result = base_config.copy()
+
+    if not override:
+        return result
+
+    for key, value in override.items():
+        if key == "authentication_configuration":
+            continue  # Handle separately below
+        result[key] = value
+
+    if "authentication_configuration" in override:
+        merged_auth = result.get("authentication_configuration", {}).copy()
+        merged_auth.update(override["authentication_configuration"])
+        result["authentication_configuration"] = merged_auth
+    # else: keep base's auth
+
+    return result
+
+
+def get_completion_config(graphname=None):
+    """
+    Return completion_service config for the given graph.
+
+    Resolution: merge graph-specific completion_service overrides on top of
+    global completion_service. Graph configs only store overrides, so unchanged
+    fields always inherit the latest global values.
+    """
+    graph_llm = _load_graph_llm_config(graphname)
+    override = graph_llm.get("completion_service")
+    if override:
+        logger.debug(f"[get_completion_config] graph={graphname} using graph-specific overrides")
+    result = _resolve_service_config(llm_config["completion_service"], override)
+
+    if graphname:
+        result["graphname"] = graphname
+
+    return result
+
+
+DEFAULT_MULTIMODAL_MODELS = {
+    "openai": "gpt-4o-mini",
+    "azure": "gpt-4o-mini",
+    "genai": "gemini-3.5-flash",
+    "vertexai": "gemini-3.5-flash",
+    "bedrock": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+}
+
+
+def get_chat_config(graphname=None):
+    """
+    Return the chatbot LLM config for the given graph.
+
+    Resolution chain:
+      1. Start with global completion_service
+      2. Merge graph-specific completion_service overrides (shared base for all services)
+      3. Merge chat_service overrides (graph-specific > global > none)
+
+    This ensures graph-level completion_service changes (e.g. prompt_path)
+    propagate to the chatbot config as well.
+    """
+    graph_llm = _load_graph_llm_config(graphname)
+
+    # Build per-graph base: global completion + graph completion overrides
+    base = _resolve_service_config(
+        llm_config["completion_service"],
+        graph_llm.get("completion_service"),
+    )
+
+    # Find chat override: graph-specific > global > None
+    chat_override = graph_llm.get("chat_service")
+    if chat_override:
+        logger.debug(f"[get_chat_config] graph={graphname} using graph-specific chat_service")
+    elif "chat_service" in llm_config:
+        chat_override = llm_config["chat_service"]
+        logger.debug(f"[get_chat_config] graph={graphname} using global chat_service")
+    else:
+        logger.debug(f"[get_chat_config] graph={graphname} falling back to completion_service")
+
+    result = _resolve_service_config(base, chat_override)
+
+    if graphname:
+        result["graphname"] = graphname
+
+    return result
+
+
+def _apply_default_multimodal_model(override, provider):
+    """Apply default vision model if llm_model is not explicitly set."""
+    if override and "llm_model" not in override:
+        default_model = DEFAULT_MULTIMODAL_MODELS.get(provider)
+        if default_model:
+            return {**override, "llm_model": default_model}
+        return override
+    if not override:
+        default_model = DEFAULT_MULTIMODAL_MODELS.get(provider)
+        if default_model:
+            return {"llm_model": default_model}
+        return None
+    return override
+
+
+def get_multimodal_config(graphname=None):
+    """
+    Return the multimodal/vision config for the given graph.
+
+    Resolution chain:
+      1. Start with global completion_service
+      2. Merge graph-specific completion_service overrides (shared base)
+      3. Merge multimodal_service overrides (graph-specific > global > default model)
+
+    Returns the merged config, or None if the provider doesn't support vision.
+    """
+    graph_llm = _load_graph_llm_config(graphname)
+
+    # Build per-graph base: global completion + graph completion overrides
+    base = _resolve_service_config(
+        llm_config["completion_service"],
+        graph_llm.get("completion_service"),
+    )
+
+    # Find multimodal override: graph-specific > global > None
+    mm_override = graph_llm.get("multimodal_service")
+    if mm_override is None and "multimodal_service" in llm_config:
+        mm_override = llm_config["multimodal_service"]
+
+    provider = (mm_override or {}).get("llm_service", base.get("llm_service", "")).lower()
+    mm_override = _apply_default_multimodal_model(mm_override, provider)
+
+    if mm_override is None:
+        return None
+
+    return _resolve_service_config(base, mm_override)
+
+
+def get_graphrag_config(graphname=None):
+    """
+    Return graphrag_config for the given graph.
+
+    Resolution: merge graph-specific graphrag_config overrides on top of
+    global graphrag_config. Graph configs only store overrides, so unchanged
+    fields always inherit the latest global values.
+    """
+    graph_cfg = _load_graph_config(graphname)
+    override = graph_cfg.get("graphrag_config")
+    if not override:
+        return graphrag_config
+    # Merge: global as base, graph overrides on top (simple dict merge, no auth logic)
+    result = graphrag_config.copy()
+    result.update(override)
+    return result
+
+
 PATH_PREFIX = os.getenv("PATH_PREFIX", "")
 PRODUCTION = os.getenv("PRODUCTION", "false").lower() == "true"
 
@@ -83,64 +287,61 @@ if db_config is None:
 if llm_config is None:
     raise Exception("llm_config is not found in SERVER_CONFIG")
 
-completion_config = llm_config.get("completion_service")
-if completion_config is None:
+# Inject authentication_configuration into service configs so they have everything they need.
+# Rule: service-level (lower) auth keys take precedence; missing keys fall back to top-level (upper).
+if "authentication_configuration" in llm_config:
+    for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+        if svc_key in llm_config:
+            svc = llm_config[svc_key]
+            if "authentication_configuration" not in svc:
+                svc["authentication_configuration"] = llm_config["authentication_configuration"].copy()
+            else:
+                # Merge: top-level as base, service-level on top (service-level wins)
+                merged = llm_config["authentication_configuration"].copy()
+                merged.update(svc["authentication_configuration"])
+                svc["authentication_configuration"] = merged
+
+_comp = llm_config.get("completion_service")
+if _comp is None:
     raise Exception("completion_service is not found in llm_config")
-if "llm_service" not in completion_config:
+if "llm_service" not in _comp:
     raise Exception("llm_service is not found in completion_service")
-if "llm_model" not in completion_config:
+if "llm_model" not in _comp:
     raise Exception("llm_model is not found in completion_service")
-embedding_config = llm_config.get("embedding_service")
-if embedding_config is None:
+
+# Log which model will be used for chatbot and ECC/GraphRAG
+if "chat_service" in llm_config:
+    chat_svc = llm_config["chat_service"]
+    logger.info(f"[CHATBOT] Using chat_service: {chat_svc.get('llm_model', 'N/A')} (Provider: {chat_svc.get('llm_service', _comp['llm_service'])})")
+    logger.info(f"[ECC] Using completion_service: {_comp['llm_model']} (Provider: {_comp['llm_service']})")
+else:
+    logger.info(f"[CHATBOT] Using completion_service llm_model: {_comp['llm_model']} (Provider: {_comp['llm_service']})")
+    logger.info(f"[ECC] Using completion_service: {_comp['llm_model']} (Provider: {_comp['llm_service']})")
+
+_emb = llm_config.get("embedding_service")
+if _emb is None:
     raise Exception("embedding_service is not found in llm_config")
-if "embedding_model_service" not in embedding_config:
+if "embedding_model_service" not in _emb:
     raise Exception("embedding_model_service is not found in embedding_service")
-if "model_name" not in embedding_config:
+if "model_name" not in _emb:
     raise Exception("model_name is not found in embedding_service")
-embedding_dimension = embedding_config.get("dimensions", 1536)
+embedding_dimension = _emb.get("dimensions", 1536)
+
+# Log which embedding model will be used
+logger.info(f"[EMBEDDING] Using model: {_emb.get('model_name', 'N/A')} (Provider: {_emb.get('embedding_model_service', 'N/A')})")
 
 # Get context window size from llm_config
 # <=0 means unlimited tokens (no truncation), otherwise use the specified limit
 if "token_limit" in llm_config:
-    if "token_limit" not in completion_config:
-        completion_config["token_limit"] = llm_config["token_limit"]
-    if "token_limit" not in embedding_config:
-        embedding_config["token_limit"] = llm_config["token_limit"]
+    if "token_limit" not in _comp:
+        _comp["token_limit"] = llm_config["token_limit"]
+    if "token_limit" not in _emb:
+        _emb["token_limit"] = llm_config["token_limit"]
 
-# Get multimodal_service config (optional, for vision/image tasks)
-multimodal_config = llm_config.get("multimodal_service")
-
-# Merge shared authentication configuration from llm_config level into service configs
-# Services can still override by defining their own authentication_configuration
-shared_auth = llm_config.get("authentication_configuration", {})
-if shared_auth:
-    # Merge into embedding_config (service-specific auth takes precedence)
-    if "authentication_configuration" not in embedding_config:
-        embedding_config["authentication_configuration"] = shared_auth.copy()
-    else:
-        # Merge shared auth with service-specific auth (service-specific takes precedence)
-        merged_embedding_auth = shared_auth.copy()
-        merged_embedding_auth.update(embedding_config["authentication_configuration"])
-        embedding_config["authentication_configuration"] = merged_embedding_auth
-    
-    # Merge into completion_config (service-specific auth takes precedence)
-    if "authentication_configuration" not in completion_config:
-        completion_config["authentication_configuration"] = shared_auth.copy()
-    else:
-        # Merge shared auth with service-specific auth (service-specific takes precedence)
-        merged_completion_auth = shared_auth.copy()
-        merged_completion_auth.update(completion_config["authentication_configuration"])
-        completion_config["authentication_configuration"] = merged_completion_auth
-    
-    # Merge into multimodal_config if it exists (service-specific auth takes precedence)
-    if multimodal_config:
-        if "authentication_configuration" not in multimodal_config:
-            multimodal_config["authentication_configuration"] = shared_auth.copy()
-        else:
-            # Merge shared auth with service-specific auth (service-specific takes precedence)
-            merged_multimodal_auth = shared_auth.copy()
-            merged_multimodal_auth.update(multimodal_config["authentication_configuration"])
-            multimodal_config["authentication_configuration"] = merged_multimodal_auth
+# Log multimodal_service config (optional, for vision/image tasks).
+_mm_config = get_multimodal_config()
+if _mm_config:
+    logger.info(f"[MULTIMODAL] Using model: {_mm_config.get('llm_model', 'N/A')} (Provider: {_mm_config.get('llm_service', 'N/A')})")
 
 if graphrag_config is None:
     graphrag_config = {"reuse_embedding": True}
@@ -175,81 +376,38 @@ elif llm_config["embedding_service"]["embedding_model_service"].lower() == "olla
 else:
     raise Exception("Embedding service not implemented")
 
-def get_llm_service(llm_config) -> LLM_Model:
-    if llm_config["completion_service"]["llm_service"].lower() == "openai":
-        return OpenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "azure":
-        return AzureOpenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "sagemaker":
-        return AWS_SageMaker_Endpoint(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "vertexai":
-        return GoogleVertexAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "genai":
-        return GoogleGenAI(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "bedrock":
-        return AWSBedrock(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "groq":
-        return Groq(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "ollama":
-        return Ollama(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "huggingface":
-        return HuggingFaceEndpoint(llm_config["completion_service"])
-    elif llm_config["completion_service"]["llm_service"].lower() == "watsonx":
-        return IBMWatsonX(llm_config["completion_service"])
-    else:
-        raise Exception("LLM Completion Service Not Supported")
-
-DEFAULT_MULTIMODAL_MODELS = {
-    "openai": "gpt-4o-mini",
-    "azure": "gpt-4o-mini",
-    "genai": "gemini-3.5-flash",
-    "vertexai": "gemini-3.5-flash",
-    "bedrock": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-}
-
-def get_multimodal_service() -> LLM_Model:
+def get_llm_service(service_config: dict) -> LLM_Model:
     """
-    Get the multimodal/vision LLM service for image description tasks.
-    Priority:
-      1. Explicit multimodal_service config
-      2. Auto-derived from completion_service with a default vision model
-    Currently supports: OpenAI, Azure, GenAI, VertexAI, Bedrock
+    Instantiate an LLM provider from a flat service config dict.
+
+    The config must contain ``llm_service`` at the top level.
+    Use ``get_completion_config()`` or ``get_chat_config()`` to obtain
+    the appropriate config for ECC or chatbot callers respectively.
     """
-    config_copy = completion_config.copy()
-
-    if multimodal_config:
-        config_copy.update(multimodal_config)
-
-    service_type = config_copy.get("llm_service", "").lower()
-
-    if not multimodal_config or "llm_model" not in multimodal_config:
-        default_model = DEFAULT_MULTIMODAL_MODELS.get(service_type)
-        if default_model:
-            config_copy["llm_model"] = default_model
-            LogWriter.info(
-                f"Using default vision model '{default_model}' "
-                f"for provider '{service_type}'"
-            )
-
-    if "prompt_path" not in config_copy:
-        config_copy["prompt_path"] = "./common/prompts/openai_gpt4/"
-
-    if service_type == "openai":
-        return OpenAI(config_copy)
-    elif service_type == "azure":
-        return AzureOpenAI(config_copy)
-    elif service_type == "genai":
-        return GoogleGenAI(config_copy)
-    elif service_type == "vertexai":
-        return GoogleVertexAI(config_copy)
-    elif service_type == "bedrock":
-        return AWSBedrock(config_copy)
+    service_name = service_config["llm_service"].lower()
+    if service_name == "openai":
+        return OpenAI(service_config)
+    elif service_name == "azure":
+        return AzureOpenAI(service_config)
+    elif service_name == "sagemaker":
+        return AWS_SageMaker_Endpoint(service_config)
+    elif service_name == "vertexai":
+        return GoogleVertexAI(service_config)
+    elif service_name == "genai":
+        return GoogleGenAI(service_config)
+    elif service_name == "bedrock":
+        return AWSBedrock(service_config)
+    elif service_name == "groq":
+        return Groq(service_config)
+    elif service_name == "ollama":
+        return Ollama(service_config)
+    elif service_name == "huggingface":
+        return HuggingFaceEndpoint(service_config)
+    elif service_name == "watsonx":
+        return IBMWatsonX(service_config)
     else:
-        LogWriter.warning(
-            f"Multimodal/vision not supported for provider '{service_type}'. "
-            "Image descriptions will be skipped."
-        )
-        return None
+        raise Exception(f"LLM service '{service_name}' not supported")
+
 
 if os.getenv("INIT_EMBED_STORE", "true") == "true":
     conn = TigerGraphConnection(
@@ -270,3 +428,203 @@ if os.getenv("INIT_EMBED_STORE", "true") == "true":
         support_ai_instance=True,
     )
     service_status["embedding_store"] = {"status": "ok", "error": None}
+
+
+def reload_llm_config(new_llm_config: dict = None):
+    """
+    Reload LLM configuration and reinitialize services.
+    
+    Args:
+        new_llm_config: If provided, saves this config to file first. 
+                       If None, just reloads from existing file.
+    
+    Returns:
+        dict: Status of reload operation
+    """
+    global llm_config, embedding_service
+
+    try:
+        with _config_file_lock:
+            # If new config provided, save it first
+            if new_llm_config is not None:
+                with open(SERVER_CONFIG, "r") as f:
+                    server_config = json.load(f)
+
+                server_config["llm_config"] = new_llm_config
+
+                temp_file = f"{SERVER_CONFIG}.tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(server_config, f, indent=2)
+                os.replace(temp_file, SERVER_CONFIG)
+
+            # Read/reload from file
+            with open(SERVER_CONFIG, "r") as f:
+                server_config = json.load(f)
+
+        # Validate before updating
+        new_llm_config = server_config.get("llm_config")
+        if new_llm_config is None:
+            raise Exception("llm_config is not found in SERVER_CONFIG")
+
+        # Inject authentication_configuration into service configs BEFORE updating globals.
+        # Rule: service-level (lower) auth keys take precedence; missing keys fall back to top-level (upper).
+        if "authentication_configuration" in new_llm_config:
+            for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+                if svc_key in new_llm_config:
+                    svc = new_llm_config[svc_key]
+                    if "authentication_configuration" not in svc:
+                        svc["authentication_configuration"] = new_llm_config["authentication_configuration"].copy()
+                    else:
+                        merged = new_llm_config["authentication_configuration"].copy()
+                        merged.update(svc["authentication_configuration"])
+                        svc["authentication_configuration"] = merged
+
+        new_completion_config = new_llm_config.get("completion_service")
+        new_embedding_config = new_llm_config.get("embedding_service")
+
+        if new_completion_config is None:
+            raise Exception("completion_service is not found in llm_config")
+        if new_embedding_config is None:
+            raise Exception("embedding_service is not found in llm_config")
+
+        # Validate required fields before touching globals
+        if "llm_service" not in new_completion_config:
+            raise Exception("llm_service is not found in completion_service")
+        if "llm_model" not in new_completion_config:
+            raise Exception("llm_model is not found in completion_service")
+
+        # Propagate top-level token_limit into service configs (same as startup)
+        if "token_limit" in new_llm_config:
+            if "token_limit" not in new_completion_config:
+                new_completion_config["token_limit"] = new_llm_config["token_limit"]
+            if "token_limit" not in new_embedding_config:
+                new_embedding_config["token_limit"] = new_llm_config["token_limit"]
+
+        # Update globals atomically: build complete new state, then swap in one step.
+        # Using dict slice assignment avoids the clear()+update() window where readers
+        # would see an empty dict.
+        old_llm_keys = set(llm_config.keys())
+        for k in old_llm_keys - set(new_llm_config.keys()):
+            del llm_config[k]
+        llm_config.update(new_llm_config)
+
+        # Re-initialize embedding service
+        if new_embedding_config["embedding_model_service"].lower() == "openai":
+            embedding_service = OpenAI_Embedding(new_embedding_config)
+        elif new_embedding_config["embedding_model_service"].lower() == "azure":
+            embedding_service = AzureOpenAI_Ada002(new_embedding_config)
+        elif new_embedding_config["embedding_model_service"].lower() == "vertexai":
+            embedding_service = VertexAI_PaLM_Embedding(new_embedding_config)
+        elif new_embedding_config["embedding_model_service"].lower() == "genai":
+            embedding_service = GenAI_Embedding(new_embedding_config)
+        elif new_embedding_config["embedding_model_service"].lower() == "bedrock":
+            embedding_service = AWS_Bedrock_Embedding(new_embedding_config)
+        elif new_embedding_config["embedding_model_service"].lower() == "ollama":
+            embedding_service = Ollama_Embedding(new_embedding_config)
+        else:
+            raise Exception("Embedding service not implemented")
+
+        return {
+            "status": "success",
+            "message": "LLM configuration reloaded successfully"
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to reload LLM config: {str(e)}"
+        }
+
+
+def reload_db_config(new_db_config: dict = None):
+    """
+    Reload DB configuration from server_config.json and update in-memory config.
+    
+    Args:
+        new_db_config: If provided, saves this config to file first.
+                       If None, just reloads from existing file.
+    
+    Returns:
+        dict: Status of reload operation
+    """
+    global db_config
+
+    try:
+        with _config_file_lock:
+            if new_db_config is not None:
+                with open(SERVER_CONFIG, "r") as f:
+                    server_config = json.load(f)
+
+                server_config["db_config"] = new_db_config
+
+                temp_file = f"{SERVER_CONFIG}.tmp"
+                with open(temp_file, "w") as f:
+                    json.dump(server_config, f, indent=2)
+                os.replace(temp_file, SERVER_CONFIG)
+
+            with open(SERVER_CONFIG, "r") as f:
+                server_config = json.load(f)
+
+        new_db_config = server_config.get("db_config")
+        if new_db_config is None:
+            raise Exception("db_config is not found in SERVER_CONFIG")
+
+        old_db_keys = set(db_config.keys())
+        for k in old_db_keys - set(new_db_config.keys()):
+            del db_config[k]
+        db_config.update(new_db_config)
+
+        return {
+            "status": "success",
+            "message": "DB configuration reloaded successfully"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to reload DB config: {str(e)}"
+        }
+
+
+def reload_graphrag_config():
+    """
+    Reload GraphRAG configuration from server_config.json.
+    Updates the in-memory graphrag_config dict to reflect changes immediately.
+    
+    Returns:
+        dict: Status of reload operation
+    """
+    global graphrag_config
+
+    try:
+        with _config_file_lock:
+            with open(SERVER_CONFIG, "r") as f:
+                server_config = json.load(f)
+
+        new_graphrag_config = server_config.get("graphrag_config")
+        if new_graphrag_config is None:
+            new_graphrag_config = {"reuse_embedding": True}
+        
+        # Set defaults (same as startup logic)
+        if "chunker" not in new_graphrag_config:
+            new_graphrag_config["chunker"] = "semantic"
+        if "extractor" not in new_graphrag_config:
+            new_graphrag_config["extractor"] = "llm"
+        
+        # Update graphrag_config in-place to preserve references in other modules
+        old_graphrag_keys = set(graphrag_config.keys())
+        for k in old_graphrag_keys - set(new_graphrag_config.keys()):
+            del graphrag_config[k]
+        graphrag_config.update(new_graphrag_config)
+        
+        logger.info(f"GraphRAG config reloaded: extractor={graphrag_config.get('extractor')}, chunker={graphrag_config.get('chunker')}, reuse_embedding={graphrag_config.get('reuse_embedding')}")
+        
+        return {
+            "status": "success",
+            "message": "GraphRAG configuration reloaded successfully"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to reload GraphRAG config: {str(e)}"
+        }

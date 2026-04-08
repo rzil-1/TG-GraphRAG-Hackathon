@@ -36,12 +36,12 @@ const WS_URL = "/ui/ui-login";
 export function Login() {
   const { i18n, t } = useTranslation();
   const [user, setUser] = useState("");
-  const [token, setToken] = useState(localStorage.getItem("site") || "");
+  const [token, setToken] = useState(sessionStorage.getItem("site") || "");
   const [hint, setHint] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
-    const parseStore = JSON.parse(localStorage.getItem("site") || "{}");
+    const parseStore = JSON.parse(sessionStorage.getItem("site") || "{}");
     setToken(parseStore);
   }, []);
 
@@ -49,23 +49,30 @@ export function Login() {
     const creds = btoa(`${data.email}:${data.password}`);
     const username = data.email;
 
-    const res = await fetch("/ui/ui-login", {
+    try {
+      const res = await fetch("/ui/ui-login", {
         method: "POST",
         headers: {
-        Authorization: `Basic ${creds}`,
+          Authorization: `Basic ${creds}`,
         },
       });
 
-    if (res.ok) {
-      const data = await res.json();
-      localStorage.setItem("creds", creds);
-      localStorage.setItem("site", JSON.stringify(data));
-      setUser(username);
-      localStorage.setItem("username", username);
-      navigate("/chat");
-    } else {
-      // setError("Invalid credentials"); // This line was removed from the new_code, so it's removed here.
-      setHint("Invalid credentials");
+      if (res.ok) {
+        const data = await res.json();
+        sessionStorage.setItem("creds", creds);
+        sessionStorage.setItem("site", JSON.stringify(data));
+        setUser(username);
+        sessionStorage.setItem("username", username);
+        navigate("/chat");
+      } else if (res.status === 401 || res.status === 403) {
+        setHint("Invalid credentials");
+        navigate("/");
+      } else {
+        setHint(`Server error (${res.status}). Please try again later.`);
+        navigate("/");
+      }
+    } catch {
+      setHint("Unable to connect to the server. Please try again later.");
       navigate("/");
     }
   };
@@ -73,7 +80,7 @@ export function Login() {
   const logOut = () => {
     setUser("");
     setToken("");
-    localStorage.removeItem("site");
+    sessionStorage.removeItem("site");
     navigate("/");
   };
 

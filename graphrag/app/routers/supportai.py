@@ -32,8 +32,8 @@ from common.config import (
     graphrag_config,
     embedding_service,
     embedding_store,
+    get_chat_config,
     get_llm_service,
-    llm_config,
     service_status,
 )
 from common.logs.logwriter import LogWriter
@@ -119,7 +119,7 @@ def search(
         query.method_params["verbose"] = False
     if query.method.lower() == "hybrid":
         retriever = HybridRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         if "method" not in query.method_params:
             query.method_params["method"] = "similarity"
@@ -146,7 +146,7 @@ def search(
         if "index" not in query.method_params:
             raise Exception("Index name not provided")
         retriever = SimilarityRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         res = retriever.search(
             query.question,
@@ -160,7 +160,7 @@ def search(
         if "index" not in query.method_params:
             raise Exception("Index name not provided")
         retriever = SiblingRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         res = retriever.search(
             query.question,
@@ -174,12 +174,12 @@ def search(
         )
     elif query.method.lower() == "entityrelationship":
         retriever = EntityRelationshipRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         res = retriever.search(query.question, query.method_params["top_k"])
     elif query.method.lower() == "community":
         retriever = CommunityRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         if "with_chunk" not in query.method_params:
             query.method_params["with_chunk"] = True
@@ -222,7 +222,7 @@ def answer_question(
         query.method_params["verbose"] = False
     if query.method.lower() == "hybrid":
         retriever = HybridRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         if "method" not in query.method_params:
             query.method_params["method"] = "Similarity"
@@ -250,7 +250,7 @@ def answer_question(
         if "index" not in query.method_params:
             raise Exception("Index name not provided")
         retriever = SimilarityRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         res = retriever.retrieve_answer(
             query.question,
@@ -265,7 +265,7 @@ def answer_question(
         if "index" not in query.method_params:
             raise Exception("Index name not provided")
         retriever = SiblingRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         res = retriever.retrieve_answer(
             query.question,
@@ -280,13 +280,13 @@ def answer_question(
         )
     elif query.method.lower() == "entityrelationship":
         retriever = EntityRelationshipRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         res = retriever.retrieve_answer(query.question, query.method_params["top_k"])
 
     elif query.method.lower() == "community":
         retriever = CommunityRetriever(
-            embedding_service, embedding_store, get_llm_service(llm_config), conn
+            embedding_service, embedding_store, get_llm_service(get_chat_config(graphname)), conn
         )
         if "with_chunk" not in query.method_params:
             query.method_params["with_chunk"] = True
@@ -330,7 +330,7 @@ def graphrag_update(
     from httpx import get as http_get
 
     ecc = (
-        graphrag_config.get("ecc", "http://localhost:8001")
+        graphrag_config.get("ecc", "http://graphrag-ecc:8001")
         + f"/{graphname}/{method}/consistency_update"
     )
     LogWriter.info(f"Sending ECC request to: {ecc}")

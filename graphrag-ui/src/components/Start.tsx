@@ -4,7 +4,7 @@ import { useTheme } from "@/components/ThemeProvider";
 
 
 const questions = (() => {
-  const selectedGraph = localStorage.getItem('selectedGraph');
+  const selectedGraph = sessionStorage.getItem('selectedGraph');
 
   if (selectedGraph?.includes('pyTigerGraphRAG') || selectedGraph?.includes('pyTG')) {
     return [

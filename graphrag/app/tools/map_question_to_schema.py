@@ -17,7 +17,6 @@ from langchain.tools.base import ToolException
 from langchain.llms.base import LLM
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_community.callbacks.manager import get_openai_callback
 
 from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.py_schemas import MapQuestionToSchemaResponse, MapAttributeToAttributeResponse
@@ -93,8 +92,6 @@ class MapQuestionToSchema(BaseTool):
             partial_variables={"format_instructions": parser.get_format_instructions()},
         )
 
-        restate_chain = RESTATE_QUESTION_PROMPT | self.llm.model | parser
-
         schema_ver = get_schema_ver(self.conn)
         if schema_ver is None or self.schema_ver != schema_ver:
             self.schema_ver = schema_ver if schema_ver is not None else -1
@@ -115,22 +112,18 @@ class MapQuestionToSchema(BaseTool):
         else:
             logger.info(f"Reusing existing schema rep for schema version {schema_ver}")
 
-        usage_data = {}
-        with get_openai_callback() as cb:
-            parsed_q = restate_chain.invoke(
-                {
-                    "vertices": self.vertices,
-                    "verticesAttrs": self.vertices_info,
-                    "edges": self.edges,
-                    "edgesInfo": self.edges_info,
-                    "question": query,
-                    "conversation": conversation,
-                }
-            )
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
+        parsed_q = self.llm.invoke_with_parser(
+            RESTATE_QUESTION_PROMPT, parser,
+            {
+                "vertices": self.vertices,
+                "verticesAttrs": self.vertices_info,
+                "edges": self.edges,
+                "edgesInfo": self.edges_info,
+                "question": query,
+                "conversation": conversation,
+            },
+            caller_name="map_question_to_schema",
+        )
         # logger.info(f"parsed_q: {parsed_q}")
 
         logger.debug_pii(
@@ -153,20 +146,16 @@ class MapQuestionToSchema(BaseTool):
             },
         )
 
-        attr_map_chain = ATTR_MAP_PROMPT | self.llm.model | attr_parser
         if parsed_q.target_vertex_attributes:
             for vertex in parsed_q.target_vertex_attributes.keys():
-                with get_openai_callback() as cb:
-                    parsed_map = attr_map_chain.invoke(
-                        {
-                            "parsed_attrs": parsed_q.target_vertex_attributes[vertex],
-                            "real_attrs": [attr[0] for attr in self.conn.getVertexAttrs(vertex)],
-                        }
-                    ).attr_map
-                    usage_data["input_tokens"] += cb.prompt_tokens
-                    usage_data["output_tokens"] += cb.completion_tokens
-                    usage_data["total_tokens"] += cb.total_tokens
-                    usage_data["cost"] += cb.total_cost
+                parsed_map = self.llm.invoke_with_parser(
+                    ATTR_MAP_PROMPT, attr_parser,
+                    {
+                        "parsed_attrs": parsed_q.target_vertex_attributes[vertex],
+                        "real_attrs": [attr[0] for attr in self.conn.getVertexAttrs(vertex)],
+                    },
+                    caller_name="map_vertex_attributes",
+                ).attr_map
                 if parsed_map:
                     parsed_q.target_vertex_attributes[vertex] = [
                         parsed_map.get(x) for x in list(parsed_q.target_vertex_attributes[vertex])
@@ -176,25 +165,20 @@ class MapQuestionToSchema(BaseTool):
 
         if parsed_q.target_edge_attributes:
             for edge in parsed_q.target_edge_attributes.keys():
-                with get_openai_callback() as cb:
-                    parsed_map = attr_map_chain.invoke(
-                        {
-                            "parsed_attrs": parsed_q.target_edge_attributes[edge],
-                            "real_attrs": self.conn.getEdgeAttrs(edge),
-                        }
-                    ).attr_map
-                    usage_data["input_tokens"] += cb.prompt_tokens
-                    usage_data["output_tokens"] += cb.completion_tokens
-                    usage_data["total_tokens"] += cb.total_tokens
-                    usage_data["cost"] += cb.total_cost
+                parsed_map = self.llm.invoke_with_parser(
+                    ATTR_MAP_PROMPT, attr_parser,
+                    {
+                        "parsed_attrs": parsed_q.target_edge_attributes[edge],
+                        "real_attrs": self.conn.getEdgeAttrs(edge),
+                    },
+                    caller_name="map_edge_attributes",
+                ).attr_map
                 if parsed_map:
                     parsed_q.target_edge_attributes[edge] = [
                         parsed_map[x] for x in list(parsed_q.target_edge_attributes[edge])
                     ]
 
             logger.debug(f"request_id={req_id_cv.get()} MapEdgeAttributes applied")
-
-        logger.info(f"map_question_to_schema usage: {usage_data}")
 
         try:
             validate_schema(

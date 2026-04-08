@@ -21,7 +21,6 @@ class AzureOpenAI(LLM_Model):
             azure_deployment=config["azure_deployment"],
             openai_api_version=config["openai_api_version"],
             model_name=config["llm_model"],
-            max_tokens=config.get("token_limit"),
             temperature=config["model_kwargs"]["temperature"],
         )
 
@@ -29,21 +28,3 @@ class AzureOpenAI(LLM_Model):
         LogWriter.info(
             f"request_id={req_id_cv.get()} instantiated AzureOpenAI model_name={model_name}"
         )
-
-    @property
-    def map_question_schema_prompt(self):
-        return self._read_prompt_file(self.prompt_path + "map_question_to_schema.txt")
-
-    @property
-    def generate_function_prompt(self):
-        return self._read_prompt_file(self.prompt_path + "generate_function.txt")
-
-    @property
-    def entity_relationship_extraction_prompt(self):
-        return self._read_prompt_file(
-            self.prompt_path + "entity_relationship_extraction.txt"
-        )
-
-    @property
-    def model(self):
-        return self.llm

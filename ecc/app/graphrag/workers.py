@@ -64,7 +64,7 @@ INSTALL QUERY {query_name}
     return {"result": res, "error": False}
 
 
-chunk_sem = asyncio.Semaphore(20)
+chunk_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def chunk_doc(
@@ -98,7 +98,7 @@ async def chunk_doc(
         
         # Use get_chunker for all types (including images)
         # For images, get_chunker returns SingleChunker which preserves markdown image references
-        chunker = ecc_util.get_chunker(chunker_type)
+        chunker = ecc_util.get_chunker(chunker_type, graphname=conn.graphname)
         # decode the text return from tigergraph as it was encoded when written into jsonl file for uploading
         chunks = chunker.chunk(doc["attributes"]["text"].encode('raw_unicode_escape').decode('unicode_escape'))
        
@@ -172,7 +172,7 @@ async def upsert_chunk(conn: AsyncTigerGraphConnection, doc_id, chunk_id, chunk)
         )
 
 
-embed_sem = asyncio.Semaphore(20)
+embed_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def embed(
@@ -220,7 +220,7 @@ async def get_vert_desc(conn, v_id, node: Node):
     return desc
 
 
-extract_sem = asyncio.Semaphore(20)
+extract_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def extract(
@@ -406,7 +406,7 @@ async def extract(
                 # right now, we're not embedding relationships in graphrag
 
 
-comm_sem = asyncio.Semaphore(20)
+comm_sem = asyncio.Semaphore(util._worker_concurrency)
 
 
 async def process_community(
@@ -440,7 +440,8 @@ async def process_community(
         if len(children) == 1:
             summary = children[0]
         else:
-            llm = ecc_util.get_llm_service()
+            from common.config import get_llm_service, get_completion_config
+            llm = get_llm_service(get_completion_config(conn.graphname))
             summarizer = community_summarizer.CommunitySummarizer(llm)
             summary = await summarizer.summarize(comm_id, children)
             if summary["error"]:

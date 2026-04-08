@@ -36,7 +36,7 @@ from graphrag.util import (
 )
 from pyTigerGraph import AsyncTigerGraphConnection
 
-from common.config import embedding_service, graphrag_config, entity_extraction_switch, community_detection_switch, doc_process_switch
+from common.config import embedding_service, entity_extraction_switch, community_detection_switch, doc_process_switch, get_graphrag_config
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.extractors.BaseExtractor import BaseExtractor
 
@@ -179,8 +179,9 @@ async def upsert(upsert_chan: Channel):
 async def load(conn: AsyncTigerGraphConnection):
     logger.info("Data Loading Start")
     dd = lambda: defaultdict(dd)  # infinite default dict
-    batch_size = graphrag_config.get("load_batch_size", 500)
-    upsert_delay = graphrag_config.get("upsert_delay", 0)
+    graph_cfg = get_graphrag_config(conn.graphname)
+    batch_size = graph_cfg.get("load_batch_size", 500)
+    upsert_delay = graph_cfg.get("upsert_delay", 0)
     # while the load q is still open or has contents
     while not load_q.closed() or not load_q.empty():
         if load_q.closed():
@@ -259,7 +260,7 @@ async def embed(
                 (v_id, content, index_name) = await embed_chan.get()
                 v_id = (v_id, index_name)
                 logger.info(f"Embed to {graphname}_{index_name}: {v_id}")
-                if graphrag_config.get("reuse_embedding", True) and embedding_store.has_embeddings([v_id]):
+                if get_graphrag_config(graphname).get("reuse_embedding", True) and embedding_store.has_embeddings([v_id]):
                     logger.info(f"Embeddings for {v_id} already exists, skipping to save cost")
                     continue
                 grp.create_task(

@@ -40,7 +40,7 @@ cd $root_dir || { echo "Cannot switch to $root_dir!"; exit 5; }
 
 echo "Downloading GraphRAG service config..."
 mkdir -p configs || true
-curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/docker-compose.yml | sed "s/community:4.2.1/community:${tg_version}/g" > docker-compose.yml
+curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/docker-compose.yml | sed "s/community:4.2.2/community:${tg_version}/g" > docker-compose.yml
 curl -sk https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/nginx.conf -o configs/nginx.conf
 curl -sk "https://raw.githubusercontent.com/tigergraph/graphrag/refs/heads/main/docs/tutorials/configs/server_config.json.${llm_provider}" | sed '/"gsPort": "14240"/a\
     "username": "'${tg_username}'",\

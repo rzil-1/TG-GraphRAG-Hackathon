@@ -85,7 +85,7 @@ async def chunk_doc(
     
     # Use markdown chunker for all documents
     # Image descriptions wrapped in headers will naturally become single chunks
-    chunker = ecc_util.get_chunker(chunker_type)
+    chunker = ecc_util.get_chunker(chunker_type, graphname=conn.graphname)
     chunks = chunker.chunk(doc["attributes"]["text"])
     
     logger.info(f"Chunking {v_id} into {len(chunks)} chunk(s)")

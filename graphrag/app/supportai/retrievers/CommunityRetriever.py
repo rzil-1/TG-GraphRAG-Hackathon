@@ -1,31 +1,8 @@
 import json
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import PromptTemplate
-from langchain_community.callbacks.manager import get_openai_callback
-
 
 from supportai.retrievers import BaseRetriever
 from common.metrics.tg_proxy import TigerGraphConnectionProxy
 from common.llm_services import LLM_Model
-from common.py_schemas import CommunityAnswer
-
-answer_parser = PydanticOutputParser(pydantic_object=CommunityAnswer)
-
-ANSWER_PROMPT = PromptTemplate(template = """
-You are a helpful assistant responsible for generating an answer to the question below using the data provided.
-Include a quality score for the answer, based on how well it answers the question. The quality score should be between 0 (poor) and 100 (excellent).
-                                                
-Question: {question}
-Context: {context}
-
-{format_instructions}
-""",
-input_variables=["question", "context"],
-partial_variables={"format_instructions": answer_parser.get_format_instructions()}
-)
 
 
 class CommunityRetriever(BaseRetriever):
@@ -103,43 +80,6 @@ class CommunityRetriever(BaseRetriever):
                 res[1]["verbose"]["expanded_questions"] = questions
         return res
     
-    async def _generate_candidate(self, question, context):
-        answer_parser = PydanticOutputParser(pydantic_object=CommunityAnswer)
-
-        ANSWER_PROMPT = PromptTemplate(
-            template = self.llm_service.graphrag_scoring_prompt,
-            input_variables=["question", "context"],
-            partial_variables={"format_instructions": answer_parser.get_format_instructions()}
-        )
-
-        model = self.llm_service.model
-
-        chain = ANSWER_PROMPT | model | answer_parser
-
-        usage_data = {}
-        with get_openai_callback() as cb:
-            answer = await chain.ainvoke(
-                {
-                    "question": question,
-                    "context": context,
-                }
-            )
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            self.logger.info(f"generate_candidate usage: {usage_data}")
-
-        return answer
-    
-    def gather_candidates(self, question, context):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        tasks = [self._generate_candidate(question, c) for c in context]
-        res = loop.run_until_complete(asyncio.gather(*tasks))
-        loop.close()
-        return res
-    
     def retrieve_answer(self,
                         question: str,
                         community_level: int,
@@ -151,25 +91,17 @@ class CommunityRetriever(BaseRetriever):
                         combine: bool = False,
                         verbose: bool = False):
         retrieved = self.search(question, community_level, top_k, similarity_threshold, expand, with_chunk, with_doc, verbose)
-        
-        context = []
+
         if combine:
+            context = []
             for x in retrieved[0]["final_retrieval"]:
                 context += retrieved[0]["final_retrieval"][x]
             context = ["\n".join(set(context))]
+            resp = self._generate_response(question, context, verbose=verbose)
         else:
             context = ["\n".join(retrieved[0]["final_retrieval"][x]) for x in retrieved[0]["final_retrieval"]]
-
-        with ThreadPoolExecutor() as executor:
-            res = executor.submit(self.gather_candidates, question, context).result()
-
-        # sort list by quality score
-        res.sort(key=lambda x: x.quality_score, reverse=True)
-
-        new_context = [{"candidate_answer": x.answer,
-                        "score": x.quality_score} for x in res[:top_k]]
-        
-        resp = self._generate_response(question, new_context, verbose=verbose)
+            new_context = self._score_candidates(question, context, top_k=top_k)
+            resp = self._generate_response(question, new_context, verbose=verbose)
 
         if verbose and len(retrieved) > 1 and "verbose" in retrieved[1]:
             resp["verbose"] = retrieved[1]["verbose"]

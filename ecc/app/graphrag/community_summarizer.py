@@ -13,25 +13,18 @@
 # limitations under the License.
 
 import re
+import logging
 
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
 
 from common.llm_services import LLM_Model
 from common.py_schemas import CommunitySummary
 
-# src: https://github.com/microsoft/graphrag/blob/main/graphrag/index/graph/extractors/summarize/prompts.py
-SUMMARIZE_PROMPT = PromptTemplate.from_template("""
-You are a helpful assistant responsible for generating a comprehensive summary of the data provided below.
-Given one or two entities, and a list of descriptions, all related to the same entity or group of entities.
-Please concatenate all of these into a single, comprehensive description. Make sure to include information collected from all the descriptions.
-If the provided descriptions are contradictory, please resolve the contradictions and provide a single, coherent summary, but do not add any information that is not in the description.
-Make sure it is written in third person, and include the entity names so we the have full context.
+logger = logging.getLogger(__name__)
 
-#######
--Data-
-Commuinty Title: {entity_name}
-Description List: {description_list}
-""")
+
+# src: https://github.com/microsoft/graphrag/blob/main/graphrag/index/graph/extractors/summarize/prompts.py
 
 id_pat = re.compile(r"[_\d]*")
 
@@ -43,18 +36,21 @@ class CommunitySummarizer:
     ):
         self.llm_service = llm_service
 
-    async def summarize(self, name: str, text: list[str]) -> CommunitySummary:
-        structured_llm = self.llm_service.model.with_structured_output(CommunitySummary)
-        chain = SUMMARIZE_PROMPT | structured_llm
+    async def summarize(self, name: str, text: list[str]) -> dict:
+        summary_parser = PydanticOutputParser(pydantic_object=CommunitySummary)
+        prompt = PromptTemplate(
+            template=self.llm_service.community_summarize_prompt + "\n{format_instructions}",
+            input_variables=["entity_name", "description_list"],
+            partial_variables={"format_instructions": summary_parser.get_format_instructions()},
+        )
 
         # remove iteration tags from name
         name = id_pat.sub("", name)
         try:
-            summary = await chain.ainvoke(
-                {
-                    "entity_name": name,
-                    "description_list": text,
-                }
+            summary = await self.llm_service.ainvoke_with_parser(
+                prompt, summary_parser,
+                {"entity_name": name, "description_list": text},
+                caller_name="community_summarize",
             )
         except Exception as e:
             return {"error": True, "summary": "", "message": str(e)}

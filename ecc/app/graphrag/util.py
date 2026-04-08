@@ -28,7 +28,8 @@ from common.config import (
     graphrag_config,
     embedding_service,
     get_llm_service,
-    llm_config,
+    get_completion_config,
+    get_graphrag_config,
 )
 from common.embeddings.base_embedding_store import EmbeddingStore
 from common.embeddings.tigergraph_embedding_store import TigerGraphEmbeddingStore
@@ -40,7 +41,11 @@ logger = logging.getLogger(__name__)
 
 http_timeout = httpx.Timeout(15.0)
 
-tg_sem = asyncio.Semaphore(graphrag_config.get("tg_concurrency", 10))
+_default_concurrency = graphrag_config.get("default_concurrency", 10)
+# Worker amplifier: processing workers (chunk, embed, extract, community) run at 2x
+# the base concurrency since each worker is mostly waiting on I/O (LLM/embedding API calls).
+_worker_concurrency = _default_concurrency * 2
+tg_sem = asyncio.Semaphore(_default_concurrency)
 load_q = reusable_channel.ReuseableChannel()
 
 # will pause workers until the event is false
@@ -132,10 +137,11 @@ async def init(
     await install_queries(requried_queries, conn)
 
     # extractor
-    if graphrag_config.get("extractor") == "graphrag":
+    graph_cfg = get_graphrag_config(conn.graphname)
+    if graph_cfg.get("extractor") == "graphrag":
         extractor = GraphExtractor()
-    elif graphrag_config.get("extractor") == "llm":
-        extractor = LLMEntityRelationshipExtractor(get_llm_service(llm_config))
+    elif graph_cfg.get("extractor") == "llm":
+        extractor = LLMEntityRelationshipExtractor(get_llm_service(get_completion_config()))
     else:
         raise ValueError("Invalid extractor type")
 

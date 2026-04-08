@@ -14,7 +14,6 @@
 
 import logging
 from typing import Iterable
-from langchain_community.callbacks.manager import get_openai_callback
 from langchain_core.output_parsers import StrOutputParser
 from langchain.prompts import PromptTemplate
 from langchain.tools import BaseTool
@@ -124,16 +123,17 @@ Edge Types:
 
         logger.debug_pii("Prompt to LLM:\n" + PROMPT.invoke({"question": question, "schema": schema, "history": history}).to_string())
 
-        chain = PROMPT | self.llm.model | StrOutputParser()
-        usage_data = {}
-        with get_openai_callback() as cb:
-            out = chain.invoke({"question": question, "schema": schema, "history": history}).strip("```gsql").strip("```")
+        out = self.llm.invoke_with_parser(
+            PROMPT, StrOutputParser(),
+            {"question": question, "schema": schema, "history": history},
+            caller_name="generate_gsql",
+        ).strip("```gsql").strip("```").strip()
 
-            usage_data["input_tokens"] = cb.prompt_tokens
-            usage_data["output_tokens"] = cb.completion_tokens
-            usage_data["total_tokens"] = cb.total_tokens
-            usage_data["cost"] = cb.total_cost
-            logger.info(f"generate_gsql usage: {usage_data}")
+        # Validate the LLM output looks like a GSQL query
+        out_upper = out.upper()
+        if not any(kw in out_upper for kw in ("SELECT", "FROM", "WHERE", "ACCUM", "INSTALL", "CREATE", "INTERPRET")):
+            LogWriter.info(f"request_id={req_id_cv.get()} EXIT generate_gsql - LLM did not produce a valid GSQL query")
+            raise ValueError(f"LLM did not produce a valid GSQL query: {out[:200]}")
 
         gsql = "USE GRAPH " + self.conn.graphname + " "+ "\n" + out + "\n"
         LogWriter.info(f"request_id={req_id_cv.get()} EXIT generate_gsql with:\n{gsql}")
