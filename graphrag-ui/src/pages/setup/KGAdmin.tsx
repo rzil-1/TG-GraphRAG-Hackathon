@@ -90,6 +90,12 @@ const KGAdmin = () => {
       return;
     }
 
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(graphName)) {
+      setStatusMessage("Invalid graph name. Must start with a letter or underscore, followed by letters, digits, or underscores.");
+      setStatusType("error");
+      return;
+    }
+
     setIsInitializing(true);
     setStatusMessage("Creating graph and initializing GraphRAG schema...");
     setStatusType("");
@@ -109,11 +115,13 @@ const KGAdmin = () => {
       const createData = await createResponse.json();
 
       if (!createResponse.ok) {
-        throw new Error(
-          createData.detail ||
-            createData.message ||
-            `Failed to create graph: ${createResponse.statusText}`
-        );
+        const detail = createData.detail;
+        const msg = typeof detail === "string"
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((d: any) => d.msg || JSON.stringify(d)).join("; ")
+            : createData.message || `Failed to create graph: ${createResponse.statusText}`;
+        throw new Error(msg);
       }
 
       if (createData.status !== "success") {

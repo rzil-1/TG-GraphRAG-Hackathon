@@ -15,6 +15,7 @@
 import json
 import logging
 import os
+import re
 import threading
 
 from fastapi.security import HTTPBasic
@@ -60,10 +61,27 @@ service_status = {}
 SERVER_CONFIG = os.getenv("SERVER_CONFIG", "configs/server_config.json")
 
 
+_VALID_GRAPHNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def validate_graphname(graphname: str) -> str:
+    """Validate graphname to prevent path traversal.
+
+    Raises ValueError if graphname contains path separators or other unsafe characters.
+    Returns the graphname unchanged if valid.
+    """
+    if not graphname:
+        return graphname
+    if not _VALID_GRAPHNAME_RE.match(graphname):
+        raise ValueError(f"Invalid graph name: {graphname!r}")
+    return graphname
+
+
 def _load_graph_config(graphname):
     """Load entire graph-specific server config overrides, or empty dict if none exist."""
     if not graphname:
         return {}
+    validate_graphname(graphname)
     graph_path = f"configs/graph_configs/{graphname}/server_config.json"
     if not os.path.exists(graph_path):
         return {}

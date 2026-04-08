@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -48,6 +48,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
   const [ingestGraphName, setIngestGraphName] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState("");
@@ -145,6 +146,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
     // Single file or files within limit - upload normally
     setIsUploading(true);
     setUploadMessage("Uploading files...");
+    setIngestMessage("");
 
     try {
       const creds = sessionStorage.getItem("creds");
@@ -170,6 +172,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
         const uploadedCount = selectedFiles?.length || 0;
         setUploadMessage("✅ Successfully uploaded the files. Processing...");
         setSelectedFiles(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
         await fetchUploadedFiles();
         setIsUploading(false);
 
@@ -195,6 +198,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
   const handleBatchUpload = async (filesArray: File[]) => {
     setIsUploading(true);
     setUploadMessage("Total size exceeds limit. Uploading files one by one...");
+    setIngestMessage("");
 
     try {
       const creds = sessionStorage.getItem("creds");
@@ -251,6 +255,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
       }
 
       setSelectedFiles(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       await fetchUploadedFiles();
 
       console.log("Calling handleCreateIngestAfterUpload...");
@@ -970,13 +975,31 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                   <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                     Select Files
                   </label>
-                  <Input
+                  <input
+                    ref={fileInputRef}
                     type="file"
                     multiple
                     onChange={(e) => setSelectedFiles(e.target.files)}
                     disabled={isUploading}
-                    className="dark:border-[#3D3D3D] dark:bg-shadeA"
+                    className="hidden"
                   />
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploading}
+                      className="border-blue-500 text-blue-600 hover:bg-blue-50 dark:border-blue-400 dark:text-blue-400 dark:hover:bg-blue-900/20"
+                    >
+                      <FolderUp className="h-4 w-4 mr-2" />
+                      Choose Files
+                    </Button>
+                    <span className="text-sm italic text-gray-400 dark:text-gray-500">
+                      {selectedFiles && selectedFiles.length > 0
+                        ? `${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""} selected`
+                        : "No files selected"}
+                    </span>
+                  </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                     Maximum upload per request: {MAX_UPLOAD_SIZE_MB} MB.{" "}
                     {ingestGraphName
@@ -988,7 +1011,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                 <div className="flex gap-2">
                   <Button
                     onClick={handleUploadFiles}
-                    disabled={isUploading || !selectedFiles}
+                    disabled={isUploading || isProcessingFiles || !selectedFiles}
                     className="gradient text-white"
                   >
                     {isUploading ? (
@@ -1008,6 +1031,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                     <Button
                       onClick={handleDeleteAllFiles}
                       variant="outline"
+                      disabled={isProcessingFiles || isIngesting}
                       className="dark:border-[#3D3D3D]"
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
@@ -1041,6 +1065,7 @@ const IngestGraph: React.FC<IngestGraphProps> = ({ isModal = false }) => {
                             onClick={() => handleDeleteFile(file.filename)}
                             variant="outline"
                             size="sm"
+                            disabled={isProcessingFiles || isIngesting}
                             className="ml-2 dark:border-[#3D3D3D]"
                           >
                             <Trash2 className="h-3 w-3" />

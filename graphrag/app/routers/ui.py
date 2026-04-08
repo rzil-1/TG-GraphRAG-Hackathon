@@ -39,6 +39,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Path,
     Request,
     UploadFile,
     WebSocket,
@@ -50,7 +51,7 @@ from fastapi.security.http import HTTPBase
 from pyTigerGraph import TigerGraphConnection
 from tools.validation_utils import MapQuestionToSchemaException
 
-from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status, SERVER_CONFIG, get_chat_config
+from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status, SERVER_CONFIG, get_chat_config, validate_graphname
 from common.db.connections import get_db_connection_pwd_manual
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
@@ -68,6 +69,9 @@ from common.py_schemas.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Validated graph name path parameter — rejects path traversal characters
+ValidGraphName = Annotated[str, Path(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 
 use_cypher = os.getenv("USE_CYPHER", "false").lower() == "true"
 route_prefix = "/ui"  # APIRouter's prefix doesn't work with the websocket, so it has to be done here
@@ -209,6 +213,8 @@ def _require_prompt_access(credentials: HTTPBasicCredentials, graphname: str | N
     - superuser / globaldesigner  → 'full'   (can edit all prompts)
     - graph admin on graphname    → 'chatbot_only'  (can only edit chatbot_response)
     """
+    if graphname:
+        validate_graphname(graphname)
     try:
         global_roles, graph_roles = _get_user_role_details(credentials.username, credentials.password)
     except Exception as e:
@@ -224,6 +230,8 @@ def _require_prompt_access(credentials: HTTPBasicCredentials, graphname: str | N
 def _resolve_llm_config_access(
     credentials: HTTPBasicCredentials, graphname: str | None
 ) -> str:
+    if graphname:
+        validate_graphname(graphname)
     try:
         global_roles, graph_roles = _get_user_role_details(
             credentials.username, credentials.password
@@ -345,7 +353,7 @@ def add_feedback(
 
 @router.post(route_prefix + "/{graphname}/create_graph")
 def create_graph(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -390,7 +398,7 @@ def create_graph(
 
 @router.post(route_prefix + "/{graphname}/initialize_graph")
 def init_graph(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -432,7 +440,7 @@ def init_graph(
 
 @router.post(route_prefix + "/{graphname}/rebuild_graph")
 async def forceupdate(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     bg_tasks: BackgroundTasks,
 ):
@@ -540,7 +548,7 @@ async def forceupdate(
 
 @router.get(route_prefix + "/{graphname}/rebuild_status")
 def get_rebuild_status(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -596,7 +604,7 @@ def get_rebuild_status(
 
 @router.post(route_prefix + "/{graphname}/create_ingest")
 def create_ingest(
-    graphname: str,
+    graphname: ValidGraphName,
     cfg: CreateIngestConfig,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -646,7 +654,7 @@ def create_ingest(
 
 @router.post(route_prefix + "/{graphname}/ingest")
 def ingest(
-    graphname: str,
+    graphname: ValidGraphName,
     loader_info: LoadingInfo,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -696,7 +704,7 @@ def ingest(
 
 @router.get(route_prefix + "/image_vertex/{graphname}/{image_id}")
 async def serve_image_from_vertex(
-    graphname: str,
+    graphname: ValidGraphName,
     image_id: str,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
@@ -1016,7 +1024,7 @@ async def write_message_to_history(message: Message, usr_auth: str):
 
 @router.get(route_prefix + "/{graphname}/query")
 async def graph_query(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     q: str | None = None,
     rag_pattern: str | None = None,
@@ -1092,7 +1100,7 @@ async def graph_query(
 
 @router.websocket(route_prefix + "/{graphname}/chat")
 async def chat(
-    graphname: str,
+    graphname: ValidGraphName,
     websocket: WebSocket,
     rag_pattern: str | None = None,
 ):
@@ -1224,7 +1232,7 @@ async def chat(
 
 @router.get(route_prefix + "/{graphname}/uploads/list")
 async def list_uploaded_files(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
 ):
     """
@@ -1265,7 +1273,7 @@ async def list_uploaded_files(
 
 @router.post(route_prefix + "/{graphname}/uploads")
 async def upload_files(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     files: list[UploadFile] = File(...),
     overwrite: bool = False,
@@ -1349,7 +1357,7 @@ async def upload_files(
 
 @router.delete(route_prefix + "/{graphname}/uploads")
 async def clear_uploaded_files(
-    graphname: str,
+    graphname: ValidGraphName,
     creds: Annotated[tuple[list[str], HTTPBasicCredentials], Depends(ui_basic_auth)],
     filename: str | None = None,
 ):
@@ -1438,7 +1446,7 @@ async def clear_uploaded_files(
 
 @router.post(route_prefix + "/{graphname}/cloud/download")
 async def download_from_cloud(
-    graphname: str,
+    graphname: ValidGraphName,
     credentials: Annotated[HTTPBase, Depends(security)],
     request_body: dict = Body(...),
 ):
@@ -1667,7 +1675,7 @@ async def download_from_cloud(
 
 @router.get(route_prefix + "/{graphname}/cloud/list")
 async def list_cloud_downloads(
-    graphname: str,
+    graphname: ValidGraphName,
     credentials: Annotated[HTTPBase, Depends(security)],
 ):
     """
@@ -1714,7 +1722,7 @@ async def list_cloud_downloads(
 
 @router.delete(route_prefix + "/{graphname}/cloud/delete")
 async def delete_cloud_downloads(
-    graphname: str,
+    graphname: ValidGraphName,
     credentials: Annotated[HTTPBase, Depends(security)],
     filename: str = None,
 ):

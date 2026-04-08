@@ -32,7 +32,8 @@ class LLM_Model:
     def __init__(self, config):
         self.llm = None
         self.config = config
-        self._graphname = config.get("graphname")
+        from common.config import validate_graphname
+        self._graphname = validate_graphname(config.get("graphname"))
         self.prompt_path = config.get("prompt_path", "")
 
     def _read_prompt_file(self, path):
@@ -303,6 +304,17 @@ Format: {format_instructions}\
         if result is not None:
             return result
         return """You are a helpful assistant responsible for generating an answer to the question below using the data provided.\nInclude a quality score for the answer, based on how well it answers the question. The quality score should be between 0 (poor) and 100 (excellent).\n\nQuestion: {question}\nContext: {context}\n\n{format_instructions}\n"""
+
+    @property
+    def community_summarize_prompt(self):
+        """Property to get the prompt for community summarization."""
+        result = self._read_prompt_file(self.prompt_path + "community_summarization.txt")
+        if result is not None:
+            return result
+        raise FileNotFoundError(
+            f"Community summarization prompt file not found in {self.prompt_path}. "
+            "Please ensure community_summarization.txt exists in the configured prompt path."
+        )
 
     @property
     def contextualize_question_prompt(self):
