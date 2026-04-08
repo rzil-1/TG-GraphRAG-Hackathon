@@ -126,21 +126,14 @@ const GraphRAGConfig = () => {
     try {
       const creds = sessionStorage.getItem("creds");
       
-      // Prepare chunker config based on selected chunker type
-      const chunkerConfig: any = {};
-      
-      if (defaultChunker === "character" || defaultChunker === "markdown" || defaultChunker === "recursive") {
-        chunkerConfig.chunk_size = parseInt(chunkSize);
-        chunkerConfig.overlap_size = parseInt(overlapSize);
-      } else if (defaultChunker === "semantic") {
-        chunkerConfig.method = semanticMethod;
-        chunkerConfig.threshold = parseFloat(semanticThreshold);
-      } else if (defaultChunker === "regex") {
-        chunkerConfig.pattern = regexPattern;
-      } else if (defaultChunker === "html") {
-        // HTML chunker doesn't require specific config in the current implementation
-        // but we keep it consistent
-      }
+      // Save all chunker settings so any chunker type can use them
+      const chunkerConfig: any = {
+        chunk_size: parseInt(chunkSize),
+        overlap_size: parseInt(overlapSize),
+        method: semanticMethod,
+        threshold: parseFloat(semanticThreshold),
+        pattern: regexPattern,
+      };
       
       const graphragConfigData: any = {
         reuse_embedding: reuseEmbedding,
@@ -408,8 +401,11 @@ const GraphRAGConfig = () => {
                 </p>
               </div>
 
-              {/* Settings for character/markdown/recursive chunkers */}
-              {(defaultChunker === "character" || defaultChunker === "markdown" || defaultChunker === "recursive") && (
+              {/* Character/Markdown/Recursive chunker settings */}
+              <div className="border border-gray-200 dark:border-[#3D3D3D] rounded-lg p-4">
+                <h3 className="text-sm font-medium mb-3 text-black dark:text-white">
+                  Character / Markdown / Recursive Chunker
+                </h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
@@ -426,7 +422,6 @@ const GraphRAGConfig = () => {
                       Maximum size of each chunk
                     </p>
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                       Overlap Size
@@ -443,10 +438,13 @@ const GraphRAGConfig = () => {
                     </p>
                   </div>
                 </div>
-              )}
+              </div>
 
-              {/* Settings for semantic chunker */}
-              {defaultChunker === "semantic" && (
+              {/* Semantic chunker settings */}
+              <div className="border border-gray-200 dark:border-[#3D3D3D] rounded-lg p-4">
+                <h3 className="text-sm font-medium mb-3 text-black dark:text-white">
+                  Semantic Chunker
+                </h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
@@ -466,7 +464,6 @@ const GraphRAGConfig = () => {
                       Breakpoint detection method
                     </p>
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                       Semantic Threshold
@@ -484,10 +481,13 @@ const GraphRAGConfig = () => {
                     </p>
                   </div>
                 </div>
-              )}
+              </div>
 
-              {/* Settings for regex chunker */}
-              {defaultChunker === "regex" && (
+              {/* Regex chunker settings */}
+              <div className="border border-gray-200 dark:border-[#3D3D3D] rounded-lg p-4">
+                <h3 className="text-sm font-medium mb-3 text-black dark:text-white">
+                  Regex Chunker
+                </h3>
                 <div>
                   <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                     Regex Pattern
@@ -503,16 +503,7 @@ const GraphRAGConfig = () => {
                     Regular expression pattern to split on
                   </p>
                 </div>
-              )}
-
-              {/* Info for HTML chunker */}
-              {defaultChunker === "html" && (
-                <div className="p-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200">
-                  <p className="text-sm">
-                    HTML chunker uses the document structure to split content. No additional configuration needed.
-                  </p>
-                </div>
-              )}
+              </div>
             </div>
           </div>
 
