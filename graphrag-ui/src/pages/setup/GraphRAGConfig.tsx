@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Settings, Save, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import ConfigScopeToggle from "@/components/ConfigScopeToggle";
 const GraphRAGConfig = () => {
   const [selectedGraph, setSelectedGraph] = useState(sessionStorage.getItem("selectedGraph") || "");
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
-  const [reuseEmbedding, setReuseEmbedding] = useState(false);
+  const [reuseEmbedding, setReuseEmbedding] = useState(true);
   const [eccUrl, setEccUrl] = useState("http://graphrag-ecc:8001");
   const [chatHistoryUrl, setChatHistoryUrl] = useState("http://chat-history:8002");
 
@@ -35,11 +35,11 @@ const GraphRAGConfig = () => {
   const [maxConcurrency, setMaxConcurrency] = useState("10");
 
   // Chunker-specific settings
-  const [chunkSize, setChunkSize] = useState("1024");
-  const [overlapSize, setOverlapSize] = useState("0");
-  const [semanticMethod, setSemanticMethod] = useState("percentile");
-  const [semanticThreshold, setSemanticThreshold] = useState("0.95");
-  const [regexPattern, setRegexPattern] = useState("\\r?\\n");
+  const [chunkSize, setChunkSize] = useState("");
+  const [overlapSize, setOverlapSize] = useState("");
+  const [semanticMethod, setSemanticMethod] = useState("");
+  const [semanticThreshold, setSemanticThreshold] = useState("");
+  const [regexPattern, setRegexPattern] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -50,6 +50,10 @@ const GraphRAGConfig = () => {
   const [configScope, setConfigScope] = useState<"global" | "graph">("global");
   const [graphOverrides, setGraphOverrides] = useState<Record<string, any>>({});
 
+  // Track configs as loaded from API so we only save what's needed
+  const loadedGlobalConfig = useRef<Record<string, any>>({});
+  const loadedGraphOverrides = useRef<Record<string, any>>({});
+
   useEffect(() => {
     const site = JSON.parse(sessionStorage.getItem("site") || "{}");
     setAvailableGraphs(site.graphs || []);
@@ -59,7 +63,7 @@ const GraphRAGConfig = () => {
 
   const applyGraphragConfig = (graphragConfig: any) => {
     if (!graphragConfig) return;
-    setReuseEmbedding(graphragConfig.reuse_embedding || false);
+    setReuseEmbedding(graphragConfig.reuse_embedding ?? true);
     setEccUrl(graphragConfig.ecc || "http://graphrag-ecc:8001");
     setChatHistoryUrl(graphragConfig.chat_history_api || "http://chat-history:8002");
     setDefaultChunker(graphragConfig.chunker || "semantic");
@@ -67,17 +71,17 @@ const GraphRAGConfig = () => {
     setNumHops(String(graphragConfig.num_hops ?? 2));
     setNumSeenMin(String(graphragConfig.num_seen_min ?? 2));
     setCommunityLevel(String(graphragConfig.community_level ?? 2));
-    setDocOnly(graphragConfig.doc_only || false);
+    setDocOnly(graphragConfig.doc_only ?? false);
     setLoadBatchSize(String(graphragConfig.load_batch_size ?? 500));
     setUpsertDelay(String(graphragConfig.upsert_delay ?? 0));
     setMaxConcurrency(String(graphragConfig.default_concurrency ?? 10));
 
     const chunkerConfig = graphragConfig.chunker_config || {};
-    setChunkSize(String(chunkerConfig.chunk_size || 1024));
-    setOverlapSize(String(chunkerConfig.overlap_size || 0));
-    setSemanticMethod(chunkerConfig.method || "percentile");
-    setSemanticThreshold(String(chunkerConfig.threshold || 0.95));
-    setRegexPattern(chunkerConfig.pattern || "\\r?\\n");
+    setChunkSize(String(chunkerConfig.chunk_size ?? ""));
+    setOverlapSize(chunkerConfig.overlap_size != null ? String(chunkerConfig.overlap_size) : "");
+    setSemanticMethod(chunkerConfig.method || "");
+    setSemanticThreshold(chunkerConfig.threshold != null ? String(chunkerConfig.threshold) : "");
+    setRegexPattern(chunkerConfig.pattern != null ? chunkerConfig.pattern : "");
   };
 
   const fetchConfig = async (scope?: "global" | "graph", graphname?: string) => {
@@ -100,12 +104,17 @@ const GraphRAGConfig = () => {
 
       const data = await response.json();
 
+      const deepCopy = (obj: any) => JSON.parse(JSON.stringify(obj || {}));
+      loadedGlobalConfig.current = deepCopy(data.graphrag_config);
+
       if (effectiveScope === "graph" && data.graphrag_overrides) {
+        loadedGraphOverrides.current = deepCopy(data.graphrag_overrides);
         setGraphOverrides(data.graphrag_overrides);
         // Show per-graph values: merge global + overrides for display
         const merged = { ...data.graphrag_config, ...data.graphrag_overrides };
         applyGraphragConfig(merged);
       } else {
+        loadedGraphOverrides.current = {};
         setGraphOverrides({});
         applyGraphragConfig(data.graphrag_config);
       }
@@ -126,21 +135,20 @@ const GraphRAGConfig = () => {
     try {
       const creds = sessionStorage.getItem("creds");
       
-      // Save all chunker settings so any chunker type can use them
-      const chunkerConfig: any = {
-        chunk_size: parseInt(chunkSize),
-        overlap_size: parseInt(overlapSize),
-        method: semanticMethod,
-        threshold: parseFloat(semanticThreshold),
-        pattern: regexPattern,
-      };
-      
-      const graphragConfigData: any = {
+      // Build current UI state — only include non-empty fields
+      const currentChunkerConfig: any = {};
+      if (chunkSize !== "") currentChunkerConfig.chunk_size = parseInt(chunkSize);
+      if (overlapSize !== "") currentChunkerConfig.overlap_size = parseInt(overlapSize);
+      if (semanticMethod !== "") currentChunkerConfig.method = semanticMethod;
+      if (semanticThreshold !== "") currentChunkerConfig.threshold = parseFloat(semanticThreshold);
+      if (regexPattern !== "") currentChunkerConfig.pattern = regexPattern;
+
+      const currentConfig: any = {
         reuse_embedding: reuseEmbedding,
         ecc: eccUrl,
         chat_history_api: chatHistoryUrl,
         chunker: defaultChunker,
-        chunker_config: chunkerConfig,
+        chunker_config: currentChunkerConfig,
         top_k: parseInt(topK),
         num_hops: parseInt(numHops),
         num_seen_min: parseInt(numSeenMin),
@@ -150,6 +158,87 @@ const GraphRAGConfig = () => {
         upsert_delay: parseInt(upsertDelay),
         default_concurrency: parseInt(maxConcurrency),
       };
+
+      // Display defaults — used to avoid saving values the user never changed
+      const displayDefaults: Record<string, any> = {
+        reuse_embedding: true,
+        ecc: "http://graphrag-ecc:8001",
+        chat_history_api: "http://chat-history:8002",
+        chunker: "semantic",
+        top_k: 5,
+        num_hops: 2,
+        num_seen_min: 2,
+        community_level: 2,
+        doc_only: false,
+        load_batch_size: 500,
+        upsert_delay: 0,
+        default_concurrency: 10,
+      };
+
+      // Determine which config to diff against based on scope
+      const globalCfg = loadedGlobalConfig.current;
+      const globalChunker = globalCfg.chunker_config || {};
+      const graphragConfigData: any = {};
+
+      // Helper: should a key be saved?
+      // - If it was in the reference config (loaded/overrides), always save
+      // - If it differs from the reference config AND differs from display default, save
+      const shouldSave = (key: string, current: any, reference: Record<string, any>, wasInRef: boolean) => {
+        if (wasInRef) return true;
+        const diffFromRef = JSON.stringify(current) !== JSON.stringify(reference[key]);
+        const matchesDefault = JSON.stringify(current) === JSON.stringify(displayDefaults[key]);
+        return diffFromRef && !matchesDefault;
+      };
+
+      if (configScope === "graph") {
+        // Graph scope: save values that differ from effective global (loaded or display default)
+        // or were already overridden per-graph
+        const overrides = loadedGraphOverrides.current;
+        const overridesChunker = overrides.chunker_config || {};
+
+        for (const key of Object.keys(currentConfig)) {
+          if (key === "chunker_config") continue;
+          const effectiveGlobal = key in globalCfg ? globalCfg[key] : displayDefaults[key];
+          const diffFromGlobal = JSON.stringify(currentConfig[key]) !== JSON.stringify(effectiveGlobal);
+          const wasOverridden = key in overrides;
+          if (wasOverridden || diffFromGlobal) {
+            graphragConfigData[key] = currentConfig[key];
+          }
+        }
+
+        const chunkerConfig: any = {};
+        for (const key of Object.keys(currentChunkerConfig)) {
+          const effectiveGlobal = key in globalChunker ? globalChunker[key] : undefined;
+          const diffFromGlobal = JSON.stringify(currentChunkerConfig[key]) !== JSON.stringify(effectiveGlobal);
+          const wasOverridden = key in overridesChunker;
+          if (wasOverridden || diffFromGlobal) {
+            chunkerConfig[key] = currentChunkerConfig[key];
+          }
+        }
+        if (Object.keys(chunkerConfig).length > 0 || "chunker_config" in overrides) {
+          graphragConfigData.chunker_config = chunkerConfig;
+        }
+      } else {
+        // Global scope: save loaded keys + user changes (skip display defaults for unloaded keys)
+        for (const key of Object.keys(currentConfig)) {
+          if (key === "chunker_config") continue;
+          if (shouldSave(key, currentConfig[key], globalCfg, key in globalCfg)) {
+            graphragConfigData[key] = currentConfig[key];
+          }
+        }
+
+        const chunkerConfig: any = {};
+        for (const key of Object.keys(currentChunkerConfig)) {
+          const wasLoaded = key in globalChunker;
+          const changed = JSON.stringify(currentChunkerConfig[key]) !== JSON.stringify(globalChunker[key]);
+          if (wasLoaded || changed) {
+            chunkerConfig[key] = currentChunkerConfig[key];
+          }
+        }
+        if (Object.keys(chunkerConfig).length > 0 || "chunker_config" in globalCfg) {
+          graphragConfigData.chunker_config = chunkerConfig;
+        }
+      }
 
       if (configScope === "graph") {
         graphragConfigData.scope = "graph";
@@ -414,7 +503,7 @@ const GraphRAGConfig = () => {
                     <Input
                       type="number"
                       className="dark:border-[#3D3D3D] dark:bg-background"
-                      placeholder="1024"
+                      placeholder="2048"
                       value={chunkSize}
                       onChange={(e) => setChunkSize(e.target.value)}
                     />
@@ -429,12 +518,12 @@ const GraphRAGConfig = () => {
                     <Input
                       type="number"
                       className="dark:border-[#3D3D3D] dark:bg-background"
-                      placeholder="0"
+                      placeholder="1/8 of chunk size"
                       value={overlapSize}
                       onChange={(e) => setOverlapSize(e.target.value)}
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Overlap between consecutive chunks
+                      Overlap between consecutive chunks. Defaults to 1/8 of chunk size if empty.
                     </p>
                   </div>
                 </div>
@@ -450,14 +539,15 @@ const GraphRAGConfig = () => {
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                       Semantic Method
                     </label>
-                    <Select value={semanticMethod} onValueChange={setSemanticMethod}>
+                    <Select value={semanticMethod || "percentile"} onValueChange={(v) => setSemanticMethod(v)}>
                       <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
-                        <SelectValue placeholder="Select method" />
+                        <SelectValue placeholder="Percentile (default)" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="percentile">Percentile</SelectItem>
                         <SelectItem value="standard_deviation">Standard Deviation</SelectItem>
                         <SelectItem value="interquartile">Interquartile</SelectItem>
+                        <SelectItem value="gradient">Gradient</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">

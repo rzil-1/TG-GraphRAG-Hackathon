@@ -5,7 +5,7 @@ from fastapi.security.http import HTTPBase
 from fastapi import APIRouter, Request, Depends, Response
 from typing import Annotated
 
-from common.config import get_completion_config, get_llm_service
+from common.config import get_completion_config, get_embedding_config, get_llm_service
 from common.py_schemas import ReportCreationRequest
 
 from report_agent.agent import TigerGraphReportAgent
@@ -19,17 +19,15 @@ security = HTTPBase(scheme="basic", auto_error=False)
 
 @router.get("/")
 def read_root():
-    return {"config": llm_config["model_name"]}
+    return {"config": get_completion_config().get("llm_model", "unknown")}
 
 
 @router.get("/health")
 async def health():
     return {
         "status": "healthy",
-        "llm_completion_model": llm_config["completion_service"]["llm_model"],
-        "embedding_service": llm_config["embedding_service"][
-            "embedding_model_service"
-        ],
+        "llm_completion_model": get_completion_config().get("llm_model", "unknown"),
+        "embedding_service": get_embedding_config().get("embedding_model_service", "unknown"),
     }
 
 def retrieve_template(template_name: str):

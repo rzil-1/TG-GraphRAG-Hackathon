@@ -142,13 +142,24 @@ def get_completion_config(graphname=None):
     return result
 
 
-DEFAULT_MULTIMODAL_MODELS = {
-    "openai": "gpt-4o-mini",
-    "azure": "gpt-4o-mini",
-    "genai": "gemini-3.5-flash",
-    "vertexai": "gemini-3.5-flash",
-    "bedrock": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-}
+def get_embedding_config(graphname=None):
+    """
+    Return embedding_service config for the given graph.
+
+    Resolution: merge graph-specific embedding_service overrides on top of
+    global embedding_service. Graph configs only store overrides, so unchanged
+    fields always inherit the latest global values.
+    """
+    graph_llm = _load_graph_llm_config(graphname)
+    override = graph_llm.get("embedding_service")
+    if override:
+        logger.debug(f"[get_embedding_config] graph={graphname} using graph-specific overrides")
+    result = _resolve_service_config(llm_config["embedding_service"], override)
+
+    if graphname:
+        result["graphname"] = graphname
+
+    return result
 
 
 def get_chat_config(graphname=None):
@@ -189,21 +200,6 @@ def get_chat_config(graphname=None):
     return result
 
 
-def _apply_default_multimodal_model(override, provider):
-    """Apply default vision model if llm_model is not explicitly set."""
-    if override and "llm_model" not in override:
-        default_model = DEFAULT_MULTIMODAL_MODELS.get(provider)
-        if default_model:
-            return {**override, "llm_model": default_model}
-        return override
-    if not override:
-        default_model = DEFAULT_MULTIMODAL_MODELS.get(provider)
-        if default_model:
-            return {"llm_model": default_model}
-        return None
-    return override
-
-
 def get_multimodal_config(graphname=None):
     """
     Return the multimodal/vision config for the given graph.
@@ -211,9 +207,10 @@ def get_multimodal_config(graphname=None):
     Resolution chain:
       1. Start with global completion_service
       2. Merge graph-specific completion_service overrides (shared base)
-      3. Merge multimodal_service overrides (graph-specific > global > default model)
+      3. Merge multimodal_service overrides (graph-specific > global)
 
-    Returns the merged config, or None if the provider doesn't support vision.
+    When no multimodal_service override exists ("inherit"), the completion
+    config is returned as-is — the completion model is used for vision.
     """
     graph_llm = _load_graph_llm_config(graphname)
 
@@ -223,16 +220,10 @@ def get_multimodal_config(graphname=None):
         graph_llm.get("completion_service"),
     )
 
-    # Find multimodal override: graph-specific > global > None
+    # Find multimodal override: graph-specific > global > None (inherit)
     mm_override = graph_llm.get("multimodal_service")
     if mm_override is None and "multimodal_service" in llm_config:
         mm_override = llm_config["multimodal_service"]
-
-    provider = (mm_override or {}).get("llm_service", base.get("llm_service", "")).lower()
-    mm_override = _apply_default_multimodal_model(mm_override, provider)
-
-    if mm_override is None:
-        return None
 
     return _resolve_service_config(base, mm_override)
 

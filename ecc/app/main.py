@@ -35,7 +35,6 @@ from common.config import (
     graphrag_config,
     embedding_service,
     get_llm_service,
-    llm_config,
     get_completion_config,
     get_graphrag_config,
     reload_db_config,
@@ -225,7 +224,7 @@ async def run_with_tracking(task_key: str, run_func, graphname: str, conn):
         llm_result = reload_llm_config()
         if llm_result["status"] == "success":
             LogWriter.info(f"LLM config reloaded: {llm_result['message']}")
-            completion_service = llm_config.get("completion_service", {})
+            completion_service = get_completion_config(graphname)
             ecc_model = completion_service.get("llm_model", "unknown")
             ecc_provider = completion_service.get("llm_service", "unknown")
             LogWriter.info(

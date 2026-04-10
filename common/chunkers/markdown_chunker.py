@@ -20,18 +20,18 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 # When chunk_size is not configured, cap any heading-section that exceeds this
 # so that form-based PDFs (tables/bold but no # headings) are not left as a
 # single multi-thousand-character chunk.
-_DEFAULT_FALLBACK_SIZE = 4096
+_DEFAULT_CHUNK_SIZE = 2048
 
 
 class MarkdownChunker(BaseChunker):
-    
+
     def __init__(
         self,
         chunk_size: int = 0,
-        chunk_overlap: int = 0
+        overlap_size: int = -1
     ):
-        self.chunk_size = chunk_size if chunk_size > 0 else _DEFAULT_FALLBACK_SIZE
-        self.chunk_overlap = chunk_overlap
+        self.chunk_size = chunk_size if chunk_size > 0 else _DEFAULT_CHUNK_SIZE
+        self.overlap_size = overlap_size if overlap_size >= 0 else self.chunk_size // 8
 
     def chunk(self, input_string):
         md_splitter = ExperimentalMarkdownSyntaxTextSplitter()
@@ -46,7 +46,7 @@ class MarkdownChunker(BaseChunker):
             recursive_splitter = RecursiveCharacterTextSplitter(
                 separators=TEXT_SEPARATORS,
                 chunk_size=self.chunk_size,
-                chunk_overlap=self.chunk_overlap,
+                chunk_overlap=self.overlap_size,
             )
             md_chunks = []
             for chunk in initial_chunks:
