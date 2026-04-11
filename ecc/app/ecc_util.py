@@ -18,24 +18,24 @@ def get_chunker(chunker_type: str = "", graphname: str = None):
         )
     elif chunker_type == "character":
         chunker = character_chunker.CharacterChunker(
-            chunk_size=chunker_config.get("chunk_size", 4096),
-            overlap_size=chunker_config.get("overlap_size", 0),
+            chunk_size=chunker_config.get("chunk_size", 0),
+            overlap_size=chunker_config.get("overlap_size", -1),
         )
     elif chunker_type == "markdown":
         chunker = markdown_chunker.MarkdownChunker(
             chunk_size=chunker_config.get("chunk_size", 0),
-            chunk_overlap=chunker_config.get("overlap_size", 0),
+            overlap_size=chunker_config.get("overlap_size", -1),
         )
     elif chunker_type == "html":
         chunker = html_chunker.HTMLChunker(
             chunk_size=chunker_config.get("chunk_size", 0),
-            chunk_overlap=chunker_config.get("overlap_size", 0),
+            overlap_size=chunker_config.get("overlap_size", -1),
             headers=chunker_config.get("headers", None),
         )
     elif chunker_type == "recursive":
         chunker = recursive_chunker.RecursiveChunker(
-            chunk_size=chunker_config.get("chunk_size", 4096),
-            overlap_size=chunker_config.get("overlap_size", 0),
+            chunk_size=chunker_config.get("chunk_size", 0),
+            overlap_size=chunker_config.get("overlap_size", -1),
         )
     elif chunker_type == "single" or chunker_type == "image":
         # Single chunker: NEVER splits, always returns 1 chunk

@@ -7,15 +7,30 @@ from common.config import get_llm_service, get_multimodal_config
 logger = logging.getLogger(__name__)
 
 _multimodal_client = None
+_multimodal_provider = None
 
 def _get_client():
-    global _multimodal_client
+    global _multimodal_client, _multimodal_provider
     if _multimodal_client is None and get_multimodal_config():
         try:
-            _multimodal_client = get_llm_service(get_multimodal_config())
+            config = get_multimodal_config()
+            _multimodal_provider = config.get("llm_service", "").lower()
+            _multimodal_client = get_llm_service(config)
         except Exception:
             logger.warning("Failed to create multimodal LLM client")
     return _multimodal_client
+
+def _build_image_content_block(image_base64: str, media_type: str) -> dict:
+    """Build a LangChain image content block appropriate for the configured provider."""
+    if _multimodal_provider in ("genai", "vertexai"):
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{media_type};base64,{image_base64}"},
+        }
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": image_base64},
+    }
 
 def describe_image_with_llm(file_path):
     """
@@ -49,10 +64,7 @@ def describe_image_with_llm(file_path):
                             "If the image has any logo, identify and describe the logo."
                         ),
                     },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
-                    },
+                    _build_image_content_block(image_base64, "image/jpeg"),
                 ],
             ),
         ]

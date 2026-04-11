@@ -64,7 +64,7 @@ const PROVIDER_FIELDS: Record<string, ProviderConfig> = {
       { key: "AWS_SECRET_ACCESS_KEY", label: "AWS Secret Access Key", type: "password", required: true }
     ],
     configFields: [
-      { key: "region_name", label: "AWS Region", type: "text", required: true, placeholder: "us-east-1" }
+      { key: "region_name", label: "AWS Region", type: "text", required: false, placeholder: "us-east-1" }
     ]
   },
   groq: {
@@ -107,6 +107,20 @@ const PROVIDER_FIELDS: Record<string, ProviderConfig> = {
   }
 };
 
+// Single provider list shared across all service Select dropdowns
+const LLM_PROVIDERS = [
+  { value: "openai", label: "OpenAI" },
+  { value: "azure", label: "Azure OpenAI" },
+  { value: "genai", label: "Google GenAI (Gemini)" },
+  { value: "vertexai", label: "Google Vertex AI" },
+  { value: "bedrock", label: "AWS Bedrock" },
+  { value: "groq", label: "Groq" },
+  { value: "ollama", label: "Ollama" },
+  { value: "sagemaker", label: "AWS SageMaker" },
+  { value: "huggingface", label: "HuggingFace" },
+  { value: "watsonx", label: "IBM WatsonX" },
+] as const;
+
 const LLMConfig = () => {
   const [selectedGraph, setSelectedGraph] = useState(sessionStorage.getItem("selectedGraph") || "");
   const [availableGraphs, setAvailableGraphs] = useState<string[]>([]);
@@ -119,15 +133,10 @@ const LLMConfig = () => {
   const [messageType, setMessageType] = useState<"success" | "error" | "">("");
   const [testResults, setTestResults] = useState<any>(null);
   const [connectionTested, setConnectionTested] = useState(false);
-  
-  // Single provider state
-  const [singleProvider, setSingleProvider] = useState("openai");
-  const [singleConfig, setSingleConfig] = useState<Record<string, string>>({});
-  const [singleDefaultModel, setSingleDefaultModel] = useState("");
-  const [singleEmbeddingModel, setSingleEmbeddingModel] = useState("");
-  const [multimodalModel, setMultimodalModel] = useState("");
 
-  // Multi-provider state
+  const [useCustomMultimodal, setUseCustomMultimodal] = useState(false);
+
+  // Canonical per-service state — both single and multi-provider UIs read/write these
   const [completionProvider, setCompletionProvider] = useState("openai");
   const [completionConfig, setCompletionConfig] = useState<Record<string, string>>({});
   const [completionDefaultModel, setCompletionDefaultModel] = useState("");
@@ -183,30 +192,6 @@ const LLMConfig = () => {
       const llmConfig = data.llm_config;
       setLlmConfigAccess(data.llm_config_access === "chatbot_only" ? "chatbot_only" : "full");
 
-      // Parse per-graph chatbot config (chatbot_only mode)
-      if (data.global_chat_info) {
-        setGlobalChatInfo(data.global_chat_info);
-      }
-      if (data.chatbot_config) {
-        setUseCustomChatbot(true);
-        setChatbotProvider(data.chatbot_config.llm_service?.toLowerCase() || "openai");
-        setChatbotModelName(data.chatbot_config.llm_model || "");
-        setChatbotTemperature(String(data.chatbot_config.model_kwargs?.temperature ?? "0"));
-        // Load provider-specific config fields + masked auth
-        const cfg: Record<string, string> = {};
-        for (const key of ["base_url", "azure_deployment", "region_name", "project", "location", "endpoint_name", "endpoint_url"]) {
-          if (data.chatbot_config[key]) cfg[key] = data.chatbot_config[key];
-        }
-        if (data.chatbot_config.authentication_configuration) {
-          for (const [key, value] of Object.entries(data.chatbot_config.authentication_configuration)) {
-            if (typeof value === "string") cfg[key] = value;
-          }
-        }
-        setChatbotProviderConfig(cfg);
-      } else {
-        setUseCustomChatbot(false);
-      }
-
       // Store graph overrides when in per-graph scope
       if (data.graph_overrides) {
         setGraphOverrides(data.graph_overrides);
@@ -214,93 +199,111 @@ const LLMConfig = () => {
         setGraphOverrides({});
       }
 
-      const currentDefaultModel = llmConfig.completion_service?.llm_model || "";
-      setSingleDefaultModel(currentDefaultModel);
-
-      // Load chat_service config for full mode (superadmin)
-      if (llmConfig.chat_service) {
-        setUseCustomChatbot(true);
-        setChatbotProvider(llmConfig.chat_service.llm_service?.toLowerCase() || "openai");
-        setChatbotModelName(llmConfig.chat_service.llm_model || "");
-        setChatbotTemperature(String(llmConfig.chat_service.model_kwargs?.temperature ?? "0"));
-        const chatCfg: Record<string, string> = {};
-        for (const key of ["base_url", "azure_deployment", "region_name", "project", "location", "endpoint_name", "endpoint_url"]) {
-          if (llmConfig.chat_service[key]) chatCfg[key] = llmConfig.chat_service[key];
-        }
-        if (llmConfig.chat_service.authentication_configuration) {
-          for (const [key, value] of Object.entries(llmConfig.chat_service.authentication_configuration)) {
-            if (typeof value === "string") chatCfg[key] = value;
-          }
-        }
-        setChatbotProviderConfig(chatCfg);
-      } else {
-        setUseCustomChatbot(false);
-        setChatbotProvider("openai");
-        setChatbotModelName("");
-        setChatbotTemperature("0");
-        setChatbotProviderConfig({});
-      }
-
-      // Detect if using multiple providers
+      // Detect providers (needed by chat/multimodal fallback below)
       const completionProv = llmConfig.completion_service?.llm_service?.toLowerCase();
       const embeddingProv = llmConfig.embedding_service?.embedding_model_service?.toLowerCase();
       const multimodalProv = llmConfig.multimodal_service?.llm_service?.toLowerCase();
       const chatProv = llmConfig.chat_service?.llm_service?.toLowerCase();
+      const defaultProv = completionProv || "openai";
 
-      const allSameProvider =
-        completionProv === embeddingProv &&
-        (!multimodalProv || completionProv === multimodalProv) &&
-        (!chatProv || completionProv === chatProv);
-      
-      setUseMultipleProviders(!allSameProvider);
+      // All config field keys that any provider might use
+      const allConfigKeys = ["base_url", "azure_deployment", "region_name", "project", "location", "endpoint_name", "endpoint_url"];
 
-      // Helper: load config fields + masked auth fields from a service config
-      const loadServiceConfig = (svc: any, configKeys: string[]) => {
-        const cfg: Record<string, string> = {};
-        for (const key of configKeys) {
-          if (svc?.[key]) cfg[key] = svc[key];
+      // Build the base config: top-level auth + completion_service fields.
+      // Every service inherits missing keys from this base.
+      const baseConfig: Record<string, string> = {};
+      // Layer 1: top-level auth
+      if (llmConfig.authentication_configuration) {
+        for (const [key, value] of Object.entries(llmConfig.authentication_configuration)) {
+          if (typeof value === "string") baseConfig[key] = value;
         }
-        // Load masked auth fields from authentication_configuration
-        if (svc?.authentication_configuration) {
-          for (const [key, value] of Object.entries(svc.authentication_configuration)) {
-            if (typeof value === "string") cfg[key] = value;
+      }
+      // Layer 2: completion_service config fields + auth
+      if (llmConfig.completion_service) {
+        for (const key of allConfigKeys) {
+          if (llmConfig.completion_service[key]) baseConfig[key] = llmConfig.completion_service[key];
+        }
+        if (llmConfig.completion_service.authentication_configuration) {
+          for (const [key, value] of Object.entries(llmConfig.completion_service.authentication_configuration)) {
+            if (typeof value === "string") baseConfig[key] = value;
+          }
+        }
+      }
+
+      // Helper: load a service config, inheriting all missing keys from baseConfig
+      const loadServiceConfigResolved = (svc: any) => {
+        // Start with base config as defaults
+        const cfg: Record<string, string> = { ...baseConfig };
+        // Override with service-specific config fields
+        if (svc) {
+          for (const key of allConfigKeys) {
+            if (svc[key]) cfg[key] = svc[key];
+          }
+          // Override with service-specific auth
+          if (svc.authentication_configuration) {
+            for (const [key, value] of Object.entries(svc.authentication_configuration)) {
+              if (typeof value === "string") cfg[key] = value;
+            }
           }
         }
         return cfg;
       };
 
-      const completionConfigKeys = ["base_url", "azure_deployment", "region_name", "project", "location", "endpoint_name", "endpoint_url"];
-      const embeddingConfigKeys = ["base_url", "azure_deployment", "region_name"];
-
-      if (!allSameProvider) {
-        // Multi-provider mode - Load from backend
-        setCompletionProvider(completionProv || "openai");
-        setCompletionDefaultModel(llmConfig.completion_service?.llm_model || "");
-        setCompletionConfig(loadServiceConfig(llmConfig.completion_service, completionConfigKeys));
-
-        setEmbeddingProvider(embeddingProv || "openai");
-        setEmbeddingModel(llmConfig.embedding_service?.model_name || "");
-        setEmbeddingConfig(loadServiceConfig(llmConfig.embedding_service, embeddingConfigKeys));
-
-        setMultimodalProvider(multimodalProv || "openai");
-        setMultimodalModelName(llmConfig.multimodal_service?.llm_model || "");
-        setMultimodalConfig(loadServiceConfig(llmConfig.multimodal_service, ["azure_deployment"]));
-      } else {
-        // Single provider mode - Load from backend
-        setSingleProvider(completionProv || "openai");
-        setSingleDefaultModel(llmConfig.completion_service?.llm_model || "");
-        setSingleEmbeddingModel(llmConfig.embedding_service?.model_name || "");
-        setMultimodalModel(llmConfig.multimodal_service?.llm_model || "");
-        // Load config + auth from completion_service (single provider shares auth)
-        const singleCfg = loadServiceConfig(llmConfig.completion_service, completionConfigKeys);
-        // Also load top-level authentication_configuration (used in single-provider mode)
-        if (llmConfig.authentication_configuration) {
-          for (const [key, value] of Object.entries(llmConfig.authentication_configuration)) {
-            if (typeof value === "string" && !singleCfg[key]) singleCfg[key] = value;
-          }
-        }
-        setSingleConfig(singleCfg);
+      // Parse per-graph chatbot config (chatbot_only mode)
+      if (data.global_chat_info) {
+        setGlobalChatInfo(data.global_chat_info);
       }
+      if (data.chatbot_config) {
+        setUseCustomChatbot(true);
+        setChatbotProvider(data.chatbot_config.llm_service?.toLowerCase() || defaultProv);
+        setChatbotModelName(data.chatbot_config.llm_model || "");
+        setChatbotTemperature(String(data.chatbot_config.model_kwargs?.temperature ?? "0"));
+        // Resolve chatbot config: base config + chatbot overrides
+        setChatbotProviderConfig(loadServiceConfigResolved(data.chatbot_config));
+      } else {
+        setUseCustomChatbot(false);
+      }
+
+      const currentDefaultModel = llmConfig.completion_service?.llm_model || "";
+      setCompletionDefaultModel(currentDefaultModel);
+
+      const allSameProvider =
+        completionProv === embeddingProv &&
+        (!multimodalProv || completionProv === multimodalProv) &&
+        (!chatProv || completionProv === chatProv);
+
+      setUseMultipleProviders(!allSameProvider);
+
+      // Load chat_service config for full mode (superadmin)
+      // Chat inherits from base (completion) when not explicitly set
+      if (llmConfig.chat_service) {
+        setUseCustomChatbot(true);
+        setChatbotProvider(chatProv || defaultProv);
+        setChatbotModelName(llmConfig.chat_service.llm_model || "");
+        setChatbotTemperature(String(llmConfig.chat_service.model_kwargs?.temperature ?? "0"));
+        setChatbotProviderConfig(loadServiceConfigResolved(llmConfig.chat_service));
+      } else {
+        setUseCustomChatbot(false);
+        setChatbotProvider(defaultProv);
+        setChatbotModelName("");
+        setChatbotTemperature("0");
+        setChatbotProviderConfig({ ...baseConfig });
+      }
+
+      // Canonical per-service state — both single and multi-provider UIs read these
+      setCompletionProvider(completionProv || "openai");
+      setCompletionDefaultModel(llmConfig.completion_service?.llm_model || "");
+      setCompletionConfig(loadServiceConfigResolved(llmConfig.completion_service));
+
+      setEmbeddingProvider(embeddingProv || completionProv || "openai");
+      setEmbeddingModel(llmConfig.embedding_service?.model_name || "");
+      setEmbeddingConfig(loadServiceConfigResolved(llmConfig.embedding_service));
+
+      setMultimodalProvider(multimodalProv || completionProv || "openai");
+      const mmModel = llmConfig.multimodal_service?.llm_model || "";
+      setMultimodalModelName(mmModel);
+      setMultimodalConfig(loadServiceConfigResolved(llmConfig.multimodal_service));
+      setUseCustomMultimodal(!!mmModel || !!multimodalProv);
     } catch (error: any) {
       console.error("Error fetching config:", error);
       setMessage(`Failed to load configuration: ${error.message}`);
@@ -318,19 +321,20 @@ const LLMConfig = () => {
   };
 
   // Update config when provider changes - CLEAR ALL FIELDS
-  const handleProviderChange = (newProvider: string, target: 'single' | 'completion' | 'embedding' | 'multimodal') => {
-    if (target === 'single') {
-      setSingleProvider(newProvider);
-      setSingleConfig({});
-      // Clear model names when switching provider
-      setSingleDefaultModel("");
-      setSingleEmbeddingModel("");
-      setMultimodalModel("");
-    } else if (target === 'completion') {
+  const handleProviderChange = (newProvider: string, target: 'completion' | 'embedding' | 'multimodal') => {
+    if (target === 'completion') {
       setCompletionProvider(newProvider);
       setCompletionConfig({});
-      // Clear model names when switching provider
       setCompletionDefaultModel("");
+      // In single-provider mode, all services share the same provider
+      if (!useMultipleProviders) {
+        setEmbeddingProvider(newProvider);
+        setEmbeddingConfig({});
+        setEmbeddingModel("");
+        setMultimodalProvider(newProvider);
+        setMultimodalConfig({});
+        setMultimodalModelName("");
+      }
     } else if (target === 'embedding') {
       setEmbeddingProvider(newProvider);
       setEmbeddingConfig({});
@@ -371,6 +375,103 @@ const LLMConfig = () => {
     });
     
     return serviceConfig;
+  };
+
+  /**
+   * Build the candidate LLM config payload.
+   * Used by both test-connection and save — same structure, single source of truth.
+   * Inherited services (multimodal, chatbot) are set to null when not customized.
+   */
+  const buildLLMConfigPayload = (): any => {
+    let llmConfigData: any;
+
+    if (useMultipleProviders) {
+      const completionServiceConfig: any = {
+        llm_service: completionProvider,
+        llm_model: completionDefaultModel,
+        authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
+        model_kwargs: { temperature: 0 },
+        prompt_path: `./common/prompts/${getPromptPath(completionProvider)}/`,
+        ...buildServiceConfig(completionProvider, completionConfig)
+      };
+
+      llmConfigData = {
+        graphname: selectedGraph || undefined,
+        completion_service: completionServiceConfig,
+        embedding_service: {
+          embedding_model_service: embeddingProvider,
+          model_name: embeddingModel,
+          authentication_configuration: buildAuthConfig(embeddingProvider, embeddingConfig),
+          ...buildServiceConfig(embeddingProvider, embeddingConfig)
+        },
+      };
+
+      if (useCustomMultimodal && multimodalModelName) {
+        llmConfigData.multimodal_service = {
+          llm_service: multimodalProvider,
+          llm_model: multimodalModelName,
+          authentication_configuration: buildAuthConfig(multimodalProvider, multimodalConfig),
+          model_kwargs: { temperature: 0 },
+          ...buildServiceConfig(multimodalProvider, multimodalConfig)
+        };
+      } else {
+        llmConfigData.multimodal_service = null;
+      }
+
+      if (useCustomChatbot) {
+        llmConfigData.chat_service = {
+          llm_service: chatbotProvider,
+          llm_model: chatbotModelName,
+          authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
+          model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
+          ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
+        };
+      } else {
+        llmConfigData.chat_service = null;
+      }
+    } else {
+      const completionServiceConfig: any = {
+        llm_service: completionProvider,
+        llm_model: completionDefaultModel,
+        model_kwargs: { temperature: 0 },
+        prompt_path: `./common/prompts/${getPromptPath(completionProvider)}/`,
+        ...buildServiceConfig(completionProvider, completionConfig)
+      };
+
+      llmConfigData = {
+        graphname: selectedGraph || undefined,
+        authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
+        completion_service: completionServiceConfig,
+        embedding_service: {
+          embedding_model_service: completionProvider,
+          model_name: embeddingModel,
+        },
+      };
+
+      if (useCustomMultimodal && multimodalModelName.trim()) {
+        llmConfigData.multimodal_service = {
+          llm_model: multimodalModelName,
+        };
+      } else {
+        llmConfigData.multimodal_service = null;
+      }
+
+      if (useCustomChatbot) {
+        const chatTemp = parseFloat(chatbotTemperature) || 0;
+        llmConfigData.chat_service = {
+          ...(chatbotModelName.trim() ? { llm_model: chatbotModelName } : {}),
+          model_kwargs: { temperature: chatTemp },
+        };
+      } else {
+        llmConfigData.chat_service = null;
+      }
+    }
+
+    if (configScope === "graph") {
+      llmConfigData.scope = "graph";
+    }
+
+    return llmConfigData;
   };
 
   const handleSave = async () => {
@@ -420,85 +521,7 @@ const LLMConfig = () => {
         return;
       }
 
-      if (useMultipleProviders) {
-        const completionServiceConfig: any = {
-          llm_service: completionProvider,
-          llm_model: completionDefaultModel,
-          authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
-          model_kwargs: { temperature: 0 },
-          prompt_path: `./common/prompts/${getPromptPath(completionProvider)}/`,
-          ...buildServiceConfig(completionProvider, completionConfig)
-        };
-        
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          completion_service: completionServiceConfig,
-          embedding_service: {
-            embedding_model_service: embeddingProvider,
-            model_name: embeddingModel,
-            authentication_configuration: buildAuthConfig(embeddingProvider, embeddingConfig),
-            ...buildServiceConfig(embeddingProvider, embeddingConfig)
-          },
-          multimodal_service: {
-            llm_service: multimodalProvider,
-            llm_model: multimodalModelName,
-            authentication_configuration: buildAuthConfig(multimodalProvider, multimodalConfig),
-            model_kwargs: { temperature: 0 },
-            ...buildServiceConfig(multimodalProvider, multimodalConfig)
-          },
-        };
-
-        // Save chat_service if not inheriting from completion service
-        if (useCustomChatbot) {
-          llmConfigData.chat_service = {
-            llm_service: chatbotProvider,
-            llm_model: chatbotModelName,
-            authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
-            model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
-            ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
-          };
-        } else {
-          llmConfigData.chat_service = null;
-        }
-      } else {
-        const completionServiceConfig: any = {
-          llm_service: singleProvider,
-          llm_model: singleDefaultModel,
-          model_kwargs: { temperature: 0 },
-          prompt_path: `./common/prompts/${getPromptPath(singleProvider)}/`,
-          ...buildServiceConfig(singleProvider, singleConfig)
-        };
-        
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          authentication_configuration: buildAuthConfig(singleProvider, singleConfig),
-          completion_service: completionServiceConfig,
-          embedding_service: {
-            embedding_model_service: singleProvider,
-            model_name: singleEmbeddingModel,
-          },
-          multimodal_service: {
-            llm_service: singleProvider,
-            llm_model: multimodalModel,
-            model_kwargs: { temperature: 0 },
-            ...buildServiceConfig(singleProvider, singleConfig)
-          },
-        };
-
-        // Save chat_service with just the model name (same provider as completion)
-        if (chatbotModelName.trim()) {
-          llmConfigData.chat_service = {
-            llm_model: chatbotModelName,
-          };
-        } else {
-          llmConfigData.chat_service = null;
-        }
-      }
-
-      // Add scope for superadmin per-graph saves
-      if (configScope === "graph") {
-        llmConfigData.scope = "graph";
-      }
+      llmConfigData = buildLLMConfigPayload();
 
       const response = await fetch("/ui/config/llm", {
         method: "POST",
@@ -519,6 +542,9 @@ const LLMConfig = () => {
       setMessageType("success");
       setTestResults(null);
       setConnectionTested(false);
+
+      // Refetch to sync all state with the saved config
+      fetchConfig(configScope === "graph" ? "graph" : "global", selectedGraph || undefined);
     } catch (error: any) {
       console.error("Error saving config:", error);
       setMessage(`❌ Error: ${error.message}`);
@@ -553,112 +579,43 @@ const LLMConfig = () => {
         return null;
       };
 
+      const failValidation = (msg: string) => {
+        setMessage(`❌ ${msg}`);
+        setMessageType("error");
+        setIsTesting(false);
+      };
+
       if (useMultipleProviders) {
         const completionError = validateProvider(completionProvider, completionConfig, "Completion Service");
-        if (completionError) {
-          setMessage(`❌ ${completionError}`);
-          setMessageType("error");
-          setIsTesting(false);
-          return;
-        }
-        
+        if (completionError) { failValidation(completionError); return; }
+        if (!completionDefaultModel.trim()) { failValidation("Model Name is required for Completion Service"); return; }
+
         const embeddingError = validateProvider(embeddingProvider, embeddingConfig, "Embedding Service");
-        if (embeddingError) {
-          setMessage(`❌ ${embeddingError}`);
-          setMessageType("error");
-          setIsTesting(false);
-          return;
+        if (embeddingError) { failValidation(embeddingError); return; }
+        if (!embeddingModel.trim()) { failValidation("Model Name is required for Embedding Service"); return; }
+
+        if (useCustomMultimodal) {
+          const multimodalError = validateProvider(multimodalProvider, multimodalConfig, "Multimodal Service");
+          if (multimodalError) { failValidation(multimodalError); return; }
+          if (!multimodalModelName.trim()) { failValidation("Model Name is required for Multimodal Service"); return; }
         }
 
-        const multimodalError = validateProvider(multimodalProvider, multimodalConfig, "Multimodal Service");
-        if (multimodalError) {
-          setMessage(`❌ ${multimodalError}`);
-          setMessageType("error");
-          setIsTesting(false);
-          return;
+        if (useCustomChatbot) {
+          const chatbotError = validateProvider(chatbotProvider, chatbotProviderConfig, "Chatbot Service");
+          if (chatbotError) { failValidation(chatbotError); return; }
+          if (!chatbotModelName.trim()) { failValidation("Model Name is required for Chatbot Service"); return; }
         }
       } else {
-        const singleError = validateProvider(singleProvider, singleConfig, singleProvider);
-        if (singleError) {
-          setMessage(`❌ ${singleError}`);
-          setMessageType("error");
-          setIsTesting(false);
-          return;
-        }
+        const singleError = validateProvider(completionProvider, completionConfig, completionProvider);
+        if (singleError) { failValidation(singleError); return; }
+        if (!completionDefaultModel.trim()) { failValidation("Completion Model is required"); return; }
+        if (!embeddingModel.trim()) { failValidation("Embedding Model is required"); return; }
+        if (useCustomMultimodal && !multimodalModelName.trim()) { failValidation("Multimodal Model is required when not inheriting from completion"); return; }
+        if (useCustomChatbot && !chatbotModelName.trim()) { failValidation("Chatbot Model is required when not inheriting from completion"); return; }
       }
       
       const creds = sessionStorage.getItem("creds");
-      let llmConfigData: any;
-
-      if (useMultipleProviders) {
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          completion_service: {
-            llm_service: completionProvider,
-            llm_model: completionDefaultModel,
-            authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
-            ...buildServiceConfig(completionProvider, completionConfig)
-          },
-          embedding_service: {
-            embedding_model_service: embeddingProvider,
-            model_name: embeddingModel,
-            authentication_configuration: buildAuthConfig(embeddingProvider, embeddingConfig),
-            ...buildServiceConfig(embeddingProvider, embeddingConfig)
-          },
-        };
-        
-        llmConfigData.multimodal_service = {
-          llm_service: multimodalProvider,
-          llm_model: multimodalModelName,
-          authentication_configuration: buildAuthConfig(multimodalProvider, multimodalConfig),
-          ...buildServiceConfig(multimodalProvider, multimodalConfig)
-        };
-      } else {
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          authentication_configuration: buildAuthConfig(singleProvider, singleConfig),
-          completion_service: {
-            llm_service: singleProvider,
-            llm_model: singleDefaultModel,
-            ...buildServiceConfig(singleProvider, singleConfig)
-          },
-          embedding_service: {
-            embedding_model_service: singleProvider,
-            model_name: singleEmbeddingModel,
-          },
-          multimodal_service: {
-            llm_service: singleProvider,
-            llm_model: multimodalModel,
-            ...buildServiceConfig(singleProvider, singleConfig)
-          },
-        };
-        
-      }
-
-      // Add chat_service to test config if custom chatbot is configured
-      // Add chat_service to test config if not inheriting
-      if (useCustomChatbot) {
-        if (useMultipleProviders) {
-          const chatbotError = validateProvider(chatbotProvider, chatbotProviderConfig, "Chatbot Service");
-          if (chatbotError) {
-            setMessage(`❌ ${chatbotError}`);
-            setMessageType("error");
-            setIsTesting(false);
-            return;
-          }
-          llmConfigData.chat_service = {
-            llm_service: chatbotProvider,
-            llm_model: chatbotModelName,
-            authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
-            model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
-            ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
-          };
-        } else if (chatbotModelName.trim()) {
-          llmConfigData.chat_service = {
-            llm_model: chatbotModelName,
-          };
-        }
-      }
+      const llmConfigData = buildLLMConfigPayload();
 
       const response = await fetch("/ui/config/llm/test", {
         method: "POST",
@@ -919,16 +876,9 @@ const LLMConfig = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="azure">Azure OpenAI</SelectItem>
-                        <SelectItem value="genai">Google GenAI (Gemini)</SelectItem>
-                        <SelectItem value="vertexai">Google Vertex AI</SelectItem>
-                        <SelectItem value="bedrock">AWS Bedrock</SelectItem>
-                        <SelectItem value="groq">Groq</SelectItem>
-                        <SelectItem value="ollama">Ollama</SelectItem>
-                        <SelectItem value="sagemaker">AWS SageMaker</SelectItem>
-                        <SelectItem value="huggingface">HuggingFace</SelectItem>
-                        <SelectItem value="watsonx">IBM WatsonX</SelectItem>
+                        {LLM_PROVIDERS.map((p) => (
+                          <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1102,6 +1052,13 @@ const LLMConfig = () => {
                 checked={useMultipleProviders}
                 onChange={(e) => {
                   setUseMultipleProviders(e.target.checked);
+                  if (!e.target.checked) {
+                    // Switching to single-provider: unify providers/configs to completion
+                    setEmbeddingProvider(completionProvider);
+                    setEmbeddingConfig({ ...completionConfig });
+                    setMultimodalProvider(completionProvider);
+                    setMultimodalConfig({ ...completionConfig });
+                  }
                   clearTestResults();
                 }}
                 className="h-4 w-4 rounded border-gray-300 dark:border-[#3D3D3D]"
@@ -1132,37 +1089,34 @@ const LLMConfig = () => {
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                         Provider
                       </label>
-                      <Select value={singleProvider} onValueChange={(value) => handleProviderChange(value, 'single')}>
+                      <Select value={completionProvider} onValueChange={(value) => handleProviderChange(value, 'completion')}>
                         <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
                           <SelectValue placeholder="Select provider" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="openai">OpenAI</SelectItem>
-                          <SelectItem value="azure">Azure OpenAI</SelectItem>
-                          <SelectItem value="genai">Google GenAI (Gemini)</SelectItem>
-                          <SelectItem value="vertexai">Google Vertex AI</SelectItem>
-                          <SelectItem value="bedrock">AWS Bedrock</SelectItem>
-                          <SelectItem value="ollama">Ollama</SelectItem>
+                          {LLM_PROVIDERS.map((p) => (
+                            <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Only providers supporting both completion and embedding services are shown
+                        This provider will be used for all services (completion, embedding, multimodal)
                       </p>
                     </div>
 
-                    {renderProviderFields(singleProvider, singleConfig, setSingleConfig)}
+                    {renderProviderFields(completionProvider, completionConfig, setCompletionConfig)}
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                        Completion Model
+                        Completion Model <span className="text-red-500">*</span>
                       </label>
                       <Input
                         type="text"
                         className="dark:border-[#3D3D3D] dark:bg-background"
-                        placeholder={getModelPlaceholder(singleProvider, 'llm')}
-                        value={singleDefaultModel}
+                        placeholder={getModelPlaceholder(completionProvider, 'llm')}
+                        value={completionDefaultModel}
                         onChange={(e) => {
-                          setSingleDefaultModel(e.target.value);
+                          setCompletionDefaultModel(e.target.value);
                           clearTestResults();
                         }}
                       />
@@ -1170,6 +1124,8 @@ const LLMConfig = () => {
                         Used by ECC for entity extraction and community summarization during document ingestion
                       </p>
                     </div>
+
+                    <hr className="border-gray-200 dark:border-[#3D3D3D]" />
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
@@ -1183,9 +1139,6 @@ const LLMConfig = () => {
                           checked={!useCustomChatbot}
                           onChange={(e) => {
                             setUseCustomChatbot(!e.target.checked);
-                            if (e.target.checked) {
-                              setChatbotModelName("");
-                            }
                             clearTestResults();
                           }}
                         />
@@ -1197,7 +1150,7 @@ const LLMConfig = () => {
                         <Input
                           type="text"
                           className="dark:border-[#3D3D3D] dark:bg-background"
-                          placeholder={getModelPlaceholder(singleProvider, 'llm')}
+                          placeholder={getModelPlaceholder(completionProvider, 'llm')}
                           value={chatbotModelName}
                           onChange={(e) => {
                             setChatbotModelName(e.target.value);
@@ -1212,39 +1165,84 @@ const LLMConfig = () => {
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                        Embedding Model
+                        Chatbot Temperature
                       </label>
                       <Input
-                        type="text"
+                        type="number"
                         className="dark:border-[#3D3D3D] dark:bg-background"
-                        placeholder={getModelPlaceholder(singleProvider, 'embedding')}
-                        value={singleEmbeddingModel}
-                        onChange={(e) => {
-                          setSingleEmbeddingModel(e.target.value);
-                          clearTestResults();
-                        }}
+                        placeholder="0"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        value={chatbotTemperature}
+                        onChange={(e) => { setChatbotTemperature(e.target.value); clearTestResults(); }}
                       />
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Used for generating vector embeddings of document chunks
+                        Controls randomness of chatbot responses (0 = deterministic, higher = more creative)
                       </p>
                     </div>
+
+                    <hr className="border-gray-200 dark:border-[#3D3D3D]" />
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                         Multimodal Model
                       </label>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <input
+                          type="checkbox"
+                          id="inheritMultimodalModel"
+                          className="rounded border-gray-300 dark:border-[#3D3D3D]"
+                          checked={!useCustomMultimodal}
+                          onChange={(e) => {
+                            setUseCustomMultimodal(!e.target.checked);
+                            clearTestResults();
+                          }}
+                        />
+                        <label htmlFor="inheritMultimodalModel" className="text-sm text-black dark:text-white">
+                          Use same model as completion service
+                        </label>
+                      </div>
+                      {!useCustomMultimodal && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">
+                          Ensure your completion model supports vision input. Use "Test Connection" to verify.
+                        </p>
+                      )}
+                      {useCustomMultimodal && (
+                        <Input
+                          type="text"
+                          className="dark:border-[#3D3D3D] dark:bg-background"
+                          placeholder={getModelPlaceholder(completionProvider, 'multimodal')}
+                          value={multimodalModelName}
+                          onChange={(e) => {
+                            setMultimodalModelName(e.target.value);
+                            clearTestResults();
+                          }}
+                        />
+                      )}
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Used for processing images and multimodal content
+                      </p>
+                    </div>
+
+                    <hr className="border-gray-200 dark:border-[#3D3D3D]" />
+
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                        Embedding Model <span className="text-red-500">*</span>
+                      </label>
                       <Input
                         type="text"
                         className="dark:border-[#3D3D3D] dark:bg-background"
-                        placeholder={getModelPlaceholder(singleProvider, 'multimodal')}
-                        value={multimodalModel}
+                        placeholder={getModelPlaceholder(completionProvider, 'embedding')}
+                        value={embeddingModel}
                         onChange={(e) => {
-                          setMultimodalModel(e.target.value);
+                          setEmbeddingModel(e.target.value);
                           clearTestResults();
                         }}
                       />
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Used for processing images and multimodal content
+                        Used for generating vector embeddings of document chunks
                       </p>
                     </div>
                   </div>
@@ -1275,16 +1273,9 @@ const LLMConfig = () => {
                         <SelectValue placeholder="Select provider" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="azure">Azure OpenAI</SelectItem>
-                        <SelectItem value="genai">Google GenAI (Gemini)</SelectItem>
-                        <SelectItem value="vertexai">Google Vertex AI</SelectItem>
-                        <SelectItem value="bedrock">AWS Bedrock</SelectItem>
-                        <SelectItem value="sagemaker">AWS SageMaker</SelectItem>
-                        <SelectItem value="groq">Groq</SelectItem>
-                        <SelectItem value="ollama">Ollama</SelectItem>
-                        <SelectItem value="huggingface">HuggingFace</SelectItem>
-                        <SelectItem value="watsonx">IBM WatsonX</SelectItem>
+                        {LLM_PROVIDERS.map((p) => (
+                          <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1293,7 +1284,7 @@ const LLMConfig = () => {
 
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Completion Model
+                      Model Name <span className="text-red-500">*</span>
                     </label>
                     <Input
                       type="text"
@@ -1330,10 +1321,6 @@ const LLMConfig = () => {
                       checked={!useCustomChatbot}
                       onChange={(e) => {
                         setUseCustomChatbot(!e.target.checked);
-                        if (e.target.checked) {
-                          setChatbotModelName("");
-                          setChatbotProviderConfig({});
-                        }
                         clearTestResults();
                       }}
                     />
@@ -1361,16 +1348,9 @@ const LLMConfig = () => {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="openai">OpenAI</SelectItem>
-                            <SelectItem value="azure">Azure OpenAI</SelectItem>
-                            <SelectItem value="genai">Google GenAI (Gemini)</SelectItem>
-                            <SelectItem value="vertexai">Google Vertex AI</SelectItem>
-                            <SelectItem value="bedrock">AWS Bedrock</SelectItem>
-                            <SelectItem value="groq">Groq</SelectItem>
-                            <SelectItem value="ollama">Ollama</SelectItem>
-                            <SelectItem value="sagemaker">AWS SageMaker</SelectItem>
-                            <SelectItem value="huggingface">HuggingFace</SelectItem>
-                            <SelectItem value="watsonx">IBM WatsonX</SelectItem>
+                            {LLM_PROVIDERS.map((p) => (
+                              <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -1410,6 +1390,77 @@ const LLMConfig = () => {
                 </div>
               </div>
 
+              {/* Multimodal Service Provider */}
+              <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
+                <h2 className="text-lg font-semibold mb-4 text-black dark:text-white">
+                  Multimodal Service
+                </h2>
+                <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-4">
+                  Configure the provider for processing images and multimodal content (vision tasks).
+                </p>
+
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="inheritMultimodalService"
+                      className="rounded border-gray-300 dark:border-[#3D3D3D]"
+                      checked={!useCustomMultimodal}
+                      onChange={(e) => {
+                        setUseCustomMultimodal(!e.target.checked);
+                        clearTestResults();
+                      }}
+                    />
+                    <label htmlFor="inheritMultimodalService" className="text-sm font-medium text-black dark:text-white">
+                      Inherit from completion service
+                    </label>
+                  </div>
+                  {!useCustomMultimodal && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Ensure your completion model supports vision input. Use "Test Connection" to verify.
+                    </p>
+                  )}
+
+                  {useCustomMultimodal && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                          Provider
+                        </label>
+                        <Select value={multimodalProvider} onValueChange={(value) => handleProviderChange(value, 'multimodal')}>
+                          <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
+                            <SelectValue placeholder="Select provider" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {LLM_PROVIDERS.map((p) => (
+                              <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {renderProviderFields(multimodalProvider, multimodalConfig, setMultimodalConfig)}
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2 text-black dark:text-white">
+                          Model Name <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          type="text"
+                          className="dark:border-[#3D3D3D] dark:bg-background"
+                          placeholder={getModelPlaceholder(multimodalProvider, 'multimodal')}
+                          value={multimodalModelName}
+                          onChange={(e) => {
+                            setMultimodalModelName(e.target.value);
+                            clearTestResults();
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Embedding Service Provider */}
               <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
                 <h2 className="text-lg font-semibold mb-4 text-black dark:text-white">
@@ -1429,12 +1480,9 @@ const LLMConfig = () => {
                         <SelectValue placeholder="Select provider" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="azure">Azure OpenAI</SelectItem>
-                        <SelectItem value="genai">Google GenAI</SelectItem>
-                        <SelectItem value="vertexai">Google Vertex AI</SelectItem>
-                        <SelectItem value="bedrock">AWS Bedrock</SelectItem>
-                        <SelectItem value="ollama">Ollama</SelectItem>
+                        {LLM_PROVIDERS.map((p) => (
+                          <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1443,7 +1491,7 @@ const LLMConfig = () => {
 
                   <div>
                     <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Embedding Model
+                      Model Name <span className="text-red-500">*</span>
                     </label>
                     <Input
                       type="text"
@@ -1452,56 +1500,6 @@ const LLMConfig = () => {
                       value={embeddingModel}
                       onChange={(e) => {
                         setEmbeddingModel(e.target.value);
-                        clearTestResults();
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Multimodal Service Provider */}
-              <div className="bg-white dark:bg-shadeA border border-gray-300 dark:border-[#3D3D3D] rounded-lg p-6">
-                <h2 className="text-lg font-semibold mb-4 text-black dark:text-white">
-                  Multimodal Service
-                </h2>
-                <p className="text-sm text-gray-600 dark:text-[#D9D9D9] mb-6">
-                  Configure the provider for processing images and multimodal content (vision tasks).
-                </p>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Provider
-                    </label>
-                    <Select value={multimodalProvider} onValueChange={(value) => handleProviderChange(value, 'multimodal')}>
-                      <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
-                        <SelectValue placeholder="Select provider" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="azure">Azure OpenAI</SelectItem>
-                        <SelectItem value="genai">Google GenAI (Gemini)</SelectItem>
-                        <SelectItem value="vertexai">Google Vertex AI</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Only OpenAI, Azure, GenAI, VertexAI support vision
-                    </p>
-                  </div>
-
-                  {renderProviderFields(multimodalProvider, multimodalConfig, setMultimodalConfig)}
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-black dark:text-white">
-                      Model Name
-                    </label>
-                    <Input
-                      type="text"
-                      className="dark:border-[#3D3D3D] dark:bg-background"
-                      placeholder={getModelPlaceholder(multimodalProvider, 'multimodal')}
-                      value={multimodalModelName}
-                      onChange={(e) => {
-                        setMultimodalModelName(e.target.value);
                         clearTestResults();
                       }}
                     />
@@ -1535,7 +1533,7 @@ const LLMConfig = () => {
                     ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
                     : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
                 }`}>
-                  <strong>Default LLM Model:</strong> {testResults.completion.message}
+                  <strong>Completion Model:</strong> {testResults.completion.message}
                 </div>
               )}
               
@@ -1545,20 +1543,10 @@ const LLMConfig = () => {
                     ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
                     : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
                 }`}>
-                  <strong>Chatbot LLM Model:</strong> {testResults.chatbot.message}
+                  <strong>Chatbot Model:</strong> {testResults.chatbot.message}
                 </div>
               )}
-              
-              {testResults.embedding && testResults.embedding.status !== "not_tested" && (
-                <div className={`p-3 rounded-lg text-sm ${
-                  testResults.embedding.status === "success"
-                    ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
-                    : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
-                }`}>
-                  <strong>Embedding Model:</strong> {testResults.embedding.message}
-                </div>
-              )}
-              
+
               {testResults.multimodal && testResults.multimodal.status !== "not_tested" && (
                 <div className={`p-3 rounded-lg text-sm ${
                   testResults.multimodal.status === "success"
@@ -1566,6 +1554,16 @@ const LLMConfig = () => {
                     : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
                 }`}>
                   <strong>Multimodal Model:</strong> {testResults.multimodal.message}
+                </div>
+              )}
+
+              {testResults.embedding && testResults.embedding.status !== "not_tested" && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  testResults.embedding.status === "success"
+                    ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
+                    : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
+                }`}>
+                  <strong>Embedding Model:</strong> {testResults.embedding.message}
                 </div>
               )}
             </div>

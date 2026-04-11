@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Request, Response, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from common.config import llm_config, service_status
+from common.config import get_completion_config, service_status
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -13,7 +13,7 @@ router = APIRouter()
 
 @router.get("/")
 def read_root():
-    return {"config": llm_config["model_name"]}
+    return {"config": get_completion_config().get("llm_model", "unknown")}
 
 
 @router.get("/health")

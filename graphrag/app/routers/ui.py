@@ -51,7 +51,7 @@ from fastapi.security.http import HTTPBase
 from pyTigerGraph import TigerGraphConnection
 from tools.validation_utils import MapQuestionToSchemaException
 
-from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status, SERVER_CONFIG, get_chat_config, validate_graphname
+from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status, get_chat_config, get_completion_config, get_embedding_config, get_multimodal_config, validate_graphname, get_llm_service, resolve_llm_services
 from common.db.connections import get_db_connection_pwd_manual
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
@@ -179,14 +179,6 @@ def _require_roles(credentials: HTTPBasicCredentials, allowed_roles: set[str]) -
     if not any(role in allowed_roles for role in roles):
         raise HTTPException(status_code=403, detail="Insufficient permissions.")
     return roles
-
-
-def _create_llm_service(provider: str, config: dict):
-    """Instantiate an LLM provider, returning None for unsupported providers."""
-    try:
-        return get_llm_service(config)
-    except Exception:
-        return None
 
 
 def _create_embedding_service(provider: str, config: dict):
@@ -1118,7 +1110,7 @@ async def chat(
             status_code=503,
             detail=service_status["embedding_store"]["error"]
         )
-    
+
     await websocket.accept()
 
     # AUTH with proper error handling and timeout
@@ -1817,7 +1809,7 @@ async def save_llm_config(
     Save LLM configuration and reload services.
     """
     try:
-        graphname = llm_config_data.pop("graphname", None)
+        graphname = llm_config_data.get("graphname")
         llm_access_mode = _resolve_llm_config_access(credentials, graphname)
         graphs = auth(credentials.username, credentials.password)[0]
         auth_header = "Basic " + base64.b64encode(
@@ -1837,10 +1829,7 @@ async def save_llm_config(
             # Save and reload in graphrag service
             from common.config import reload_llm_config
 
-            scope = llm_config_data.pop("scope", None)
-
-            # Substitute masked sentinel values with real stored values
-            _unmask_auth(llm_config_data, llm_config)
+            candidate, graphname, scope = _prepare_llm_config(llm_config_data)
 
             if llm_access_mode == "chatbot_only" or (llm_access_mode == "full" and scope == "graph"):
                 # Per-graph save: write only overrides to graph config file.
@@ -1864,20 +1853,34 @@ async def save_llm_config(
 
                     graph_llm = graph_server_config.setdefault("llm_config", {})
 
-                    # Also unmask against the graph's own stored config
-                    _unmask_auth(llm_config_data, graph_llm)
-
                     if llm_access_mode == "chatbot_only":
                         # Graph admin: only chat_service
                         svc_keys = ["chat_service"]
                     else:
                         # Superadmin per-graph: all services
-                        svc_keys = ["completion_service", "chat_service", "multimodal_service"]
+                        svc_keys = ["completion_service", "embedding_service", "chat_service", "multimodal_service"]
+
+                    # Resolve both candidate and global to get fully expanded configs,
+                    # then store only the delta as the graph override.
+                    resolved_candidate = resolve_llm_services(candidate)
+                    resolved_global = resolve_llm_services(llm_config)
 
                     for svc_key in svc_keys:
-                        incoming = llm_config_data.get(svc_key)
+                        incoming = candidate.get(svc_key)
                         if incoming:
-                            graph_llm[svc_key] = incoming
+                            rc = resolved_candidate.get(svc_key, {})
+                            rg = resolved_global.get(svc_key, {})
+                            # Compute delta: keys whose resolved values differ
+                            delta = {}
+                            for k, v in rc.items():
+                                if k == "authentication_configuration":
+                                    continue
+                                if rg.get(k) != v:
+                                    delta[k] = v
+                            if delta:
+                                graph_llm[svc_key] = delta
+                            else:
+                                graph_llm.pop(svc_key, None)
                         else:
                             # Revert to inherit: remove override
                             graph_llm.pop(svc_key, None)
@@ -1890,7 +1893,7 @@ async def save_llm_config(
                 result = {"status": "success"}
             else:
                 # Superadmin global save
-                result = reload_llm_config(llm_config_data)
+                result = reload_llm_config(candidate)
 
             if result["status"] != "success":
                 raise HTTPException(status_code=500, detail=result["message"])
@@ -1917,247 +1920,167 @@ async def test_llm_config(
     Test LLM configuration by making actual API calls to the provider.
     Tests completion, embedding, and multimodal services.
     """
+    test_results = {
+        "completion": {"status": "not_tested", "message": ""},
+        "chatbot": {"status": "not_tested", "message": ""},
+        "embedding": {"status": "not_tested", "message": ""},
+        "multimodal": {"status": "not_tested", "message": ""}
+    }
     try:
-        graphname = llm_test_config.pop("graphname", None)
+        graphname = llm_test_config.get("graphname")
         llm_access_mode = _resolve_llm_config_access(credentials, graphname)
-        # Substitute masked sentinel values with real stored values
-        _unmask_auth(llm_test_config, llm_config)
-        from common import config as cfg
 
-        test_results = {
-            "completion": {"status": "not_tested", "message": ""},
-            "chatbot": {"status": "not_tested", "message": ""},
-            "embedding": {"status": "not_tested", "message": ""},
-            "multimodal": {"status": "not_tested", "message": ""}
-        }
+        # Build candidate config — same preparation as save
+        candidate, graphname, scope = _prepare_llm_config(llm_test_config)
+        # Resolve partial service configs into full configs for testing
+        # (same resolution logic used when parsing config from disk)
+        test_configs = resolve_llm_services(candidate)
 
         # Graph admins (chatbot_only) can only test chat_service
         if llm_access_mode == "chatbot_only":
-            if "chat_service" in llm_test_config:
+            if "chat_service" in candidate:
                 try:
-                    test_chat_config = llm_test_config["chat_service"].copy()
-                    provider = test_chat_config.get("llm_service", "openai").lower()
-                    model = test_chat_config.get("llm_model", "gpt-4o-mini")
-
-                    if "authentication_configuration" not in test_chat_config:
-                        test_chat_config["authentication_configuration"] = {}
-
-                    if hasattr(cfg, 'completion_config') and cfg.completion_config:
-                        for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
-                            if key not in test_chat_config and key in cfg.completion_config:
-                                test_chat_config[key] = cfg.completion_config[key]
-
-                    if "model_kwargs" not in test_chat_config:
-                        test_chat_config["model_kwargs"] = {"temperature": 0}
-                    if "prompt_path" not in test_chat_config:
-                        test_chat_config["prompt_path"] = "common/prompts/openai_gpt4/"
-
-                    llm_service = _create_llm_service(provider, test_chat_config)
-                    if llm_service:
-                        response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
-                        if not response or not str(response).strip():
-                            raise ValueError("LLM returned an empty response")
-                        test_results["chatbot"]["status"] = "success"
-                        test_results["chatbot"]["message"] = f"Chatbot LLM ({model}) connected successfully"
-                    else:
-                        test_results["chatbot"]["status"] = "error"
-                        test_results["chatbot"]["message"] = f"Provider '{provider}' not supported"
+                    test_config = test_configs["chat_service"]
+                    model = test_config.get("llm_model", "")
+                    llm_service = get_llm_service(test_config)
+                    response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
+                    if not response or not str(response).strip():
+                        raise ValueError("LLM returned an empty response")
+                    test_results["chatbot"]["status"] = "success"
+                    test_results["chatbot"]["message"] = f"Chatbot LLM ({model}) connected successfully"
                 except Exception as e:
                     test_results["chatbot"]["status"] = "error"
                     test_results["chatbot"]["message"] = f"Chatbot test failed: {str(e)}"
                     logger.error(f"Chatbot test failed for graph {graphname}: {str(e)}")
 
-            overall_status = "success" if test_results["chatbot"]["status"] == "success" else "error"
+            chatbot_status = test_results["chatbot"]["status"]
+            overall_status = "success" if chatbot_status == "success" else ("error" if chatbot_status == "error" else "not_tested")
             return {
                 "status": overall_status,
                 "message": "Connection test completed",
                 "results": {"chatbot": test_results["chatbot"]}
             }
 
-        # Full access: test all services
-        # Test Completion Service (Default LLM Model)
-        if "completion_service" in llm_test_config or "llm_service" in llm_test_config:
+        # Full access: test all services from the resolved test configs
+
+        # Test Completion Service
+        if "completion_service" in test_configs:
             try:
-                if "completion_service" in llm_test_config:
-                    test_completion_config = llm_test_config["completion_service"].copy()
-                    provider = test_completion_config.get("llm_service", "openai").lower()
-                    model = test_completion_config.get("llm_model", "gpt-4o-mini")
-                else:
-                    test_completion_config = {
-                        "llm_service": llm_test_config.get("llm_service", "openai"),
-                        "llm_model": llm_test_config.get("llm_model", "gpt-4o-mini"),
-                        "authentication_configuration": llm_test_config.get("authentication_configuration", {})
-                    }
-                    provider = test_completion_config["llm_service"].lower()
-                    model = test_completion_config["llm_model"]
-                
-                # Ensure authentication_configuration exists (may be at top level in single-provider mode)
-                if "authentication_configuration" not in test_completion_config:
-                    test_completion_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
-                
-                # Merge with existing config to get model_kwargs and prompt_path
-                if hasattr(cfg, 'completion_config') and cfg.completion_config:
-                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
-                        if key not in test_completion_config and key in cfg.completion_config:
-                            test_completion_config[key] = cfg.completion_config[key]
-                
-                # Ensure required fields exist
-                if "model_kwargs" not in test_completion_config:
-                    test_completion_config["model_kwargs"] = {"temperature": 0}
-                if "prompt_path" not in test_completion_config:
-                    test_completion_config["prompt_path"] = "common/prompts/openai_gpt4/"
-                
-                llm_service = _create_llm_service(provider, test_completion_config)
-                
-                if llm_service:
-                    response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
-                    if not response or not str(response).strip():
-                        raise ValueError("LLM returned an empty response")
-                    test_results["completion"]["status"] = "success"
-                    test_results["completion"]["message"] = f"✅ Default LLM model ({model}) connected successfully"
-                else:
-                    test_results["completion"]["status"] = "error"
-                    test_results["completion"]["message"] = f"Provider '{provider}' not supported for completion"
-                    
+                test_config = test_configs["completion_service"]
+                model = test_config.get("llm_model", "")
+                llm_service = get_llm_service(test_config)
+                response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
+                if not response or not str(response).strip():
+                    raise ValueError("LLM returned an empty response")
+                test_results["completion"]["status"] = "success"
+                test_results["completion"]["message"] = f"Completion model ({model}) connected successfully"
             except Exception as e:
                 test_results["completion"]["status"] = "error"
-                test_results["completion"]["message"] = f"❌ Completion test failed: {str(e)}"
+                test_results["completion"]["message"] = f"Completion test failed: {str(e)}"
                 logger.error(f"Completion test failed: {str(e)}")
-        
-        # Test Chatbot Service (if different model is provided)
-        if "chatbot_service" in llm_test_config:
+
+        # Test Chatbot Service (only if custom config provided in candidate;
+        # when inheriting from completion, the completion test already covers it)
+        if "chat_service" in candidate:
             try:
-                test_chatbot_config = llm_test_config["chatbot_service"].copy()
-                provider = test_chatbot_config.get("llm_service", "openai").lower()
-                model = test_chatbot_config.get("llm_model", "gpt-4o-mini")
-                
-                # Ensure authentication_configuration exists
-                if "authentication_configuration" not in test_chatbot_config:
-                    test_chatbot_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
-                
-                # Merge with existing config to get model_kwargs and prompt_path
-                if hasattr(cfg, 'completion_config') and cfg.completion_config:
-                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
-                        if key not in test_chatbot_config and key in cfg.completion_config:
-                            test_chatbot_config[key] = cfg.completion_config[key]
-                
-                # Ensure required fields exist
-                if "model_kwargs" not in test_chatbot_config:
-                    test_chatbot_config["model_kwargs"] = {"temperature": 0}
-                if "prompt_path" not in test_chatbot_config:
-                    test_chatbot_config["prompt_path"] = "common/prompts/openai_gpt4/"
-                
-                llm_service = _create_llm_service(provider, test_chatbot_config)
-                
-                if llm_service:
-                    response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
-                    if not response or not str(response).strip():
-                        raise ValueError("LLM returned an empty response")
-                    test_results["chatbot"]["status"] = "success"
-                    test_results["chatbot"]["message"] = f"✅ Chatbot LLM model ({model}) connected successfully"
-                else:
-                    test_results["chatbot"]["status"] = "error"
-                    test_results["chatbot"]["message"] = f"Provider '{provider}' not supported for chatbot"
-                    
+                test_config = test_configs["chat_service"]
+                model = test_config.get("llm_model", "")
+                llm_service = get_llm_service(test_config)
+                response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
+                if not response or not str(response).strip():
+                    raise ValueError("LLM returned an empty response")
+                test_results["chatbot"]["status"] = "success"
+                test_results["chatbot"]["message"] = f"Chatbot LLM model ({model}) connected successfully"
             except Exception as e:
                 test_results["chatbot"]["status"] = "error"
-                test_results["chatbot"]["message"] = f"❌ Chatbot test failed: {str(e)}"
+                test_results["chatbot"]["message"] = f"Chatbot test failed: {str(e)}"
                 logger.error(f"Chatbot test failed: {str(e)}")
-        
+
         # Test Embedding Service
-        if "embedding_service" in llm_test_config:
+        if "embedding_service" in test_configs:
             try:
-                test_embedding_config = llm_test_config["embedding_service"].copy()
-                provider = test_embedding_config.get("embedding_model_service", "openai").lower()
-                model = test_embedding_config.get("model_name", "text-embedding-3-small")
-                
-                # Ensure authentication_configuration exists
-                if "authentication_configuration" not in test_embedding_config:
-                    test_embedding_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
-                
-                # Merge with existing config
-                if hasattr(cfg, 'embedding_config') and cfg.embedding_config:
-                    for key in ["dimensions", "token_limit"]:
-                        if key not in test_embedding_config and key in cfg.embedding_config:
-                            test_embedding_config[key] = cfg.embedding_config[key]
-                
-                embedding_service_test = _create_embedding_service(provider, test_embedding_config)
-                
-                if embedding_service_test:
-                    # Test with a simple text
-                    embeddings = embedding_service_test.embed_query("test connection")
-                    if embeddings and len(embeddings) > 0:
-                        test_results["embedding"]["status"] = "success"
-                        test_results["embedding"]["message"] = f"✅ Embedding model ({model}) connected successfully"
-                    else:
-                        test_results["embedding"]["status"] = "error"
-                        test_results["embedding"]["message"] = "❌ Embedding returned empty result"
-                else:
-                    test_results["embedding"]["status"] = "error"
-                    test_results["embedding"]["message"] = f"Provider '{provider}' not supported for embeddings"
-                    
+                test_config = test_configs["embedding_service"]
+                provider = test_config.get("embedding_model_service", "openai").lower()
+                model = test_config.get("model_name", "")
+                embedding_service_test = _create_embedding_service(provider, test_config)
+                if not embedding_service_test:
+                    raise ValueError(f"Provider '{provider}' not supported for embeddings")
+                embeddings = embedding_service_test.embed_query("test connection")
+                if not embeddings or len(embeddings) == 0:
+                    raise ValueError("Embedding returned empty result")
+                test_results["embedding"]["status"] = "success"
+                test_results["embedding"]["message"] = f"Embedding model ({model}) connected successfully"
             except Exception as e:
                 test_results["embedding"]["status"] = "error"
-                test_results["embedding"]["message"] = f"❌ Embedding test failed: {str(e)}"
+                test_results["embedding"]["message"] = f"Embedding test failed: {str(e)}"
                 logger.error(f"Embedding test failed: {str(e)}")
-        
-        # Test Multimodal Service
-        if "multimodal_service" in llm_test_config:
+
+        # Test Multimodal Service — verifies the model supports vision
+        # When multimodal_service is absent (inheriting), use completion_service
+        # config — that's what will be used at runtime after save.
+        multimodal_config = test_configs.get("multimodal_service") or test_configs.get("completion_service")
+        if multimodal_config:
+            model = ""
             try:
-                test_multimodal_config = llm_test_config["multimodal_service"].copy()
-                provider = test_multimodal_config.get("llm_service", "openai").lower()
-                model = test_multimodal_config.get("llm_model", "gpt-4o")
-                
-                # Ensure authentication_configuration exists
-                if "authentication_configuration" not in test_multimodal_config:
-                    test_multimodal_config["authentication_configuration"] = llm_test_config.get("authentication_configuration", {})
-                
-                # Merge with existing config to get model_kwargs and prompt_path
-                if hasattr(cfg, 'multimodal_config') and cfg.multimodal_config:
-                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
-                        if key not in test_multimodal_config and key in cfg.multimodal_config:
-                            test_multimodal_config[key] = cfg.multimodal_config[key]
-                elif hasattr(cfg, 'completion_config') and cfg.completion_config:
-                    # Fallback to completion config
-                    for key in ["model_kwargs", "prompt_path", "base_url", "token_limit"]:
-                        if key not in test_multimodal_config and key in cfg.completion_config:
-                            test_multimodal_config[key] = cfg.completion_config[key]
-                
-                # Ensure required fields exist
-                if "model_kwargs" not in test_multimodal_config:
-                    test_multimodal_config["model_kwargs"] = {"temperature": 0}
-                if "prompt_path" not in test_multimodal_config:
-                    test_multimodal_config["prompt_path"] = "common/prompts/openai_gpt4/"
-                
-                multimodal_service = _create_llm_service(provider, test_multimodal_config)
-                
-                if multimodal_service:
-                    response = multimodal_service.llm.invoke("Say 'Connection successful' in 2 words")
-                    if not response or not str(response).strip():
-                        raise ValueError("Multimodal LLM returned an empty response")
-                    test_results["multimodal"]["status"] = "success"
-                    test_results["multimodal"]["message"] = f"✅ Multimodal model ({model}) connected successfully"
+                from langchain_core.messages import HumanMessage
+                test_config = multimodal_config
+                model = test_config.get("llm_model", "")
+                llm_service = get_llm_service(test_config)
+                # Send a small 20x20 red PNG to verify the model accepts image input.
+                # Some providers (e.g. Bedrock) reject 1x1 images.
+                TEST_IMAGE_B64 = (
+                    "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAIAAAAC64paAAAAKUlEQVR4"
+                    "nGP8z0A+YKJAL8OoZhIBE6kakMGoZhIBE6kakMGoZhIBRZoBIpwBJy3"
+                    "phGMAAAAASUVORK5CYII="
+                )
+                provider = test_config.get("llm_service", "").lower()
+                # Google GenAI/VertexAI only accept image_url format;
+                # Bedrock/Anthropic-native providers prefer type:"image" with source.
+                if provider in ("genai", "vertexai"):
+                    image_block = {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{TEST_IMAGE_B64}"},
+                    }
                 else:
-                    test_results["multimodal"]["status"] = "error"
-                    test_results["multimodal"]["message"] = f"Provider '{provider}' not supported for multimodal"
-                    
+                    image_block = {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": TEST_IMAGE_B64,
+                        },
+                    }
+                vision_message = HumanMessage(
+                    content=[
+                        {"type": "text", "text": "Describe this image in one word."},
+                        image_block,
+                    ]
+                )
+                response = llm_service.llm.invoke([vision_message])
+                if not response or not str(response).strip():
+                    raise ValueError("Multimodal LLM returned an empty response")
+                test_results["multimodal"]["status"] = "success"
+                test_results["multimodal"]["message"] = f"Multimodal model ({model}) connected and supports vision"
             except Exception as e:
                 test_results["multimodal"]["status"] = "error"
-                test_results["multimodal"]["message"] = f"❌ Multimodal test failed: {str(e)}"
+                test_results["multimodal"]["message"] = (
+                    f"Multimodal test failed for model ({model}): {str(e)}. "
+                    f"Please ensure the model supports vision input (e.g., GPT-4o, Claude 3.5+, Gemini)."
+                )
                 logger.error(f"Multimodal test failed: {str(e)}")
-        
+
         # Determine overall status
         all_success = all(result["status"] == "success" for result in test_results.values() if result["status"] != "not_tested")
         any_error = any(result["status"] == "error" for result in test_results.values())
-        
+
         overall_status = "success" if all_success and not any_error else "error" if any_error else "partial"
-        
+
         return {
             "status": overall_status,
             "message": "Connection test completed",
             "results": test_results
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -2172,37 +2095,131 @@ async def test_llm_config(
 MASKED_SECRET = "********"
 
 
+def _prepare_llm_config(llm_config_data: dict):
+    """
+    Shared preparation for both save and test endpoints.
+
+    1. Pop metadata keys (graphname, scope)
+    2. Unmask MASKED_SECRET values using current config from disk
+    3. Strip null service values (null = inherit, key should be absent)
+
+    Returns (candidate_config, graphname, scope).
+    The candidate_config is save-ready. Top-level parameters (authentication_configuration,
+    region_name) are promoted from completion_service if missing and redundant per-service
+    copies are stripped. reload_llm_config() and resolve_llm_services() handle injecting
+    them back into service configs at runtime.
+    """
+    graphname = llm_config_data.pop("graphname", None)
+    scope = llm_config_data.pop("scope", None)
+
+    # Resolve masked secrets from disk before modifying the payload
+    _unmask_auth(llm_config_data, graphname)
+
+    # Strip null values — null means "inherit from base", key should be absent
+    for key in list(llm_config_data.keys()):
+        if llm_config_data[key] is None:
+            del llm_config_data[key]
+
+    # Normalize auth: ensure top-level authentication_configuration exists.
+    # If missing, promote from completion_service so future config files
+    # always have auth at the top level.
+    if "authentication_configuration" not in llm_config_data:
+        completion_svc = llm_config_data.get("completion_service")
+        if isinstance(completion_svc, dict) and "authentication_configuration" in completion_svc:
+            llm_config_data["authentication_configuration"] = completion_svc["authentication_configuration"]
+
+    # Strip per-service auth if identical to top-level (redundant on disk;
+    # reload_llm_config injects top-level auth into services on load)
+    top_auth = llm_config_data.get("authentication_configuration")
+    if top_auth:
+        for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+            svc = llm_config_data.get(svc_key)
+            if isinstance(svc, dict) and svc.get("authentication_configuration") == top_auth:
+                del svc["authentication_configuration"]
+
+    # Normalize region_name: promote from completion_service to top level,
+    # strip per-service copies if identical (same pattern as auth).
+    if "region_name" not in llm_config_data:
+        completion_svc = llm_config_data.get("completion_service")
+        if isinstance(completion_svc, dict) and "region_name" in completion_svc:
+            llm_config_data["region_name"] = completion_svc["region_name"]
+
+    top_region = llm_config_data.get("region_name")
+    if top_region:
+        for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+            svc = llm_config_data.get(svc_key)
+            if isinstance(svc, dict) and svc.get("region_name") == top_region:
+                del svc["region_name"]
+
+    return llm_config_data, graphname, scope
+
+
+
 def _mask_secret_values(auth_config: dict) -> dict:
     """Replace all values in an authentication_configuration dict with the masked sentinel."""
     return {k: MASKED_SECRET for k in auth_config}
 
 
-def _unmask_auth(incoming: dict, stored_config: dict):
+def _unmask_auth(incoming: dict, graphname: str = None):
     """
     In-place: replace MASKED_SECRET values in incoming authentication_configuration
-    with the real values from stored_config.
+    with real values resolved through the full config chain via getters.
 
-    Works on both top-level and per-service authentication_configuration.
+    Uses get_xxx_config(graphname) which resolves:
+      Layer 1 (base) → Layer 2 (global service) → Layer 3 (graph base) → Layer 4 (graph service)
     """
-    def _unmask_dict(incoming_auth, stored_auth):
-        if not isinstance(incoming_auth, dict) or not isinstance(stored_auth, dict):
-            return
-        for k, v in incoming_auth.items():
-            if v == MASKED_SECRET:
-                incoming_auth[k] = stored_auth.get(k, "")
+    # Use completion_service as the primary source for top-level auth resolution
+    # (backward compat: base bootstraps from completion_service)
+    resolved_completion = get_completion_config(graphname)
+
+    # Resolved configs for each service (lazy — only built if needed)
+    _resolved_cache = {}
+    def _get_resolved(svc_key):
+        if svc_key not in _resolved_cache:
+            getter = {
+                "completion_service": get_completion_config,
+                "embedding_service": get_embedding_config,
+                "chat_service": get_chat_config,
+                "multimodal_service": get_multimodal_config,
+            }.get(svc_key)
+            if getter:
+                result = getter(graphname)
+                _resolved_cache[svc_key] = result if result else {}
+            else:
+                _resolved_cache[svc_key] = {}
+        return _resolved_cache[svc_key]
+
+    def _resolve_real_value(key, svc_key=None):
+        """Find real value for an auth key using the resolved config chain."""
+        # Check the specific service first
+        if svc_key:
+            resolved = _get_resolved(svc_key)
+            val = resolved.get("authentication_configuration", {}).get(key, "")
+            if val and val != MASKED_SECRET:
+                return val
+        # Fallback to completion (which has full base resolution)
+        val = resolved_completion.get("authentication_configuration", {}).get(key, "")
+        if val and val != MASKED_SECRET:
+            return val
+        return ""
 
     # Top-level authentication_configuration
     if "authentication_configuration" in incoming:
-        stored_top = stored_config.get("authentication_configuration", {})
-        _unmask_dict(incoming["authentication_configuration"], stored_top)
+        auth = incoming["authentication_configuration"]
+        if isinstance(auth, dict):
+            for k, v in auth.items():
+                if v == MASKED_SECRET:
+                    auth[k] = _resolve_real_value(k)
 
     # Per-service authentication_configuration
     for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
         svc = incoming.get(svc_key)
-        if svc and "authentication_configuration" in svc:
-            stored_svc = stored_config.get(svc_key, {})
-            stored_svc_auth = stored_svc.get("authentication_configuration", {})
-            _unmask_dict(svc["authentication_configuration"], stored_svc_auth)
+        if isinstance(svc, dict) and "authentication_configuration" in svc:
+            auth = svc["authentication_configuration"]
+            if isinstance(auth, dict):
+                for k, v in auth.items():
+                    if v == MASKED_SECRET:
+                        auth[k] = _resolve_real_value(k, svc_key)
 
 
 def _strip_auth(config: dict) -> dict:
@@ -2248,7 +2265,7 @@ async def get_config(
                         graph_chat_service["authentication_configuration"] = _mask_secret_values(graph_chat_service["authentication_configuration"])
 
             # Global chat info for "Inherited from" display
-            global_chat = llm_config.get("chat_service", llm_config.get("completion_service", {}))
+            global_chat = get_chat_config()
             global_chat_info = {
                 "llm_service": global_chat.get("llm_service", ""),
                 "llm_model": global_chat.get("llm_model", ""),

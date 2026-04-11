@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import json
 import logging
 import os
@@ -122,6 +123,73 @@ def _resolve_service_config(base_config, override=None):
     return result
 
 
+def resolve_llm_services(llm_cfg: dict) -> dict:
+    """
+    Resolve per-service configs from an llm_config dict.
+
+    Applies the same resolution chain as the get_xxx_config() getters but
+    operates on the provided dict instead of the global llm_config. This
+    allows both the on-disk config and a candidate config (from UI payload)
+    to be resolved with the same logic.
+
+    Resolution:
+      1. Inject top-level authentication_configuration into each service
+      2. completion_service / embedding_service: used as-is
+      3. chat_service / multimodal_service: completion_service base + overrides
+
+    When chat_service or multimodal_service is absent, the resolved config
+    falls back to completion_service (inherit).
+
+    Returns dict with keys: completion_service, embedding_service,
+    chat_service, multimodal_service — each a fully resolved config.
+    """
+    # Work on deep copies to avoid mutating the input
+    cfg = copy.deepcopy(llm_cfg)
+
+    # Inject top-level auth into service configs (same as reload_llm_config)
+    top_auth = cfg.get("authentication_configuration", {})
+    if top_auth:
+        for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+            if svc_key in cfg:
+                svc = cfg[svc_key]
+                if "authentication_configuration" not in svc:
+                    svc["authentication_configuration"] = top_auth.copy()
+                else:
+                    merged = top_auth.copy()
+                    merged.update(svc["authentication_configuration"])
+                    svc["authentication_configuration"] = merged
+
+    # Inject top-level region_name into service configs if missing
+    top_region = cfg.get("region_name")
+    if top_region:
+        for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+            if svc_key in cfg and "region_name" not in cfg[svc_key]:
+                cfg[svc_key]["region_name"] = top_region
+
+    completion = cfg.get("completion_service", {})
+
+    # Resolve embedding: inherit provider-level config from completion
+    # when the embedding provider matches the completion provider.
+    # (embedding has a different schema — model_name vs llm_model —
+    # so we only inherit shared provider fields like region_name.)
+    embedding = cfg.get("embedding_service", {}).copy()
+    embedding_provider = embedding.get("embedding_model_service", "").lower()
+    completion_provider = completion.get("llm_service", "").lower()
+    if embedding_provider and embedding_provider == completion_provider:
+        # Identity/schema keys that belong to the embedding service itself
+        embedding_own_keys = {"embedding_model_service", "model_name", "authentication_configuration", "token_limit"}
+        for k, v in completion.items():
+            if k not in embedding_own_keys and k not in embedding:
+                embedding[k] = v
+
+    return {
+        "completion_service": completion.copy(),
+        "embedding_service": embedding,
+        "chat_service": _resolve_service_config(completion, cfg.get("chat_service")),
+        "multimodal_service": _resolve_service_config(completion, cfg.get("multimodal_service")),
+    }
+
+
 def get_completion_config(graphname=None):
     """
     Return completion_service config for the given graph.
@@ -142,13 +210,24 @@ def get_completion_config(graphname=None):
     return result
 
 
-DEFAULT_MULTIMODAL_MODELS = {
-    "openai": "gpt-4o-mini",
-    "azure": "gpt-4o-mini",
-    "genai": "gemini-3.5-flash",
-    "vertexai": "gemini-3.5-flash",
-    "bedrock": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-}
+def get_embedding_config(graphname=None):
+    """
+    Return embedding_service config for the given graph.
+
+    Resolution: merge graph-specific embedding_service overrides on top of
+    global embedding_service. Graph configs only store overrides, so unchanged
+    fields always inherit the latest global values.
+    """
+    graph_llm = _load_graph_llm_config(graphname)
+    override = graph_llm.get("embedding_service")
+    if override:
+        logger.debug(f"[get_embedding_config] graph={graphname} using graph-specific overrides")
+    result = _resolve_service_config(llm_config["embedding_service"], override)
+
+    if graphname:
+        result["graphname"] = graphname
+
+    return result
 
 
 def get_chat_config(graphname=None):
@@ -189,21 +268,6 @@ def get_chat_config(graphname=None):
     return result
 
 
-def _apply_default_multimodal_model(override, provider):
-    """Apply default vision model if llm_model is not explicitly set."""
-    if override and "llm_model" not in override:
-        default_model = DEFAULT_MULTIMODAL_MODELS.get(provider)
-        if default_model:
-            return {**override, "llm_model": default_model}
-        return override
-    if not override:
-        default_model = DEFAULT_MULTIMODAL_MODELS.get(provider)
-        if default_model:
-            return {"llm_model": default_model}
-        return None
-    return override
-
-
 def get_multimodal_config(graphname=None):
     """
     Return the multimodal/vision config for the given graph.
@@ -211,9 +275,10 @@ def get_multimodal_config(graphname=None):
     Resolution chain:
       1. Start with global completion_service
       2. Merge graph-specific completion_service overrides (shared base)
-      3. Merge multimodal_service overrides (graph-specific > global > default model)
+      3. Merge multimodal_service overrides (graph-specific > global)
 
-    Returns the merged config, or None if the provider doesn't support vision.
+    When no multimodal_service override exists ("inherit"), the completion
+    config is returned as-is — the completion model is used for vision.
     """
     graph_llm = _load_graph_llm_config(graphname)
 
@@ -223,16 +288,10 @@ def get_multimodal_config(graphname=None):
         graph_llm.get("completion_service"),
     )
 
-    # Find multimodal override: graph-specific > global > None
+    # Find multimodal override: graph-specific > global > None (inherit)
     mm_override = graph_llm.get("multimodal_service")
     if mm_override is None and "multimodal_service" in llm_config:
         mm_override = llm_config["multimodal_service"]
-
-    provider = (mm_override or {}).get("llm_service", base.get("llm_service", "")).lower()
-    mm_override = _apply_default_multimodal_model(mm_override, provider)
-
-    if mm_override is None:
-        return None
 
     return _resolve_service_config(base, mm_override)
 
@@ -300,6 +359,12 @@ if "authentication_configuration" in llm_config:
                 merged = llm_config["authentication_configuration"].copy()
                 merged.update(svc["authentication_configuration"])
                 svc["authentication_configuration"] = merged
+
+# Inject top-level region_name into service configs if missing
+if "region_name" in llm_config:
+    for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+        if svc_key in llm_config and "region_name" not in llm_config[svc_key]:
+            llm_config[svc_key]["region_name"] = llm_config["region_name"]
 
 _comp = llm_config.get("completion_service")
 if _comp is None:
@@ -478,6 +543,12 @@ def reload_llm_config(new_llm_config: dict = None):
                         merged = new_llm_config["authentication_configuration"].copy()
                         merged.update(svc["authentication_configuration"])
                         svc["authentication_configuration"] = merged
+
+        # Inject top-level region_name into service configs if missing
+        if "region_name" in new_llm_config:
+            for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+                if svc_key in new_llm_config and "region_name" not in new_llm_config[svc_key]:
+                    new_llm_config[svc_key]["region_name"] = new_llm_config["region_name"]
 
         new_completion_config = new_llm_config.get("completion_service")
         new_embedding_config = new_llm_config.get("embedding_service")

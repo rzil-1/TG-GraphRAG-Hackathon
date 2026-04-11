@@ -39,7 +39,7 @@ class BaseIngestion:
             from common.chunkers.character_chunker import CharacterChunker
 
             chunker = CharacterChunker(
-                chunker_params["chunk_size"], chunker_params.get("overlap", 0)
+                chunker_params.get("chunk_size", 0), chunker_params.get("overlap_size", -1)
             )
         elif chunker.lower() == "semantic":
             from common.chunkers.semantic_chunker import SemanticChunker
@@ -54,7 +54,7 @@ class BaseIngestion:
 
             chunker = HTMLChunker(
                 chunk_size=chunker_params.get("chunk_size", 0),
-                chunk_overlap=chunker_params.get("overlap_size", 0),
+                overlap_size=chunker_params.get("overlap_size", -1),
                 headers=chunker_params.get("headers", None),
             )
         elif chunker.lower() == "markdown":
@@ -62,7 +62,7 @@ class BaseIngestion:
 
             chunker = MarkdownChunker(
                 chunk_size=chunker_params.get("chunk_size", 0),
-                chunk_overlap=chunker_params.get("overlap_size", 0)
+                overlap_size=chunker_params.get("overlap_size", -1)
             )
         else:
             raise ValueError(f"Chunker {chunker} not supported")

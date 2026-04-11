@@ -20,7 +20,7 @@ from langchain_text_splitters import HTMLSectionSplitter
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
-_DEFAULT_FALLBACK_SIZE = 4096
+_DEFAULT_CHUNK_SIZE = 2048
 
 
 class HTMLChunker(BaseChunker):
@@ -30,7 +30,7 @@ class HTMLChunker(BaseChunker):
     - Automatically detects which headers (h1-h6) are present in the HTML
     - Uses only the headers that exist in the document for optimal chunking
     - If custom headers are provided, uses those instead of auto-detection
-    - Supports chunk_size / chunk_overlap: when chunk_size > 0, oversized
+    - Supports chunk_size / overlap_size: when chunk_size > 0, oversized
       header-based chunks are further split with RecursiveCharacterTextSplitter
     - When chunk_size is 0 (default), a fallback of 4096 is used so that
       headerless HTML documents are still split into reasonable chunks
@@ -39,11 +39,11 @@ class HTMLChunker(BaseChunker):
     def __init__(
         self,
         chunk_size: int = 0,
-        chunk_overlap: int = 0,
+        overlap_size: int = -1,
         headers: Optional[List[Tuple[str, str]]] = None,
     ):
-        self.chunk_size = chunk_size if chunk_size > 0 else _DEFAULT_FALLBACK_SIZE
-        self.chunk_overlap = chunk_overlap
+        self.chunk_size = chunk_size if chunk_size > 0 else _DEFAULT_CHUNK_SIZE
+        self.overlap_size = overlap_size if overlap_size >= 0 else self.chunk_size // 8
         self.headers = headers
 
     def _detect_headers(self, html_content: str) -> List[Tuple[str, str]]:
@@ -96,7 +96,7 @@ class HTMLChunker(BaseChunker):
             recursive_splitter = RecursiveCharacterTextSplitter(
                 separators=TEXT_SEPARATORS,
                 chunk_size=self.chunk_size,
-                chunk_overlap=self.chunk_overlap,
+                chunk_overlap=self.overlap_size,
             )
             final_chunks = []
             for chunk in initial_chunks:

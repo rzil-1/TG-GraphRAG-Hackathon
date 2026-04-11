@@ -26,10 +26,10 @@ from common.py_schemas import GraphRAGAnswerOutput
 logger = logging.getLogger(__name__)
 
 class TigerGraphAgentGenerator:
-    def __init__(self, llm_model):
-        self.llm = llm_model
-        llm_config = getattr(llm_model, "config", {})
-        self.token_calculator = get_token_calculator(token_limit=llm_config.get("token_limit"), model_name=llm_config.get("llm_model"))
+    def __init__(self, llm_service):
+        self.llm = llm_service
+        svc_config = getattr(llm_service, "config", {})
+        self.token_calculator = get_token_calculator(token_limit=svc_config.get("token_limit"), model_name=svc_config.get("llm_model"))
 
     def generate_answer(self, question: str, context: str | dict, query: str = "") -> dict:
         """Generate an answer based on the question and context.

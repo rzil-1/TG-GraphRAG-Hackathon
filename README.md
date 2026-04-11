@@ -469,14 +469,19 @@ Copy the below code into `configs/server_config.json`. You shouldn’t need to c
 | `chat_history_api` | string | `"http://chat-history:8002"` | URL of the chat history service. No change needed when using the provided Docker Compose file. |
 | `chunker` | string | `"semantic"` | Default document chunker. Options: `semantic`, `character`, `regex`, `markdown`, `html`, `recursive`. |
 | `extractor` | string | `"llm"` | Entity extraction method. Options: `llm`, `graphrag`. |
-| `chunker_config` | object | `{}` | Chunker-specific settings. For `character`/`markdown`/`recursive`: `chunk_size`, `overlap_size`. For `semantic`: `method`, `threshold`. For `regex`: `pattern`. |
-| `top_k` | int | `5` | Number of top similar results to retrieve during search. |
-| `num_hops` | int | `2` | Number of graph hops to traverse when expanding retrieved results. |
-| `num_seen_min` | int | `2` | Minimum occurrence threshold for a node to be included in search results. |
-| `community_level` | int | `2` | Community hierarchy level used for community search. |
-| `chunk_only` | bool | `true` | If true, hybrid search only retrieves document chunks (not entities). |
-| `doc_only` | bool | `false` | If true, hybrid search retrieves whole documents instead of chunks. |
-| `with_chunk` | bool | `true` | If true, community search also includes document chunks in results. |
+| `chunker_config` | object | `{}` | Chunker-specific settings (see sub-parameters below). All settings are saved regardless of which chunker is selected as default. |
+| ↳ `chunk_size` | int | `2048` | Maximum number of characters per chunk. Used by `character`, `markdown`, `html`, and `recursive` chunkers. Larger values produce fewer, bigger chunks; smaller values produce more, finer-grained chunks. |
+| ↳ `overlap_size` | int | 1/8 of `chunk_size` | Number of overlapping characters between consecutive chunks. Used by `character`, `markdown`, `html`, and `recursive` chunkers. More overlap preserves cross-chunk context but increases total chunk count. Set to `0` for no overlap. |
+| ↳ `method` | string | `"percentile"` | Breakpoint detection method for the `semantic` chunker. Options: `percentile`, `standard_deviation`, `interquartile`, `gradient`. Controls how the chunker decides where to split based on embedding similarity. |
+| ↳ `threshold` | float | `0.95` | Similarity threshold for the `semantic` chunker. Higher values produce more splits (smaller chunks); lower values produce fewer splits (larger chunks). |
+| ↳ `pattern` | string | `""` | Regular expression pattern for the `regex` chunker. The document is split at each match of this pattern. |
+| `top_k` | int | `5` | Number of initial seed results to retrieve per search. Also caps the final scored results. Increasing `top_k` increases the overall context size sent to the LLM. |
+| `num_hops` | int | `2` | Number of graph hops to traverse from seed nodes during hybrid search. More hops expand the result set with related context. |
+| `num_seen_min` | int | `2` | Minimum occurrence count for a node to be included during hybrid search traversal. Higher values filter out loosely connected nodes, reducing context size. |
+| `community_level` | int | `2` | Community hierarchy level for community search. Higher levels retrieve broader, higher-order community summaries. |
+| `chunk_only` | bool | `true` | If true, hybrid search only retrieves document chunks, excluding entity data. |
+| `doc_only` | bool | `false` | If true, hybrid search retrieves whole documents instead of chunks. Significantly increases context size. |
+| `with_chunk` | bool | `true` | If true, community search also includes document chunks alongside community summaries. Increases context size. |
 | `doc_process_switch` | bool | `true` | Enable/disable document processing during knowledge graph build. |
 | `entity_extraction_switch` | bool | same as `doc_process_switch` | Enable/disable entity extraction during knowledge graph build. |
 | `community_detection_switch` | bool | same as `entity_extraction_switch` | Enable/disable community detection during knowledge graph build. |
@@ -552,7 +557,7 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `authentication_configuration` | object | — | Shared authentication credentials for all services. Service-level values take precedence. |
-| `token_limit` | int | — | Maximum token count for retrieved context. Inherited by all services if not set at service level. `0` or omitted means unlimited. |
+| `token_limit` | int | — | Hard cap on token count for retrieved context sent to the LLM. Context exceeding this limit is truncated. Inherited by all services if not set at service level. `0` or omitted means unlimited. |
 
 **`completion_service` parameters:**
 
@@ -564,7 +569,7 @@ In the `llm_config` section of `configs/server_config.json` file, copy JSON conf
 | `model_kwargs` | object | No | `{}` | Additional model parameters (e.g., `{"temperature": 0}`). |
 | `prompt_path` | string | No | `"./common/prompts/openai_gpt4/"` | Path to prompt template files. |
 | `base_url` | string | No | — | Custom API endpoint URL. |
-| `token_limit` | int | No | inherited from top-level | Max token count for retrieved context sent to the LLM. `0` or omitted means unlimited. |
+| `token_limit` | int | No | inherited from top-level | Hard cap on token count for retrieved context sent to the LLM. Context exceeding this limit is truncated. `0` or omitted means unlimited. |
 
 **`embedding_service` parameters:**
 
@@ -587,16 +592,16 @@ Chatbot LLM override. If not configured, inherits from `completion_service`. Con
 | `model_kwargs` | object | No | inherited from completion | Additional model parameters (e.g., `{"temperature": 0}`). |
 | `prompt_path` | string | No | inherited from completion | Path to prompt template files. |
 | `base_url` | string | No | inherited from completion | Custom API endpoint URL. |
-| `token_limit` | int | No | inherited from completion | Max token count for retrieved context sent to the chatbot LLM. `0` or omitted means unlimited. |
+| `token_limit` | int | No | inherited from completion | Hard cap on token count for retrieved context sent to the chatbot LLM. Context exceeding this limit is truncated. `0` or omitted means unlimited. |
 
 **`multimodal_service` parameters (optional):**
 
-Vision model for image processing during document ingestion. If not configured, inherits from `completion_service` with a default vision model derived per provider.
+Vision model for image processing during document ingestion. If not configured, inherits from `completion_service` — ensure the completion model supports vision input.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `llm_service` | string | No | inherited from completion | Multimodal LLM provider. |
-| `llm_model` | string | No | auto-derived per provider | Vision model name (e.g., `gpt-4o`). |
+| `llm_model` | string | No | inherited from completion | Vision model name (e.g., `gpt-4o`). |
 | `authentication_configuration` | object | No | inherited from completion | Service-specific auth credentials. Overrides top-level values. |
 | `model_kwargs` | object | No | inherited from completion | Additional model parameters. |
 | `prompt_path` | string | No | inherited from completion | Path to prompt template files. |
