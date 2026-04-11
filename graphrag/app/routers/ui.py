@@ -51,7 +51,7 @@ from fastapi.security.http import HTTPBase
 from pyTigerGraph import TigerGraphConnection
 from tools.validation_utils import MapQuestionToSchemaException
 
-from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status, get_chat_config, get_completion_config, get_embedding_config, get_multimodal_config, validate_graphname, get_llm_service
+from common.config import db_config, graphrag_config, embedding_service, llm_config, service_status, get_chat_config, get_completion_config, get_embedding_config, get_multimodal_config, validate_graphname, get_llm_service, resolve_llm_services
 from common.db.connections import get_db_connection_pwd_manual
 from common.logs.log import req_id_cv
 from common.logs.logwriter import LogWriter
@@ -1809,7 +1809,7 @@ async def save_llm_config(
     Save LLM configuration and reload services.
     """
     try:
-        graphname = llm_config_data.pop("graphname", None)
+        graphname = llm_config_data.get("graphname")
         llm_access_mode = _resolve_llm_config_access(credentials, graphname)
         graphs = auth(credentials.username, credentials.password)[0]
         auth_header = "Basic " + base64.b64encode(
@@ -1829,11 +1829,7 @@ async def save_llm_config(
             # Save and reload in graphrag service
             from common.config import reload_llm_config
 
-            scope = llm_config_data.pop("scope", None)
-
-            # Substitute masked sentinel values with real stored values
-            # Uses getters to resolve through the full config chain
-            _unmask_auth(llm_config_data, graphname)
+            candidate, graphname, scope = _prepare_llm_config(llm_config_data)
 
             if llm_access_mode == "chatbot_only" or (llm_access_mode == "full" and scope == "graph"):
                 # Per-graph save: write only overrides to graph config file.
@@ -1862,12 +1858,29 @@ async def save_llm_config(
                         svc_keys = ["chat_service"]
                     else:
                         # Superadmin per-graph: all services
-                        svc_keys = ["completion_service", "chat_service", "multimodal_service"]
+                        svc_keys = ["completion_service", "embedding_service", "chat_service", "multimodal_service"]
+
+                    # Resolve both candidate and global to get fully expanded configs,
+                    # then store only the delta as the graph override.
+                    resolved_candidate = resolve_llm_services(candidate)
+                    resolved_global = resolve_llm_services(llm_config)
 
                     for svc_key in svc_keys:
-                        incoming = llm_config_data.get(svc_key)
+                        incoming = candidate.get(svc_key)
                         if incoming:
-                            graph_llm[svc_key] = incoming
+                            rc = resolved_candidate.get(svc_key, {})
+                            rg = resolved_global.get(svc_key, {})
+                            # Compute delta: keys whose resolved values differ
+                            delta = {}
+                            for k, v in rc.items():
+                                if k == "authentication_configuration":
+                                    continue
+                                if rg.get(k) != v:
+                                    delta[k] = v
+                            if delta:
+                                graph_llm[svc_key] = delta
+                            else:
+                                graph_llm.pop(svc_key, None)
                         else:
                             # Revert to inherit: remove override
                             graph_llm.pop(svc_key, None)
@@ -1880,12 +1893,7 @@ async def save_llm_config(
                 result = {"status": "success"}
             else:
                 # Superadmin global save
-                # Strip null service values — null means "inherit from base",
-                # so the key should be absent, not stored as null.
-                for key in list(llm_config_data.keys()):
-                    if llm_config_data[key] is None:
-                        del llm_config_data[key]
-                result = reload_llm_config(llm_config_data)
+                result = reload_llm_config(candidate)
 
             if result["status"] != "success":
                 raise HTTPException(status_code=500, detail=result["message"])
@@ -1919,16 +1927,20 @@ async def test_llm_config(
         "multimodal": {"status": "not_tested", "message": ""}
     }
     try:
-        graphname = llm_test_config.pop("graphname", None)
+        graphname = llm_test_config.get("graphname")
         llm_access_mode = _resolve_llm_config_access(credentials, graphname)
-        top_level_auth = llm_test_config.get("authentication_configuration", {})
+
+        # Build candidate config — same preparation as save
+        candidate, graphname, scope = _prepare_llm_config(llm_test_config)
+        # Resolve partial service configs into full configs for testing
+        # (same resolution logic used when parsing config from disk)
+        test_configs = resolve_llm_services(candidate)
 
         # Graph admins (chatbot_only) can only test chat_service
         if llm_access_mode == "chatbot_only":
-            if "chat_service" in llm_test_config:
+            if "chat_service" in candidate:
                 try:
-                    base = get_chat_config(graphname)
-                    test_config = _build_test_config(base, llm_test_config["chat_service"], top_level_auth)
+                    test_config = test_configs["chat_service"]
                     model = test_config.get("llm_model", "")
                     llm_service = get_llm_service(test_config)
                     response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
@@ -1949,20 +1961,12 @@ async def test_llm_config(
                 "results": {"chatbot": test_results["chatbot"]}
             }
 
-        # Full access: test all services
+        # Full access: test all services from the resolved test configs
+
         # Test Completion Service
-        if "completion_service" in llm_test_config or "llm_service" in llm_test_config:
+        if "completion_service" in test_configs:
             try:
-                base = get_completion_config(graphname)
-                if "completion_service" in llm_test_config:
-                    ui_overrides = llm_test_config["completion_service"]
-                else:
-                    ui_overrides = {
-                        "llm_service": llm_test_config.get("llm_service", "openai"),
-                        "llm_model": llm_test_config.get("llm_model", "gpt-4o-mini"),
-                    }
-                test_config = _build_test_config(base, ui_overrides, top_level_auth)
-                provider = test_config.get("llm_service", "openai").lower()
+                test_config = test_configs["completion_service"]
                 model = test_config.get("llm_model", "")
                 llm_service = get_llm_service(test_config)
                 response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
@@ -1975,11 +1979,11 @@ async def test_llm_config(
                 test_results["completion"]["message"] = f"Completion test failed: {str(e)}"
                 logger.error(f"Completion test failed: {str(e)}")
 
-        # Test Chatbot Service (if different model is provided)
-        if "chat_service" in llm_test_config:
+        # Test Chatbot Service (only if custom config provided in candidate;
+        # when inheriting from completion, the completion test already covers it)
+        if "chat_service" in candidate:
             try:
-                base = get_chat_config(graphname)
-                test_config = _build_test_config(base, llm_test_config["chat_service"], top_level_auth)
+                test_config = test_configs["chat_service"]
                 model = test_config.get("llm_model", "")
                 llm_service = get_llm_service(test_config)
                 response = llm_service.llm.invoke("Say 'Connection successful' in 2 words")
@@ -1993,10 +1997,9 @@ async def test_llm_config(
                 logger.error(f"Chatbot test failed: {str(e)}")
 
         # Test Embedding Service
-        if "embedding_service" in llm_test_config:
+        if "embedding_service" in test_configs:
             try:
-                base = get_embedding_config(graphname)
-                test_config = _build_test_config(base, llm_test_config["embedding_service"], top_level_auth)
+                test_config = test_configs["embedding_service"]
                 provider = test_config.get("embedding_model_service", "openai").lower()
                 model = test_config.get("model_name", "")
                 embedding_service_test = _create_embedding_service(provider, test_config)
@@ -2013,11 +2016,14 @@ async def test_llm_config(
                 logger.error(f"Embedding test failed: {str(e)}")
 
         # Test Multimodal Service — verifies the model supports vision
-        if "multimodal_service" in llm_test_config:
+        # When multimodal_service is absent (inheriting), use completion_service
+        # config — that's what will be used at runtime after save.
+        multimodal_config = test_configs.get("multimodal_service") or test_configs.get("completion_service")
+        if multimodal_config:
+            model = ""
             try:
                 from langchain_core.messages import HumanMessage
-                base = get_multimodal_config(graphname)
-                test_config = _build_test_config(base, llm_test_config["multimodal_service"], top_level_auth)
+                test_config = multimodal_config
                 model = test_config.get("llm_model", "")
                 llm_service = get_llm_service(test_config)
                 # Send a small 20x20 red PNG to verify the model accepts image input.
@@ -2089,44 +2095,64 @@ async def test_llm_config(
 MASKED_SECRET = "********"
 
 
-def _build_test_config(base_config: dict, ui_overrides: dict, top_level_auth: dict = None) -> dict:
+def _prepare_llm_config(llm_config_data: dict):
     """
-    Build a test config by overlaying UI-provided values onto a resolved base config.
+    Shared preparation for both save and test endpoints.
 
-    - base_config: from get_xxx_config(graphname) — has real credentials, all fields resolved
-    - ui_overrides: per-service dict from UI payload (may contain MASKED_SECRET in auth)
-    - top_level_auth: top-level authentication_configuration from UI (single-provider mode)
+    1. Pop metadata keys (graphname, scope)
+    2. Unmask MASKED_SECRET values using current config from disk
+    3. Strip null service values (null = inherit, key should be absent)
 
-    Overlay logic:
-    - For authentication_configuration: skip MASKED_SECRET values (keep base's real value)
-    - For all other keys: UI value wins if provided
+    Returns (candidate_config, graphname, scope).
+    The candidate_config is save-ready. Top-level parameters (authentication_configuration,
+    region_name) are promoted from completion_service if missing and redundant per-service
+    copies are stripped. reload_llm_config() and resolve_llm_services() handle injecting
+    them back into service configs at runtime.
     """
-    result = base_config.copy()
+    graphname = llm_config_data.pop("graphname", None)
+    scope = llm_config_data.pop("scope", None)
 
-    for key, value in ui_overrides.items():
-        if key == "authentication_configuration":
-            continue  # Handle separately below
-        result[key] = value
+    # Resolve masked secrets from disk before modifying the payload
+    _unmask_auth(llm_config_data, graphname)
 
-    # Merge auth following the resolution chain (bottom to top, top wins):
-    #   base service auth → incoming top-level auth → incoming per-service auth
-    # MASKED_SECRET at any layer is transparent (skipped).
-    merged_auth = result.get("authentication_configuration", {}).copy()
+    # Strip null values — null means "inherit from base", key should be absent
+    for key in list(llm_config_data.keys()):
+        if llm_config_data[key] is None:
+            del llm_config_data[key]
 
-    # Layer 5: incoming top-level auth (test/save llm_config level)
-    if top_level_auth:
-        for k, v in top_level_auth.items():
-            if v and v != MASKED_SECRET:
-                merged_auth[k] = v
+    # Normalize auth: ensure top-level authentication_configuration exists.
+    # If missing, promote from completion_service so future config files
+    # always have auth at the top level.
+    if "authentication_configuration" not in llm_config_data:
+        completion_svc = llm_config_data.get("completion_service")
+        if isinstance(completion_svc, dict) and "authentication_configuration" in completion_svc:
+            llm_config_data["authentication_configuration"] = completion_svc["authentication_configuration"]
 
-    # Layer 6: incoming per-service auth (highest priority)
-    ui_auth = ui_overrides.get("authentication_configuration", {})
-    for k, v in ui_auth.items():
-        if v and v != MASKED_SECRET:
-            merged_auth[k] = v
+    # Strip per-service auth if identical to top-level (redundant on disk;
+    # reload_llm_config injects top-level auth into services on load)
+    top_auth = llm_config_data.get("authentication_configuration")
+    if top_auth:
+        for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+            svc = llm_config_data.get(svc_key)
+            if isinstance(svc, dict) and svc.get("authentication_configuration") == top_auth:
+                del svc["authentication_configuration"]
 
-    result["authentication_configuration"] = merged_auth
-    return result
+    # Normalize region_name: promote from completion_service to top level,
+    # strip per-service copies if identical (same pattern as auth).
+    if "region_name" not in llm_config_data:
+        completion_svc = llm_config_data.get("completion_service")
+        if isinstance(completion_svc, dict) and "region_name" in completion_svc:
+            llm_config_data["region_name"] = completion_svc["region_name"]
+
+    top_region = llm_config_data.get("region_name")
+    if top_region:
+        for svc_key in ["completion_service", "embedding_service", "multimodal_service", "chat_service"]:
+            svc = llm_config_data.get(svc_key)
+            if isinstance(svc, dict) and svc.get("region_name") == top_region:
+                del svc["region_name"]
+
+    return llm_config_data, graphname, scope
+
 
 
 def _mask_secret_values(auth_config: dict) -> dict:

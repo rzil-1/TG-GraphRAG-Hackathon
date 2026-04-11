@@ -134,15 +134,9 @@ const LLMConfig = () => {
   const [testResults, setTestResults] = useState<any>(null);
   const [connectionTested, setConnectionTested] = useState(false);
 
-  // Single provider state
-  const [singleProvider, setSingleProvider] = useState("openai");
-  const [singleConfig, setSingleConfig] = useState<Record<string, string>>({});
-  const [singleDefaultModel, setSingleDefaultModel] = useState("");
-  const [singleEmbeddingModel, setSingleEmbeddingModel] = useState("");
-  const [multimodalModel, setMultimodalModel] = useState("");
   const [useCustomMultimodal, setUseCustomMultimodal] = useState(false);
 
-  // Multi-provider state
+  // Canonical per-service state — both single and multi-provider UIs read/write these
   const [completionProvider, setCompletionProvider] = useState("openai");
   const [completionConfig, setCompletionConfig] = useState<Record<string, string>>({});
   const [completionDefaultModel, setCompletionDefaultModel] = useState("");
@@ -271,7 +265,7 @@ const LLMConfig = () => {
       }
 
       const currentDefaultModel = llmConfig.completion_service?.llm_model || "";
-      setSingleDefaultModel(currentDefaultModel);
+      setCompletionDefaultModel(currentDefaultModel);
 
       const allSameProvider =
         completionProv === embeddingProv &&
@@ -296,20 +290,7 @@ const LLMConfig = () => {
         setChatbotProviderConfig({ ...baseConfig });
       }
 
-      // Always populate both single and multi-provider state from the same
-      // backend config.  The toggle only switches which UI is shown.
-
-      // Single-provider state: uses base config (top-level auth + completion_service)
-      setSingleProvider(completionProv || "openai");
-      setSingleDefaultModel(llmConfig.completion_service?.llm_model || "");
-      setSingleEmbeddingModel(llmConfig.embedding_service?.model_name || "");
-      const mmModel = llmConfig.multimodal_service?.llm_model || "";
-      setMultimodalModel(mmModel);
-      // Multimodal is "custom" if it has an explicit model or a different provider
-      setUseCustomMultimodal(!!mmModel || !!multimodalProv);
-      setSingleConfig(loadServiceConfigResolved(llmConfig.completion_service));
-
-      // Multi-provider state: per-service configs, each inheriting from base
+      // Canonical per-service state — both single and multi-provider UIs read these
       setCompletionProvider(completionProv || "openai");
       setCompletionDefaultModel(llmConfig.completion_service?.llm_model || "");
       setCompletionConfig(loadServiceConfigResolved(llmConfig.completion_service));
@@ -319,8 +300,10 @@ const LLMConfig = () => {
       setEmbeddingConfig(loadServiceConfigResolved(llmConfig.embedding_service));
 
       setMultimodalProvider(multimodalProv || completionProv || "openai");
-      setMultimodalModelName(llmConfig.multimodal_service?.llm_model || "");
+      const mmModel = llmConfig.multimodal_service?.llm_model || "";
+      setMultimodalModelName(mmModel);
       setMultimodalConfig(loadServiceConfigResolved(llmConfig.multimodal_service));
+      setUseCustomMultimodal(!!mmModel || !!multimodalProv);
     } catch (error: any) {
       console.error("Error fetching config:", error);
       setMessage(`Failed to load configuration: ${error.message}`);
@@ -338,19 +321,20 @@ const LLMConfig = () => {
   };
 
   // Update config when provider changes - CLEAR ALL FIELDS
-  const handleProviderChange = (newProvider: string, target: 'single' | 'completion' | 'embedding' | 'multimodal') => {
-    if (target === 'single') {
-      setSingleProvider(newProvider);
-      setSingleConfig({});
-      // Clear model names when switching provider
-      setSingleDefaultModel("");
-      setSingleEmbeddingModel("");
-      setMultimodalModel("");
-    } else if (target === 'completion') {
+  const handleProviderChange = (newProvider: string, target: 'completion' | 'embedding' | 'multimodal') => {
+    if (target === 'completion') {
       setCompletionProvider(newProvider);
       setCompletionConfig({});
-      // Clear model names when switching provider
       setCompletionDefaultModel("");
+      // In single-provider mode, all services share the same provider
+      if (!useMultipleProviders) {
+        setEmbeddingProvider(newProvider);
+        setEmbeddingConfig({});
+        setEmbeddingModel("");
+        setMultimodalProvider(newProvider);
+        setMultimodalConfig({});
+        setMultimodalModelName("");
+      }
     } else if (target === 'embedding') {
       setEmbeddingProvider(newProvider);
       setEmbeddingConfig({});
@@ -391,6 +375,103 @@ const LLMConfig = () => {
     });
     
     return serviceConfig;
+  };
+
+  /**
+   * Build the candidate LLM config payload.
+   * Used by both test-connection and save — same structure, single source of truth.
+   * Inherited services (multimodal, chatbot) are set to null when not customized.
+   */
+  const buildLLMConfigPayload = (): any => {
+    let llmConfigData: any;
+
+    if (useMultipleProviders) {
+      const completionServiceConfig: any = {
+        llm_service: completionProvider,
+        llm_model: completionDefaultModel,
+        authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
+        model_kwargs: { temperature: 0 },
+        prompt_path: `./common/prompts/${getPromptPath(completionProvider)}/`,
+        ...buildServiceConfig(completionProvider, completionConfig)
+      };
+
+      llmConfigData = {
+        graphname: selectedGraph || undefined,
+        completion_service: completionServiceConfig,
+        embedding_service: {
+          embedding_model_service: embeddingProvider,
+          model_name: embeddingModel,
+          authentication_configuration: buildAuthConfig(embeddingProvider, embeddingConfig),
+          ...buildServiceConfig(embeddingProvider, embeddingConfig)
+        },
+      };
+
+      if (useCustomMultimodal && multimodalModelName) {
+        llmConfigData.multimodal_service = {
+          llm_service: multimodalProvider,
+          llm_model: multimodalModelName,
+          authentication_configuration: buildAuthConfig(multimodalProvider, multimodalConfig),
+          model_kwargs: { temperature: 0 },
+          ...buildServiceConfig(multimodalProvider, multimodalConfig)
+        };
+      } else {
+        llmConfigData.multimodal_service = null;
+      }
+
+      if (useCustomChatbot) {
+        llmConfigData.chat_service = {
+          llm_service: chatbotProvider,
+          llm_model: chatbotModelName,
+          authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
+          model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
+          ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
+        };
+      } else {
+        llmConfigData.chat_service = null;
+      }
+    } else {
+      const completionServiceConfig: any = {
+        llm_service: completionProvider,
+        llm_model: completionDefaultModel,
+        model_kwargs: { temperature: 0 },
+        prompt_path: `./common/prompts/${getPromptPath(completionProvider)}/`,
+        ...buildServiceConfig(completionProvider, completionConfig)
+      };
+
+      llmConfigData = {
+        graphname: selectedGraph || undefined,
+        authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
+        completion_service: completionServiceConfig,
+        embedding_service: {
+          embedding_model_service: completionProvider,
+          model_name: embeddingModel,
+        },
+      };
+
+      if (useCustomMultimodal && multimodalModelName.trim()) {
+        llmConfigData.multimodal_service = {
+          llm_model: multimodalModelName,
+        };
+      } else {
+        llmConfigData.multimodal_service = null;
+      }
+
+      if (useCustomChatbot) {
+        const chatTemp = parseFloat(chatbotTemperature) || 0;
+        llmConfigData.chat_service = {
+          ...(chatbotModelName.trim() ? { llm_model: chatbotModelName } : {}),
+          model_kwargs: { temperature: chatTemp },
+        };
+      } else {
+        llmConfigData.chat_service = null;
+      }
+    }
+
+    if (configScope === "graph") {
+      llmConfigData.scope = "graph";
+    }
+
+    return llmConfigData;
   };
 
   const handleSave = async () => {
@@ -440,94 +521,7 @@ const LLMConfig = () => {
         return;
       }
 
-      if (useMultipleProviders) {
-        const completionServiceConfig: any = {
-          llm_service: completionProvider,
-          llm_model: completionDefaultModel,
-          authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
-          model_kwargs: { temperature: 0 },
-          prompt_path: `./common/prompts/${getPromptPath(completionProvider)}/`,
-          ...buildServiceConfig(completionProvider, completionConfig)
-        };
-        
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          completion_service: completionServiceConfig,
-          embedding_service: {
-            embedding_model_service: embeddingProvider,
-            model_name: embeddingModel,
-            authentication_configuration: buildAuthConfig(embeddingProvider, embeddingConfig),
-            ...buildServiceConfig(embeddingProvider, embeddingConfig)
-          },
-        };
-
-        // Save multimodal_service if not inheriting from completion service
-        if (useCustomMultimodal && multimodalModelName) {
-          llmConfigData.multimodal_service = {
-            llm_service: multimodalProvider,
-            llm_model: multimodalModelName,
-            authentication_configuration: buildAuthConfig(multimodalProvider, multimodalConfig),
-            model_kwargs: { temperature: 0 },
-            ...buildServiceConfig(multimodalProvider, multimodalConfig)
-          };
-        } else {
-          llmConfigData.multimodal_service = null;
-        }
-
-        // Save chat_service if not inheriting from completion service
-        if (useCustomChatbot) {
-          llmConfigData.chat_service = {
-            llm_service: chatbotProvider,
-            llm_model: chatbotModelName,
-            authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
-            model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
-            ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
-          };
-        } else {
-          llmConfigData.chat_service = null;
-        }
-      } else {
-        const completionServiceConfig: any = {
-          llm_service: singleProvider,
-          llm_model: singleDefaultModel,
-          model_kwargs: { temperature: 0 },
-          prompt_path: `./common/prompts/${getPromptPath(singleProvider)}/`,
-          ...buildServiceConfig(singleProvider, singleConfig)
-        };
-        
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          authentication_configuration: buildAuthConfig(singleProvider, singleConfig),
-          completion_service: completionServiceConfig,
-          embedding_service: {
-            embedding_model_service: singleProvider,
-            model_name: singleEmbeddingModel,
-          },
-        };
-        if (multimodalModel.trim()) {
-          llmConfigData.multimodal_service = {
-            llm_model: multimodalModel,
-          };
-        } else {
-          llmConfigData.multimodal_service = null;
-        }
-
-        // Save chat_service if model or temperature differs from defaults
-        const chatTemp = parseFloat(chatbotTemperature) || 0;
-        if (chatbotModelName.trim() || chatTemp !== 0) {
-          llmConfigData.chat_service = {
-            ...(chatbotModelName.trim() ? { llm_model: chatbotModelName } : {}),
-            model_kwargs: { temperature: chatTemp },
-          };
-        } else {
-          llmConfigData.chat_service = null;
-        }
-      }
-
-      // Add scope for superadmin per-graph saves
-      if (configScope === "graph") {
-        llmConfigData.scope = "graph";
-      }
+      llmConfigData = buildLLMConfigPayload();
 
       const response = await fetch("/ui/config/llm", {
         method: "POST",
@@ -548,6 +542,9 @@ const LLMConfig = () => {
       setMessageType("success");
       setTestResults(null);
       setConnectionTested(false);
+
+      // Refetch to sync all state with the saved config
+      fetchConfig(configScope === "graph" ? "graph" : "global", selectedGraph || undefined);
     } catch (error: any) {
       console.error("Error saving config:", error);
       setMessage(`❌ Error: ${error.message}`);
@@ -609,85 +606,16 @@ const LLMConfig = () => {
           if (!chatbotModelName.trim()) { failValidation("Model Name is required for Chatbot Service"); return; }
         }
       } else {
-        const singleError = validateProvider(singleProvider, singleConfig, singleProvider);
+        const singleError = validateProvider(completionProvider, completionConfig, completionProvider);
         if (singleError) { failValidation(singleError); return; }
-        if (!singleDefaultModel.trim()) { failValidation("Completion Model is required"); return; }
-        if (!singleEmbeddingModel.trim()) { failValidation("Embedding Model is required"); return; }
-        if (useCustomMultimodal && !multimodalModel.trim()) { failValidation("Multimodal Model is required when not inheriting from completion"); return; }
+        if (!completionDefaultModel.trim()) { failValidation("Completion Model is required"); return; }
+        if (!embeddingModel.trim()) { failValidation("Embedding Model is required"); return; }
+        if (useCustomMultimodal && !multimodalModelName.trim()) { failValidation("Multimodal Model is required when not inheriting from completion"); return; }
         if (useCustomChatbot && !chatbotModelName.trim()) { failValidation("Chatbot Model is required when not inheriting from completion"); return; }
       }
       
       const creds = sessionStorage.getItem("creds");
-      let llmConfigData: any;
-
-      if (useMultipleProviders) {
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          completion_service: {
-            llm_service: completionProvider,
-            llm_model: completionDefaultModel,
-            authentication_configuration: buildAuthConfig(completionProvider, completionConfig),
-            ...buildServiceConfig(completionProvider, completionConfig)
-          },
-          embedding_service: {
-            embedding_model_service: embeddingProvider,
-            model_name: embeddingModel,
-            authentication_configuration: buildAuthConfig(embeddingProvider, embeddingConfig),
-            ...buildServiceConfig(embeddingProvider, embeddingConfig)
-          },
-        };
-        
-        if (useCustomMultimodal && multimodalModelName) {
-          llmConfigData.multimodal_service = {
-            llm_service: multimodalProvider,
-            llm_model: multimodalModelName,
-            authentication_configuration: buildAuthConfig(multimodalProvider, multimodalConfig),
-            ...buildServiceConfig(multimodalProvider, multimodalConfig)
-          };
-        } else {
-          // Inherit from completion — send empty to trigger test with resolved config
-          llmConfigData.multimodal_service = {};
-        }
-      } else {
-        llmConfigData = {
-          graphname: selectedGraph || undefined,
-          authentication_configuration: buildAuthConfig(singleProvider, singleConfig),
-          completion_service: {
-            llm_service: singleProvider,
-            llm_model: singleDefaultModel,
-            ...buildServiceConfig(singleProvider, singleConfig)
-          },
-          embedding_service: {
-            embedding_model_service: singleProvider,
-            model_name: singleEmbeddingModel,
-          },
-        };
-        if (multimodalModel.trim()) {
-          llmConfigData.multimodal_service = {
-            llm_model: multimodalModel,
-          };
-        } else {
-          // Inherit from completion — send empty to trigger test with resolved config
-          llmConfigData.multimodal_service = {};
-        }
-      }
-
-      // Add chat_service to test config
-      if (useCustomChatbot) {
-        if (useMultipleProviders) {
-          llmConfigData.chat_service = {
-            llm_service: chatbotProvider,
-            llm_model: chatbotModelName,
-            authentication_configuration: buildAuthConfig(chatbotProvider, chatbotProviderConfig),
-            model_kwargs: { temperature: parseFloat(chatbotTemperature) || 0 },
-            ...buildServiceConfig(chatbotProvider, chatbotProviderConfig),
-          };
-        } else if (chatbotModelName.trim()) {
-          llmConfigData.chat_service = {
-            llm_model: chatbotModelName,
-          };
-        }
-      }
+      const llmConfigData = buildLLMConfigPayload();
 
       const response = await fetch("/ui/config/llm/test", {
         method: "POST",
@@ -1123,26 +1051,13 @@ const LLMConfig = () => {
                 id="multiProvider"
                 checked={useMultipleProviders}
                 onChange={(e) => {
-                  const toMulti = e.target.checked;
-                  setUseMultipleProviders(toMulti);
-                  if (toMulti) {
-                    // Sync single-provider values → multi-provider state
-                    setCompletionProvider(singleProvider);
-                    setCompletionDefaultModel(singleDefaultModel);
-                    setCompletionConfig({ ...singleConfig });
-                    setEmbeddingProvider(singleProvider);
-                    setEmbeddingModel(singleEmbeddingModel);
-                    setEmbeddingConfig({ ...singleConfig });
-                    setMultimodalProvider(singleProvider);
-                    setMultimodalModelName(multimodalModel);
-                    setMultimodalConfig({ ...singleConfig });
-                  } else {
-                    // Sync multi-provider values → single-provider state
-                    setSingleProvider(completionProvider);
-                    setSingleDefaultModel(completionDefaultModel);
-                    setSingleConfig({ ...completionConfig });
-                    setSingleEmbeddingModel(embeddingModel);
-                    setMultimodalModel(multimodalModelName);
+                  setUseMultipleProviders(e.target.checked);
+                  if (!e.target.checked) {
+                    // Switching to single-provider: unify providers/configs to completion
+                    setEmbeddingProvider(completionProvider);
+                    setEmbeddingConfig({ ...completionConfig });
+                    setMultimodalProvider(completionProvider);
+                    setMultimodalConfig({ ...completionConfig });
                   }
                   clearTestResults();
                 }}
@@ -1174,7 +1089,7 @@ const LLMConfig = () => {
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
                         Provider
                       </label>
-                      <Select value={singleProvider} onValueChange={(value) => handleProviderChange(value, 'single')}>
+                      <Select value={completionProvider} onValueChange={(value) => handleProviderChange(value, 'completion')}>
                         <SelectTrigger className="dark:border-[#3D3D3D] dark:bg-background">
                           <SelectValue placeholder="Select provider" />
                         </SelectTrigger>
@@ -1189,7 +1104,7 @@ const LLMConfig = () => {
                       </p>
                     </div>
 
-                    {renderProviderFields(singleProvider, singleConfig, setSingleConfig)}
+                    {renderProviderFields(completionProvider, completionConfig, setCompletionConfig)}
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-black dark:text-white">
@@ -1198,10 +1113,10 @@ const LLMConfig = () => {
                       <Input
                         type="text"
                         className="dark:border-[#3D3D3D] dark:bg-background"
-                        placeholder={getModelPlaceholder(singleProvider, 'llm')}
-                        value={singleDefaultModel}
+                        placeholder={getModelPlaceholder(completionProvider, 'llm')}
+                        value={completionDefaultModel}
                         onChange={(e) => {
-                          setSingleDefaultModel(e.target.value);
+                          setCompletionDefaultModel(e.target.value);
                           clearTestResults();
                         }}
                       />
@@ -1224,9 +1139,6 @@ const LLMConfig = () => {
                           checked={!useCustomChatbot}
                           onChange={(e) => {
                             setUseCustomChatbot(!e.target.checked);
-                            if (e.target.checked) {
-                              setChatbotModelName("");
-                            }
                             clearTestResults();
                           }}
                         />
@@ -1238,7 +1150,7 @@ const LLMConfig = () => {
                         <Input
                           type="text"
                           className="dark:border-[#3D3D3D] dark:bg-background"
-                          placeholder={getModelPlaceholder(singleProvider, 'llm')}
+                          placeholder={getModelPlaceholder(completionProvider, 'llm')}
                           value={chatbotModelName}
                           onChange={(e) => {
                             setChatbotModelName(e.target.value);
@@ -1284,9 +1196,6 @@ const LLMConfig = () => {
                           checked={!useCustomMultimodal}
                           onChange={(e) => {
                             setUseCustomMultimodal(!e.target.checked);
-                            if (e.target.checked) {
-                              setMultimodalModel("");
-                            }
                             clearTestResults();
                           }}
                         />
@@ -1303,10 +1212,10 @@ const LLMConfig = () => {
                         <Input
                           type="text"
                           className="dark:border-[#3D3D3D] dark:bg-background"
-                          placeholder={getModelPlaceholder(singleProvider, 'multimodal')}
-                          value={multimodalModel}
+                          placeholder={getModelPlaceholder(completionProvider, 'multimodal')}
+                          value={multimodalModelName}
                           onChange={(e) => {
-                            setMultimodalModel(e.target.value);
+                            setMultimodalModelName(e.target.value);
                             clearTestResults();
                           }}
                         />
@@ -1325,10 +1234,10 @@ const LLMConfig = () => {
                       <Input
                         type="text"
                         className="dark:border-[#3D3D3D] dark:bg-background"
-                        placeholder={getModelPlaceholder(singleProvider, 'embedding')}
-                        value={singleEmbeddingModel}
+                        placeholder={getModelPlaceholder(completionProvider, 'embedding')}
+                        value={embeddingModel}
                         onChange={(e) => {
-                          setSingleEmbeddingModel(e.target.value);
+                          setEmbeddingModel(e.target.value);
                           clearTestResults();
                         }}
                       />
@@ -1412,15 +1321,6 @@ const LLMConfig = () => {
                       checked={!useCustomChatbot}
                       onChange={(e) => {
                         setUseCustomChatbot(!e.target.checked);
-                        if (e.target.checked) {
-                          setChatbotModelName("");
-                          setChatbotProviderConfig({});
-                        } else {
-                          // Restore base config from completion so masked credentials are shown
-                          setChatbotProvider(completionProvider);
-                          setChatbotProviderConfig({ ...completionConfig });
-                          setChatbotModelName(completionDefaultModel);
-                        }
                         clearTestResults();
                       }}
                     />
@@ -1508,15 +1408,6 @@ const LLMConfig = () => {
                       checked={!useCustomMultimodal}
                       onChange={(e) => {
                         setUseCustomMultimodal(!e.target.checked);
-                        if (e.target.checked) {
-                          setMultimodalModelName("");
-                          setMultimodalConfig({});
-                        } else {
-                          // Restore base config from completion so masked credentials are shown
-                          setMultimodalProvider(completionProvider);
-                          setMultimodalConfig({ ...completionConfig });
-                          setMultimodalModelName(completionDefaultModel);
-                        }
                         clearTestResults();
                       }}
                     />
