@@ -64,7 +64,8 @@ async def install_queries(
     async with tg_sem:
         res = await conn.gsql(query)
         logger.info(f"INSTALL QUERY ALL returned: {str(res)[:200]}")
-        if isinstance(res, str) and "error" in res.lower():
+        res_lower = res.lower() if isinstance(res, str) else ""
+        if "error" in res_lower or "does not exist" in res_lower or "failed" in res_lower:
             raise Exception(res)
 
     max_wait = 300  # seconds

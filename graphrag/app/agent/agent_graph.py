@@ -88,9 +88,11 @@ class TigerGraphAgentGraph:
         self.supportai_enabled = True
         self.supportai_retriever = supportai_retriever.lower().replace(" ", "")
         try:
-            self.db_connection.getQueryMetadata("StreamDocContent")
-        except TigerGraphException as e:
-            logger.info(f"StreamDocContent not found in the graph {self.db_connection.graphname}. Disabling supportai.")
+            vtypes = self.db_connection.getVertexTypes()
+            if "DocumentChunk" not in vtypes:
+                raise ValueError("DocumentChunk vertex type not found")
+        except Exception as e:
+            logger.info(f"SupportAI schema not found in graph {self.db_connection.graphname}. Disabling supportai.")
             self.supportai_enabled = False
 
     def emit_progress(self, msg):

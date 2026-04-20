@@ -52,7 +52,8 @@ INSTALL QUERY {query_name}
     async with util.tg_sem:
         res = await conn.gsql(query)
 
-    if "error" in res:
+    res_lower = res.lower() if isinstance(res, str) else ""
+    if "error" in res_lower or "does not exist" in res_lower or "failed" in res_lower:
         LogWriter.error(res)
         return {
             "result": None,
