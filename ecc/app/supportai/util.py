@@ -216,7 +216,10 @@ async def upsert_vertex(
 async def check_vertex_exists(conn, v_id: str):
     async with tg_sem:
         try:
-            res = await conn.getVerticesById("Entity", v_id)
+            from urllib.parse import quote
+            url = (conn.restppUrl + "/graph/" + conn.graphname
+                   + "/vertices/Entity/" + quote(v_id, safe=""))
+            res = await conn._req("GET", url, params={"select": "description"})
 
         except Exception as e:
             err = traceback.format_exc()

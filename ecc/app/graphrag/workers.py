@@ -210,15 +210,31 @@ async def embed(
             logger.error(f"Failed to add embeddings for {v_id}: {e}")
 
 
+def _is_near_duplicate(new_desc, existing_descs, threshold=0.85):
+    from difflib import SequenceMatcher
+    new_lower = new_desc.lower()
+    new_len = len(new_lower)
+    sm = SequenceMatcher(None, new_lower)
+    for existing in existing_descs:
+        ex_lower = existing.lower()
+        ex_len = len(ex_lower)
+        if 2 * min(new_len, ex_len) / (new_len + ex_len) < threshold:
+            continue
+        sm.set_seq2(ex_lower)
+        if sm.quick_ratio() >= threshold and sm.ratio() >= threshold:
+            return True
+    return False
+
+
 async def get_vert_desc(conn, v_id, node: Node):
-    desc = [node.properties.get("description", "")]
+    new_desc = node.properties.get("description", "")
     exists = await util.check_vertex_exists(conn, v_id)
-    # if vertex exists, get description content and append this description to it
     if not exists.get("error", False):
-        # deduplicate descriptions
-        desc.extend(exists["resp"][0]["attributes"]["description"])
-        desc = list(set(desc))
-    return desc
+        existing_descs = exists["resp"][0]["attributes"]["description"]
+        if not new_desc or _is_near_duplicate(new_desc, existing_descs):
+            return existing_descs if existing_descs else [new_desc]
+        return existing_descs + [new_desc]
+    return [new_desc]
 
 
 extract_sem = asyncio.Semaphore(util._worker_concurrency)
