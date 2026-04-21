@@ -374,9 +374,6 @@ class TigerGraphAgentGraph:
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
-            "query_output_format": self.db_connection.getQueryMetadata(
-                query_name
-            )["output"],
         }
         state["lookup_source"] = "supportai"
         return state
@@ -403,9 +400,6 @@ class TigerGraphAgentGraph:
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
-            "query_output_format": self.db_connection.getQueryMetadata(
-                query_name
-            )["output"],
         }
         state["lookup_source"] = "supportai"
         return state
@@ -431,9 +425,6 @@ class TigerGraphAgentGraph:
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
-            "query_output_format": self.db_connection.getQueryMetadata(
-                query_name
-            )["output"],
         }
         state["lookup_source"] = "supportai"
         return state
@@ -460,9 +451,6 @@ class TigerGraphAgentGraph:
         state["context"] = {
             "function_call": query_name,
             "result": step[0],
-            "query_output_format": self.db_connection.getQueryMetadata(
-                query_name
-            )["output"],
         }
         state["lookup_source"] = "supportai"
         return state

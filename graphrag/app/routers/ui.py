@@ -77,7 +77,6 @@ use_cypher = os.getenv("USE_CYPHER", "false").lower() == "true"
 route_prefix = "/ui"  # APIRouter's prefix doesn't work with the websocket, so it has to be done here
 router = APIRouter(tags=["UI"])
 security = HTTPBasic()
-GRAPH_NAME_RE = re.compile(r"- Graph (.*)\(")
 llm_config_lock = asyncio.Lock()
 
 # Cache for user role lookups (avoids repeated GSQL calls)
@@ -269,12 +268,8 @@ def auth(usr: str, password: str, conn=None) -> tuple[list[str], TigerGraphConne
         )
 
     try:
-        # parse user info
-        info = conn.gsql("LS USER")
-        graphs = []
-        for m in GRAPH_NAME_RE.finditer(info):
-            groups = m.groups()
-            graphs.extend(groups)
+        graph_list = conn.listGraphs()
+        graphs = [g["GraphName"] for g in graph_list if "GraphName" in g]
 
     except requests.exceptions.HTTPError as e:
         raise HTTPException(
@@ -2358,11 +2353,10 @@ async def test_db_connection(
             graphname="",
         )
         
-        # Test connection by listing users
         if db_test_config.get("getToken", False):
             test_conn.getToken()
-        
-        test_conn.gsql("LS USER")
+
+        test_conn.listGraphs()
         
         return {
             "status": "success",
