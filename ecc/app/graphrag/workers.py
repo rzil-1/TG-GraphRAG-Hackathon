@@ -230,10 +230,12 @@ async def get_vert_desc(conn, v_id, node: Node):
     new_desc = node.properties.get("description", "")
     exists = await util.check_vertex_exists(conn, v_id)
     if not exists.get("error", False):
-        existing_descs = exists["resp"][0]["attributes"]["description"]
-        if not new_desc or _is_near_duplicate(new_desc, existing_descs):
-            return existing_descs if existing_descs else [new_desc]
-        return existing_descs + [new_desc]
+        resp = exists.get("resp")
+        if resp and len(resp) > 0 and "attributes" in resp[0]:
+            existing_descs = resp[0]["attributes"].get("description", [])
+            if not new_desc or _is_near_duplicate(new_desc, existing_descs):
+                return existing_descs if existing_descs else [new_desc]
+            return existing_descs + [new_desc]
     return [new_desc]
 
 
