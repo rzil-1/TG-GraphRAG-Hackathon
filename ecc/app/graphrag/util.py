@@ -62,7 +62,7 @@ REQUIRED_QUERIES = [
     "common/gsql/graphrag/SetEpochProcessing",
     "common/gsql/graphrag/get_vertices_or_remove",
     "common/gsql/supportai/create_entity_type_relationships",
-] + COMMUNITY_QUERIES
+]
 load_q = reusable_channel.ReuseableChannel()
 
 # will pause workers until the event is false
