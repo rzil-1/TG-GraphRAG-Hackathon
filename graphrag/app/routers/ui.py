@@ -269,7 +269,7 @@ def auth(usr: str, password: str, conn=None) -> tuple[list[str], TigerGraphConne
 
     try:
         graph_list = conn.listGraphs()
-        graphs = [g["GraphName"] for g in graph_list if "GraphName" in g]
+        graphs = [g["graphName"] for g in graph_list if "graphName" in g]
 
     except requests.exceptions.HTTPError as e:
         raise HTTPException(
