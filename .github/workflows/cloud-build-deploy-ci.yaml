@@ -3,6 +3,15 @@ name: GraphRAG Build Cloud
 on:
   push:
     branches: [ "cloud-main" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE*'
+      - '.github/CODEOWNERS'
   workflow_dispatch:
 
 env:
@@ -16,6 +25,9 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -39,6 +51,7 @@ jobs:
         context: .
         file: ./graphrag/Dockerfile
         push: true
+        platforms: linux/amd64,linux/arm64
         tags: |
            tginternal/graphrag:${{steps.get-image.outputs.IMAGE}}
            tginternal/graphrag:cloud-latest
@@ -49,6 +62,7 @@ jobs:
         context: .
         file: ./ecc/Dockerfile
         push: true
+        platforms: linux/amd64,linux/arm64
         tags: |
            tginternal/graphrag-ecc:${{steps.get-image.outputs.IMAGE}}
            tginternal/graphrag-ecc:cloud-latest
