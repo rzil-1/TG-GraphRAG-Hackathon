@@ -1,1 +1,0 @@
-Splitting pyTG docs pattern: `==\\s*(\\w+)\\((.*?)\\)`
