@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+
+# Databases
+chroma_db/
+data/
+
+# IDEs
+.vscode/
+.idea/
+
+# Large logs/debug files
+debug_tg.py
+test_tg.py
+create_schema.py

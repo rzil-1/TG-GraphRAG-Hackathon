@@ -1,0 +1,11 @@
+streamlit
+pandas
+google-generativeai
+chromadb
+langchain
+langchain-google-genai
+requests
+bert-score
+evaluate
+python-dotenv
+tiktoken
