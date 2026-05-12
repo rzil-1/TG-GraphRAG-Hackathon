@@ -13,10 +13,10 @@ gemini_api_key = os.getenv("GEMINI_API_KEY")
 def load_data(sample_size=5000):
     print(f"Loading {sample_size} reviews from Kaggle dataset...")
     # Load product info
-    products_df = pd.read_csv("data/product_info.csv")
+    products_df = pd.read_csv("product_info.csv")
     
     # Load a chunk of reviews
-    reviews_df = pd.read_csv("data/reviews_0-250.csv", nrows=sample_size)
+    reviews_df = pd.read_csv("reviews_0-250.csv", nrows=sample_size)
     
     # Merge reviews with product info to give the LLM full context
     merged_df = pd.merge(reviews_df, products_df[['product_id', 'ingredients']], 

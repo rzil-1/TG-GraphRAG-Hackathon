@@ -10,8 +10,8 @@ gemini_api_key = os.getenv("GEMINI_API_KEY")
 
 def ingest_data_to_tigergraph(conn, sample_size=5000):
     print("Loading data for TigerGraph ingestion...")
-    products_df = pd.read_csv("data/product_info.csv")
-    reviews_df = pd.read_csv("data/reviews_0-250.csv", nrows=sample_size)
+    products_df = pd.read_csv("product_info.csv")
+    reviews_df = pd.read_csv("reviews_0-250.csv", nrows=sample_size)
     
     # Preprocess Products
     products_df = products_df[['product_id', 'product_name', 'brand_name', 'ingredients']].fillna("Unknown")
