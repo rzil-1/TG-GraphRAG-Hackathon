@@ -23,11 +23,23 @@ def ask_llm_baseline(question: str) -> str:
     Pipeline 1: LLM-Only Baseline.
     Takes a question and returns the answer using ONLY the LLM's internal knowledge.
     No vector search, no graph search.
+    Includes retry logic for Gemini 503 (rate limit) errors.
     """
+    import time
     print(f"Running LLM-Only Baseline for question: '{question}'")
     
-    response = llm.invoke([HumanMessage(content=question)])
-    return response.content
+    for attempt in range(3):
+        try:
+            response = llm.invoke([HumanMessage(content=question)])
+            return response.content
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                print(f"  Gemini rate-limited (attempt {attempt+1}/3). Retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                return f"Error: {e}"
+    return "Error: Gemini API unavailable after 3 retries. Try again in a minute."
 
 if __name__ == "__main__":
     # Test question related to our Beauty dataset

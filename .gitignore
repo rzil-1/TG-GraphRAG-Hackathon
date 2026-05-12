@@ -10,6 +10,7 @@ __pycache__/
 # Databases
 chroma_db/
 data/
+*.zip
 
 # IDEs
 .vscode/
