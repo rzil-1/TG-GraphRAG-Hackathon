@@ -1,4 +1,5 @@
 import os
+import time
 import pandas as pd
 from dotenv import load_dotenv
 import pyTigerGraph as tg
@@ -7,6 +8,28 @@ from langchain_core.prompts import PromptTemplate
 
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
+
+# ---------------------------------------------------------------------------
+# Connection helper — reusable by the dashboard (app.py)
+# ---------------------------------------------------------------------------
+def get_tg_connection():
+    """Create and return an authenticated TigerGraph connection."""
+    host = os.getenv('TG_HOST')
+    secret = os.getenv('TG_PASSWORD')
+    temp = tg.TigerGraphConnection(host=host, graphname='fashion', gsqlSecret=secret, tgCloud=True)
+    token = temp.getToken(secret)[0]
+    return tg.TigerGraphConnection(
+        host=host, graphname='fashion',
+        apiToken=token, gsqlSecret=secret, tgCloud=True
+    )
+
+def is_graph_loaded(conn, min_vertices=100):
+    """Check if the graph already has data (skip re-ingestion)."""
+    try:
+        count = conn.getVertexCount('Review')
+        return count >= min_vertices
+    except Exception:
+        return False
 
 def ingest_data_to_tigergraph(conn, sample_size=5000):
     print("Loading data for TigerGraph ingestion...")
@@ -108,21 +131,30 @@ INTERPRET QUERY () FOR GRAPH fashion {{
         print(f"Graph query failed: {e}")
         return "Error retrieving graph context."
 
-def run_graphrag_pipeline(conn, question):
+def run_graphrag_pipeline(conn, question, search_brand="Laneige", search_skin_type="normal"):
+    """Full GraphRAG pipeline: graph retrieval → LLM generation.
+    
+    Args:
+        conn: authenticated TigerGraph connection
+        question: the user's question
+        search_brand: brand to filter on (from dashboard input)
+        search_skin_type: skin type to filter on (from dashboard input)
+    """
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash", 
         google_api_key=gemini_api_key,
         temperature=0.3
     )
     
-    # 1. Retrieve Context from Graph
-    # In a full app, an LLM agent would extract "Laneige" and "Normal" from the query automatically!
-    context = get_graph_context(conn, search_brand="Laneige", search_skin_type="Normal")
+    # 1. Retrieve Context from Graph (uses dashboard filter values)
+    context = get_graph_context(conn, search_brand=search_brand, search_skin_type=search_skin_type)
     
     # 2. Augment Prompt with Graph Context
     prompt = PromptTemplate.from_template(
         "You are an intelligent beauty assistant powered by a TigerGraph Knowledge Graph.\n"
-        "Use the following highly-connected graph context to answer the question.\n\n"
+        "Use the following graph-retrieved context (real product reviews connected \n"
+        "through a knowledge graph) to answer the question thoroughly.\n"
+        "Summarize the key themes from the reviews and mention specific products.\n\n"
         "Graph Context:\n{context}\n\n"
         "Question: {question}\n"
         "Answer:"
@@ -134,35 +166,36 @@ def run_graphrag_pipeline(conn, question):
     print(context[:500] + "...\n(truncated for display)")
     
     print("\nGenerating Answer...")
-    result = chain.invoke({"context": context, "question": question})
-    return result.content
+    # Retry logic for Gemini 503 errors
+    for attempt in range(3):
+        try:
+            result = chain.invoke({"context": context, "question": question})
+            return result.content
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                wait = 2 ** attempt
+                print(f"  Gemini rate-limited (attempt {attempt+1}/3). Retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                return f"Error generating answer: {e}"
+    return "Error: Gemini API unavailable after 3 retries."
 
 if __name__ == "__main__":
-    host = os.getenv('TG_HOST')
-    secret = os.getenv('TG_PASSWORD')
+    conn = get_tg_connection()
     
-    # Get a bearer token from the secret
-    temp_conn = tg.TigerGraphConnection(host=host, graphname='fashion', gsqlSecret=secret, tgCloud=True)
-    token = temp_conn.getToken(secret)[0]
-    
-    # Single connection with BOTH apiToken (REST upserts) and gsqlSecret (GSQL queries)
-    conn = tg.TigerGraphConnection(
-        host=host,
-        graphname='fashion',
-        apiToken=token,
-        gsqlSecret=secret,
-        tgCloud=True
-    )
-    
-    ingest_data_to_tigergraph(conn, sample_size=5000)
+    # Only ingest if the graph is empty (saves ~35 seconds on repeated runs!)
+    if not is_graph_loaded(conn):
+        print("Graph is empty — ingesting data...")
+        ingest_data_to_tigergraph(conn, sample_size=5000)
+    else:
+        print("Graph already has data — skipping ingestion.")
     
     test_q = "What are the common experiences of people with 'Normal' skin using Laneige products?"
     
     print("\n--- PIPELINE 3: GraphRAG ---")
     print(f"Question: {test_q}\n")
     
-    # In the real app, we'd extract these from the query. For the demo run:
-    answer = run_graphrag_pipeline(conn, test_q)
+    answer = run_graphrag_pipeline(conn, test_q, search_brand="Laneige", search_skin_type="normal")
     
     print("\nAnswer:")
     print(answer)
