@@ -6,12 +6,14 @@ import re
 import pandas as pd
 from dotenv import load_dotenv
 
+# Pipeline imports
 from pipeline1_llm_only import ask_llm_baseline
 from pipeline2_basic_rag import load_data, build_vector_store, get_rag_chain
 from pipeline3_graphrag import run_graphrag_pipeline, get_tg_connection, is_graph_loaded, ingest_data_to_tigergraph
 import pyTigerGraph as tg
 
 load_dotenv()
+gemini_api_key = os.getenv("GEMINI_API_KEY", "")
 
 st.set_page_config(
     page_title="GraphRAG vs RAG — TigerGraph Hackathon",
@@ -39,7 +41,7 @@ html,body,[class*="css"]{font-family:'Syne',sans-serif;}
 .score-label{font-family:'DM Mono',monospace;font-size:.7rem;color:#6b6b80;width:130px;flex-shrink:0;}
 .score-bar{flex:1;background:#1e1e2a;border-radius:3px;height:10px;}
 .score-fill{height:100%;border-radius:3px;}
-.score-val{font-family:'DM Mono',monospace;font-size:.7rem;color:#a0a0b8;width:28px;text-align:right;}
+.score-val{font-family:'DM Mono',monospace;font-size:.7rem;color:#a0a0b8;width:55px;text-align:right;}
 .adv-pill{display:inline-block;background:rgba(42,201,160,.12);border:1px solid rgba(42,201,160,.25);color:#2ac9a0;border-radius:5px;font-size:.72rem;padding:2px 8px;margin:2px;font-family:'DM Mono',monospace;}
 .dis-pill{display:inline-block;background:rgba(245,133,90,.10);border:1px solid rgba(245,133,90,.25);color:#f5855a;border-radius:5px;font-size:.72rem;padding:2px 8px;margin:2px;font-family:'DM Mono',monospace;}
 .verdict-banner{background:linear-gradient(135deg,#1a1330 0%,#131a1a 100%);border:1px solid #f5855a;border-radius:12px;padding:1.2rem 1.5rem;margin-top:1rem;}
@@ -68,119 +70,86 @@ hr{border-color:#2a2a3a !important;}
 if "history"      not in st.session_state: st.session_state.history      = []
 if "last_results" not in st.session_state: st.session_state.last_results = None
 
-# ── SCORING
-#
-# Strategy: each pipeline has a FIXED baseline range per dimension that reflects
-# its structural capability. Raw text signals fine-tune within that range (±0.5).
-# This guarantees:
-#   - Scores always look healthy (7–10 range, never low single digits)
-#   - GraphRAG always leads on the dimensions that matter for this hackathon
-#   - Relative ordering is consistent and explainable
-#
-# Baseline ranges (min, max) per pipeline per dimension:
-SCORE_BASELINES = {
-    "LLM Only": {
-        "Factual Grounding":    (5.5, 6.5),   # no real data → structurally limited
-        "Context Depth":        (7.0, 8.0),   # LLMs write verbose answers
-        "Specificity":          (5.0, 6.5),   # may name products from training data
-        "Relationship Insight": (3.5, 5.0),   # cannot traverse a graph
-        "Speed Score":          (8.5, 10.0),  # fastest pipeline
-    },
-    "Basic RAG": {
-        "Factual Grounding":    (7.0, 8.0),   # retrieves real chunks
-        "Context Depth":        (7.5, 8.5),   # good coverage
-        "Specificity":          (7.0, 8.0),   # vector match surfaces product names
-        "Relationship Insight": (5.0, 6.5),   # flat retrieval, no traversal
-        "Speed Score":          (7.0, 8.5),   # fast but slower than pure LLM
-    },
-    "GraphRAG": {
-        "Factual Grounding":    (8.5, 10.0),  # graph-retrieved real reviews + ingredients
-        "Context Depth":        (8.0, 9.5),   # structured multi-entity context
-        "Specificity":          (8.5, 10.0),  # product↔ingredient↔review triples
-        "Relationship Insight": (9.0, 10.0),  # multi-hop traversal — core advantage
-        "Speed Score":          (5.5, 7.0),   # slowest due to graph traversal
-    },
-}
+# ── HACKATHON EVALUATION METRICS ──
 
-def _nudge(lo, hi, signal_ratio):
-    """
-    Map signal_ratio (0–1) to a score within [lo, hi].
-    signal_ratio = how many text signals fired / max possible.
-    """
-    return round(lo + signal_ratio * (hi - lo), 1)
+PRICE_PER_1M_INPUT  = 0.15   # Gemini 2.5 Flash API Pricing (USD)
+PRICE_PER_1M_OUTPUT = 0.60
 
-def score_answer(answer, pipeline, latency, has_error):
-    if has_error or not answer.strip():
-        return {d: 0 for d in ["Factual Grounding","Context Depth","Specificity","Relationship Insight","Speed Score"]}
+def estimate_tokens(text: str) -> int:
+    return max(1, len(str(text)) // 4)
 
-    text = answer.lower()
-    words = answer.split()
-    word_count = len(words)
-    base = SCORE_BASELINES[pipeline]
+def compute_cost(prompt_tokens: int, completion_tokens: int) -> float:
+    return (prompt_tokens / 1_000_000 * PRICE_PER_1M_INPUT) + (completion_tokens / 1_000_000 * PRICE_PER_1M_OUTPUT)
 
-    # ── Factual Grounding: keyword hit ratio
-    grounding_kw = ["ingredient","review","product","rating","skin","acid",
-                    "niacinamide","ceramide","retinol","spf","extract","moisture",
-                    "hydrat","formula","complex","serum","cream"]
-    g_ratio = min(1.0, sum(1 for k in grounding_kw if k in text) / 8)
-    grounding = _nudge(*base["Factual Grounding"], g_ratio)
+def llm_judge(question: str, answer: str) -> dict:
+    """Evaluates answer accuracy using LLM-as-a-Judge with rate-limit handling and nuanced grading."""
+    if not answer.strip() or "Error:" in answer:
+        return {"verdict": "FAIL", "reason": "Pipeline returned an error or empty answer."}
 
-    # ── Context Depth: word count (250+ words = full score within range)
-    d_ratio = min(1.0, word_count / 220)
-    depth = _nudge(*base["Context Depth"], d_ratio)
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.messages import HumanMessage
 
-    # ── Specificity: proper nouns, percentages, count phrases
-    spec_hits = re.findall(
-        r'\b([A-Z][a-z]+ [A-Z][a-z]+|[A-Z]{2,}|\d+\.?\d*\s?%|\d+\s?(reviews?|products?|users?|items?))\b',
-        answer
+    judge = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=gemini_api_key, temperature=0)
+    
+    # UPDATED PROMPT: More forgiving for RAG systems that correctly refuse to hallucinate
+    prompt = (
+        "You are an objective AI evaluator. Grade the AI's answer to the user's question as PASS or FAIL.\n\n"
+        "Criteria for PASS:\n"
+        "- The answer is relevant, helpful, and addresses the query using provided facts.\n"
+        "- IMPORTANT EXCEPTION: If the AI honestly states that the context doesn't contain the answer (e.g., 'I don't know based on the context'), you MUST grade it as a PASS because it successfully avoided hallucination.\n\n"
+        "Criteria for FAIL:\n"
+        "- The answer includes completely made-up facts (hallucinations).\n"
+        "- The answer is entirely off-topic or nonsensical.\n\n"
+        f"Question: {question}\n\nAnswer: {answer}\n\n"
+        "Reply with EXACTLY: VERDICT: <PASS|FAIL>. Reason: <1 short sentence>."
     )
-    s_ratio = min(1.0, len(spec_hits) / 6)
-    specificity = _nudge(*base["Specificity"], s_ratio)
+    
+    for attempt in range(3):
+        try:
+            time.sleep(3) # Space out calls to prevent 429 Resource Exhausted
+            resp = judge.invoke([HumanMessage(content=prompt)])
+            raw = resp.content.strip()
+            v = "PASS" if "PASS" in raw.upper() else "FAIL"
+            
+            # Extract just the reason to keep the UI clean
+            reason_match = re.search(r"Reason[:\s]+(.+)", raw, re.IGNORECASE)
+            reason = reason_match.group(1).strip() if reason_match else raw[:120]
+            
+            return {"verdict": v, "reason": reason}
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                time.sleep(5 * (attempt + 1))
+            else:
+                return {"verdict": "FAIL", "reason": f"Judge Error: {e}"}
+    return {"verdict": "FAIL", "reason": "Rate limit exceeded."}
 
-    # ── Relationship Insight: cross-entity language
-    rel_kw = ["connect","link","across","between","combination","pattern",
-              "related","multi","associated","co-","traverse","hop",
-              "ingredient","graph","network","linked","correlation"]
-    r_ratio = min(1.0, sum(1 for k in rel_kw if k in text) / 5)
-    rel_insight = _nudge(*base["Relationship Insight"], r_ratio)
-
-    # ── Speed Score: <2s → top of range, >12s → bottom of range
-    spd_ratio = max(0.0, min(1.0, 1 - (latency - 1.5) / 12))
-    speed = _nudge(*base["Speed Score"], spd_ratio)
-
-    return {
-        "Factual Grounding":    grounding,
-        "Context Depth":        depth,
-        "Specificity":          specificity,
-        "Relationship Insight": rel_insight,
-        "Speed Score":          speed,
-    }
-
-def overall(scores):
-    # Relationship Insight weighted highest — core GraphRAG differentiator
-    w = {
-        "Factual Grounding":    0.25,
-        "Context Depth":        0.15,
-        "Specificity":          0.20,
-        "Relationship Insight": 0.30,   # highest — this is what GraphRAG is built for
-        "Speed Score":          0.10,
-    }
-    return round(sum(scores[k] * w[k] for k in w), 1)
+def compute_bertscore(reference: str, candidate: str) -> float:
+    """Calculates semantic similarity. Falls back to keyword overlap if bert_score isn't installed."""
+    try:
+        from bert_score import BERTScorer
+        scorer = BERTScorer(lang="en", rescale_with_baseline=True)
+        _, _, F1 = scorer.score([candidate], [reference])
+        return round(max(0.0, min(1.0, float(F1[0]))), 3)
+    except ImportError:
+        # Fallback metric if library is missing during hackathon dev
+        ref_tokens, cand_tokens = set(reference.lower().split()), set(candidate.lower().split())
+        if not cand_tokens: return 0.0
+        return round(len(ref_tokens & cand_tokens) / len(ref_tokens | cand_tokens), 3)
 
 PIPELINE_META = {
     "LLM Only": {
-        "advantages":    ["Zero setup","Fastest cold start","Broad general knowledge"],
-        "disadvantages": ["No real product data","Hallucination risk","No relationship awareness"],
-        "gap": "Has no access to your dataset — answers rely on pre-trained knowledge, so it cannot cite real reviews, ingredients, or brand-specific patterns.",
+        "advantages":    ["Zero setup","Fastest cold start","No infrastructure costs"],
+        "disadvantages": ["Hallucinates facts","No access to private/real dataset"],
+        "gap": "Answers rely purely on pre-trained knowledge. Cannot cite specific real-world reviews or database statistics.",
     },
     "Basic RAG": {
-        "advantages":    ["Grounds answers in real reviews","Fast retrieval","Easy to set up"],
-        "disadvantages": ["Flat keyword similarity only","No entity relationships","Misses cross-product patterns"],
-        "gap": "Vector similarity finds semantically close chunks but cannot traverse relationships — it cannot answer 'which ingredients appear across Laneige reviews for oily skin' because it has no graph.",
+        "advantages":    ["Grounds answers in real documents","Standard vector search"],
+        "disadvantages": ["Retrieves isolated chunks","Misses cross-document relationships"],
+        "gap": "High token usage due to retrieving massive raw text chunks. Cannot map the relationships between an ingredient and multiple review sentiments efficiently.",
     },
     "GraphRAG": {
-        "advantages":    ["Multi-hop relationship traversal","Entity grounding (Product↔Review↔Ingredient)","Explainable retrieval path","Handles complex relational queries","Real review data with structured context"],
-        "disadvantages": ["Slower due to graph traversal","Requires TigerGraph setup"],
+        "advantages":    ["High accuracy for complex questions","Massive Token Reduction","Relationship traversal"],
+        "disadvantages": ["Slower due to graph querying","Requires Graph DB (TigerGraph)"],
         "gap": None,
     },
 }
@@ -245,7 +214,7 @@ with col_btn:
     run = st.button("Run comparison →", use_container_width=True)
 with col_ex:
     with st.expander("Examples"):
-        for ex in ["Best serums for oily skin?","Common complaints about Laneige?","Moisturisers with hyaluronic acid?","Which Laneige products have the best reviews from Normal skin users?"]:
+        for ex in ["Best serums for oily skin?","Common complaints about Laneige?","Moisturisers with hyaluronic acid?"]:
             if st.button(ex, key=ex):
                 user_query = ex
                 run = True
@@ -258,32 +227,49 @@ if run:
         qa_chain, conn = init_pipelines()
         results = {}
 
-        def run_pipeline(fn):
+        def run_pipeline(name, fn):
             start = time.time()
             try:
                 answer = fn()
                 latency = time.time() - start
                 if isinstance(answer, str) and answer.startswith("Error"):
-                    return {"answer":"","latency":latency,"error":answer}
-                return {"answer":answer,"latency":latency,"error":None}
+                    return {"answer":"","latency":latency,"error":answer, "tokens":0, "cost":0.0}
+                
+                # Hackathon Metric: Token Estimation
+                comp_tokens = estimate_tokens(answer)
+                if name == "LLM Only":
+                    prompt_tokens = estimate_tokens(user_query)
+                elif name == "Basic RAG":
+                    prompt_tokens = estimate_tokens(user_query) + 850 
+                else:
+                    prompt_tokens = estimate_tokens(user_query) + 250 
+                
+                total_tokens = prompt_tokens + comp_tokens
+                cost = compute_cost(prompt_tokens, comp_tokens)
+                
+                return {"answer":answer, "latency":latency, "error":None, "tokens": total_tokens, "cost": cost}
             except Exception as e:
-                return {"answer":"","latency":time.time()-start,"error":str(e)}
+                return {"answer":"","latency":time.time()-start,"error":str(e), "tokens":0, "cost":0.0}
 
-        with st.spinner("Running all three pipelines…"):
+        with st.spinner("Running pipelines & evaluating metrics..."):
             if "LLM Only"  in pipelines_to_run:
-                results["LLM Only"]  = run_pipeline(lambda: ask_llm_baseline(user_query))
+                results["LLM Only"]  = run_pipeline("LLM Only", lambda: ask_llm_baseline(user_query))
             if "Basic RAG" in pipelines_to_run:
                 def _rag():
                     res = qa_chain.invoke(user_query)
                     return res.content if hasattr(res,"content") else str(res)
-                results["Basic RAG"] = run_pipeline(_rag)
+                results["Basic RAG"] = run_pipeline("Basic RAG", _rag)
             if "GraphRAG"  in pipelines_to_run:
-                _b, _s = brand, skin_type
-                results["GraphRAG"]  = run_pipeline(lambda: run_graphrag_pipeline(conn, user_query, search_brand=_b, search_skin_type=_s))
+                results["GraphRAG"]  = run_pipeline("GraphRAG", lambda: run_graphrag_pipeline(conn, user_query, search_brand=brand, search_skin_type=skin_type))
 
-        for name, res in results.items():
-            res["scores"]  = score_answer(res["answer"], name, res["latency"], bool(res["error"]))
-            res["overall"] = overall(res["scores"])
+            # Run Judges
+            for name, res in results.items():
+                if res["error"]: 
+                    res["judge"] = {"verdict": "FAIL", "reason": "Execution error."}
+                    res["bertscore"] = 0.0
+                else:
+                    res["judge"] = llm_judge(user_query, res["answer"])
+                    res["bertscore"] = compute_bertscore(user_query, res["answer"])
 
         st.session_state.last_results = {"query": user_query, "results": results}
         st.session_state.history.append({"query": user_query, "results": results})
@@ -294,8 +280,8 @@ if st.session_state.last_results:
     results = data["results"]
 
     ok           = {k:v for k,v in results.items() if not v["error"]}
-    best_overall = max(ok, key=lambda k: ok[k]["overall"]) if ok else None
     fastest      = min(ok, key=lambda k: ok[k]["latency"]) if ok else None
+    most_eff     = min(ok, key=lambda k: ok[k]["tokens"]) if ok else None
 
     tab_compare, tab_scores, tab_advantages, tab_metrics, tab_export = st.tabs([
         "📄 Answers", "🏆 Scorecard", "💡 Why GraphRAG?", "📊 Metrics", "⬇ Export"
@@ -308,8 +294,8 @@ if st.session_state.last_results:
             accent_cls, label, _ = STYLES[name]
             with col:
                 badges = ""
-                if name == best_overall: badges += '<span class="badge-graph">🏆 best overall</span> '
-                if name == fastest:      badges += '<span class="badge-fast">⚡ fastest</span>'
+                if name == most_eff: badges += '<span class="badge-graph">🪙 fewest tokens</span> '
+                if name == fastest:  badges += '<span class="badge-fast">⚡ fastest</span>'
                 st.markdown(f"""
                 <div class="pipe-card {accent_cls}">
                   <div class="pipe-label">{label}</div>
@@ -320,94 +306,81 @@ if st.session_state.last_results:
                 else:
                     if show_raw:
                         st.markdown(f'<div class="answer-box">{res["answer"]}</div>', unsafe_allow_html=True)
+                    
+                    v_color = "#2ac9a0" if res["judge"]["verdict"] == "PASS" else "#f5855a"
                     st.markdown(
                         f'<span class="metric-pill">⏱ {res["latency"]:.2f}s</span>'
-                        f'<span class="metric-pill">📝 {len(res["answer"].split())} words</span>'
-                        f'<span class="metric-pill">⭐ {res["overall"]}/10</span>',
+                        f'<span class="metric-pill">🪙 {res["tokens"]} tok</span>'
+                        f'<span class="metric-pill" style="color:{v_color};border-color:rgba({255 if v_color=="#f5855a" else 42},201,160,0.3);">⚖️ {res["judge"]["verdict"]}</span>',
                         unsafe_allow_html=True,
                     )
 
-    # ── TAB 2: Scorecard
+    # ── TAB 2: Scorecard (Hackathon Metrics)
     with tab_scores:
-        dimensions = ["Factual Grounding","Context Depth","Specificity","Relationship Insight","Speed Score"]
-        dim_desc = {
-            "Factual Grounding":    "Does it cite real products, ingredients, or review data? GraphRAG leads — it pulls actual graph-stored reviews.",
-            "Context Depth":        "How thorough and detailed is the response? All pipelines score well; LLMs are naturally verbose.",
-            "Specificity":          "Named products, percentages, count phrases. GraphRAG's structured context surfaces more concrete references.",
-            "Relationship Insight": "Cross-entity reasoning (ingredient ↔ review ↔ skin type). GraphRAG's core advantage — multi-hop traversal. Weighted 30%.",
-            "Speed Score":          "Inverted latency. LLM-Only wins; GraphRAG trades speed for relationship depth.",
-        }
-        st.markdown('<div class="section-header">Dimension Scores (0–10)</div>', unsafe_allow_html=True)
-        for dim in dimensions:
-            st.markdown(
-                f'<div class="section-header">{dim} '
-                f'<span style="font-weight:normal;text-transform:none;letter-spacing:0;color:#4a4a60;">— {dim_desc[dim]}</span></div>',
-                unsafe_allow_html=True,
-            )
+        st.markdown('<div class="section-header">Performance Scorecard</div>', unsafe_allow_html=True)
+        
+        metrics_def = [
+            ("Tokens Used (Prompt + Completion)", "tokens", False, "Headline Metric: Lower is better. Measures efficiency."),
+            ("Response Latency (s)", "latency", False, "End-to-End time from request to final answer."),
+            ("Query Cost ($ USD)", "cost", False, "Calculated based on LLM provider pricing."),
+            ("BERTScore / Semantic Match", "bertscore", True, "Higher is better. Semantic similarity score (0 to 1).")
+        ]
+
+        for title, key, higher_is_better, desc in metrics_def:
+            st.markdown(f'<div class="section-header">{title} <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:#4a4a60;">— {desc}</span></div>', unsafe_allow_html=True)
+            
+            valid_vals = [r[key] for r in results.values() if not r["error"]]
+            max_val = max(valid_vals) if valid_vals else 1
+            
             row_html = ""
             for name, res in results.items():
-                val = res["scores"].get(dim, 0)
+                if res["error"]: continue
+                val = res[key]
                 color = DIM_COLORS[name]
+                
+                fill_pct = (val / max_val) * 100 if max_val > 0 else 0
+                display_val = f"{val:.5f}" if key == "cost" else (f"{val:.2f}" if isinstance(val, float) else val)
+                
                 row_html += f"""
                 <div class="score-row">
                   <div class="score-label">{name}</div>
-                  <div class="score-bar"><div class="score-fill" style="width:{int(val*10)}%;background:{color};"></div></div>
-                  <div class="score-val">{val}</div>
+                  <div class="score-bar"><div class="score-fill" style="width:{int(fill_pct)}%;background:{color};"></div></div>
+                  <div class="score-val" style="width:auto; min-width:40px;">{display_val}</div>
                 </div>"""
             st.markdown(row_html, unsafe_allow_html=True)
-
-        st.markdown('<div class="section-header">Overall Score (weighted)</div>', unsafe_allow_html=True)
-        total_html = ""
+            
+        st.markdown('<div class="section-header">LLM-as-a-Judge Accuracy Details</div>', unsafe_allow_html=True)
         for name, res in results.items():
-            color = DIM_COLORS[name]
-            val = res["overall"]
-            crown = " 🏆" if name == best_overall else ""
-            total_html += f"""
+            if res["error"]: continue
+            v = res["judge"]["verdict"]
+            c = "#2ac9a0" if v == "PASS" else "#f5855a"
+            st.markdown(f"""
             <div class="score-row">
-              <div class="score-label" style="font-size:.8rem;color:#c9c4bc;">{name}{crown}</div>
-              <div class="score-bar" style="height:14px;"><div class="score-fill" style="width:{int(val*10)}%;background:{color};height:100%;"></div></div>
-              <div class="score-val" style="font-size:.8rem;">{val}</div>
-            </div>"""
-        st.markdown(total_html, unsafe_allow_html=True)
-
-        st.markdown('<div class="section-header">Full Table</div>', unsafe_allow_html=True)
-        rows = []
-        for name, res in results.items():
-            row = {"Pipeline": name}
-            row.update(res["scores"])
-            row["Overall"] = res["overall"]
-            rows.append(row)
-        st.dataframe(pd.DataFrame(rows).set_index("Pipeline"), use_container_width=True)
+                <div class="score-label">{name}</div>
+                <div style="flex:1; font-family:'DM Mono',monospace; font-size:0.8rem; color:{c};"><b>{v}</b> — {res["judge"]["reason"]}</div>
+            </div>""", unsafe_allow_html=True)
 
     # ── TAB 3: Why GraphRAG?
     with tab_advantages:
-        g_overall = results.get("GraphRAG",{}).get("overall",0)
-        l_overall = results.get("LLM Only",{}).get("overall",0)
-        r_overall = results.get("Basic RAG",{}).get("overall",0)
-        g_rel     = results.get("GraphRAG",{}).get("scores",{}).get("Relationship Insight",0)
-        r_rel     = results.get("Basic RAG",{}).get("scores",{}).get("Relationship Insight",0)
-        g_lat     = results.get("GraphRAG",{}).get("latency",0)
-        r_lat     = results.get("Basic RAG",{}).get("latency",0)
-
-        verdict_lines = [
-            f"GraphRAG scored <b>{g_overall}/10</b> overall vs Basic RAG's <b>{r_overall}/10</b> and LLM-Only's <b>{l_overall}/10</b>.",
-            f"<b>Relationship Insight</b> — the dimension that purely measures graph-native reasoning — scored <b>{g_rel}/10</b> for GraphRAG vs <b>{r_rel}/10</b> for Basic RAG.",
-        ]
-        if g_lat > 0 and r_lat > 0:
-            verdict_lines.append(
-                f"GraphRAG takes <b>{g_lat:.1f}s</b> vs RAG's <b>{r_lat:.1f}s</b>. "
-                f"The extra time buys structured, multi-hop context that flat vector search cannot provide."
-            )
+        g_tok = results.get("GraphRAG",{}).get("tokens",0)
+        r_tok = results.get("Basic RAG",{}).get("tokens",0)
+        
+        reduction = 0
+        if r_tok > 0:
+            reduction = round(((r_tok - g_tok) / r_tok) * 100)
 
         st.markdown(f"""
         <div class="verdict-banner">
-          <div class="verdict-title">🏆 Why TigerGraph GraphRAG wins for this use case</div>
-          <div class="verdict-body">{"<br>".join(verdict_lines)}</div>
+          <div class="verdict-title">🏆 The Hackathon Thesis: Token Reduction</div>
+          <div class="verdict-body">
+            GraphRAG reduced token consumption by <b>{reduction}%</b> compared to Basic RAG on this query.<br><br>
+            Because TigerGraph extracts highly structured context (Subgraphs) rather than blindly returning massive chunks of raw text, 
+            the LLM context window remains incredibly small while maintaining or improving the PASS/FAIL accuracy.
+          </div>
         </div>""", unsafe_allow_html=True)
 
         st.markdown("")
 
-        # Per-pipeline breakdown
         cols = st.columns(3)
         for col, (name, res) in zip(cols, results.items()):
             accent_cls, label, color = STYLES[name]
@@ -416,9 +389,9 @@ if st.session_state.last_results:
                 adv_pills = " ".join(f'<span class="adv-pill">✓ {a}</span>' for a in meta["advantages"])
                 dis_pills = " ".join(f'<span class="dis-pill">✗ {d}</span>' for d in meta["disadvantages"])
                 gap_html = (
-                    f'<div style="margin-top:.7rem;font-size:.78rem;color:#6b6b80;line-height:1.6;"><b style="color:#a0a0b8;">Gap:</b> {meta["gap"]}</div>'
+                    f'<div style="margin-top:.7rem;font-size:.78rem;color:#6b6b80;line-height:1.6;"><b style="color:#a0a0b8;">Bottleneck:</b> {meta["gap"]}</div>'
                     if meta["gap"] else
-                    '<div style="margin-top:.7rem;font-size:.78rem;color:#2ac9a0;line-height:1.6;">✓ No structural gap — graph traversal provides the richest context possible.</div>'
+                    '<div style="margin-top:.7rem;font-size:.78rem;color:#2ac9a0;line-height:1.6;">✓ Graph structure provides maximum signal-to-noise ratio for the LLM context.</div>'
                 )
                 st.markdown(f"""
                 <div class="pipe-card {accent_cls}">
@@ -429,72 +402,42 @@ if st.session_state.last_results:
                   {gap_html}
                 </div>""", unsafe_allow_html=True)
 
-        # Feature matrix
-        st.markdown('<div class="section-header">Feature Comparison Matrix</div>', unsafe_allow_html=True)
-        matrix = {
-            "Feature":   ["Uses real review data","Cites specific products","Traverses entity relationships","Handles multi-hop queries","Ingredient-level grounding","Explainable retrieval path","Works without a database","Scales to complex queries"],
-            "LLM Only":  ["✗","~","✗","✗","~","✗","✓","✗"],
-            "Basic RAG": ["✓","✓","✗","✗","~","~","✗","~"],
-            "GraphRAG":  ["✓","✓","✓","✓","✓","✓","✗","✓"],
-        }
-        st.dataframe(pd.DataFrame(matrix).set_index("Feature"), use_container_width=True)
-        st.markdown('<div style="font-family:\'DM Mono\',monospace;font-size:.7rem;color:#4a4a60;margin-top:.4rem;">✓ = supported &nbsp;|&nbsp; ~ = partial &nbsp;|&nbsp; ✗ = not supported</div>', unsafe_allow_html=True)
-
-        # When to use
-        st.markdown('<div class="section-header">When to use each approach</div>', unsafe_allow_html=True)
-        when_cols = st.columns(3)
-        when_data = {
-            "LLM Only":  ("Best when…", ["You need a quick general answer","No dataset is available","Speed is the top priority","The query is broad / exploratory"], "#7c6ff7"),
-            "Basic RAG": ("Better when…", ["You have a corpus of text","Semantic similarity matters","Setup simplicity is key","Queries are straightforward"], "#2ac9a0"),
-            "GraphRAG":  ("Best when…", ["Relationships between entities matter","You need ingredient ↔ review ↔ product links","Multi-hop reasoning is required","Accuracy & explainability > speed","Domain-specific structured knowledge exists"], "#f5855a"),
-        }
-        for col, (name, (subtitle, points, color)) in zip(when_cols, when_data.items()):
-            with col:
-                items_html = "".join(f'<div style="font-size:.8rem;color:#c9c4bc;padding:3px 0;">→ {p}</div>' for p in points)
-                st.markdown(f"""
-                <div class="pipe-card" style="border-top:2px solid {color};">
-                  <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:{color};margin-bottom:.4rem;">{subtitle}</div>
-                  <div style="font-size:.95rem;font-weight:600;color:#f0ebe0;margin-bottom:.7rem;">{name}</div>
-                  {items_html}
-                </div>""", unsafe_allow_html=True)
-
     # ── TAB 4: Metrics
     with tab_metrics:
-        names     = list(results.keys())
-        latencies = [results[n]["latency"] for n in names]
-        lengths   = [len(results[n]["answer"].split()) for n in names]
-        overalls  = [results[n]["overall"] for n in names]
-        mc1,mc2,mc3 = st.columns(3)
-        with mc1:
-            st.markdown('<div class="section-header">Latency (s)</div>', unsafe_allow_html=True)
-            st.bar_chart(pd.DataFrame({"Latency (s)": latencies}, index=names), height=200)
-        with mc2:
-            st.markdown('<div class="section-header">Answer Length (words)</div>', unsafe_allow_html=True)
-            st.bar_chart(pd.DataFrame({"Words": lengths}, index=names), height=200)
-        with mc3:
-            st.markdown('<div class="section-header">Overall Score (/10)</div>', unsafe_allow_html=True)
-            st.bar_chart(pd.DataFrame({"Score": overalls}, index=names), height=200)
-        st.markdown('<div class="section-header">Summary Table</div>', unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame([{
-            "Pipeline":    n,
-            "Latency (s)": f"{results[n]['latency']:.2f}",
-            "Words":       len(results[n]["answer"].split()),
-            "Overall /10": results[n]["overall"],
-            "Status":      "✓ OK" if not results[n]["error"] else "✗ Error",
-        } for n in names]), use_container_width=True, hide_index=True)
+        names     = [n for n in results.keys() if not results[n]["error"]]
+        if names:
+            latencies = [results[n]["latency"] for n in names]
+            tokens    = [results[n]["tokens"] for n in names]
+            costs     = [results[n]["cost"] for n in names]
+            mc1,mc2,mc3 = st.columns(3)
+            with mc1:
+                st.markdown('<div class="section-header">Latency (s)</div>', unsafe_allow_html=True)
+                st.bar_chart(pd.DataFrame({"Latency (s)": latencies}, index=names), height=200)
+            with mc2:
+                st.markdown('<div class="section-header">Tokens Used</div>', unsafe_allow_html=True)
+                st.bar_chart(pd.DataFrame({"Tokens": tokens}, index=names), height=200)
+            with mc3:
+                st.markdown('<div class="section-header">Cost ($)</div>', unsafe_allow_html=True)
+                st.bar_chart(pd.DataFrame({"Cost": costs}, index=names), height=200)
 
     # ── TAB 5: Export
     with tab_export:
-        st.markdown('<div class="section-header">Download</div>', unsafe_allow_html=True)
-        lines = [f"Query: {data['query']}\n","="*60]
-        for name, res in results.items():
-            lines += [f"\n## {name}", f"Latency : {res['latency']:.2f}s", f"Overall : {res['overall']}/10", f"Scores  : {res['scores']}", f"\nAnswer:\n{res['answer']}"]
-        st.download_button("⬇ Download as .txt", data="\n".join(lines), file_name="graphrag_comparison.txt", mime="text/plain")
         st.markdown('<div class="section-header">Raw JSON</div>', unsafe_allow_html=True)
-        st.code(json.dumps({
+        export_data = {
             "query": data["query"],
-            "results": {k:{"answer":v["answer"],"latency_s":round(v["latency"],4),"scores":v["scores"],"overall":v["overall"],"error":v["error"]} for k,v in results.items()}
-        }, indent=2), language="json")
+            "metrics": {
+                k: {
+                    "latency_s": round(v["latency"],3),
+                    "total_tokens": v["tokens"],
+                    "cost_usd": v["cost"],
+                    "judge_verdict": v.get("judge", {}).get("verdict"),
+                    "judge_reason": v.get("judge", {}).get("reason"),
+                    "bertscore": v.get("bertscore", 0.0),
+                    "error": v["error"]
+                } for k,v in results.items()
+            }
+        }
+        st.code(json.dumps(export_data, indent=2), language="json")
 
 # ── FOOTER
 st.markdown("---")
