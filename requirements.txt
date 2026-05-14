@@ -1,9 +1,10 @@
 streamlit
 pandas
 chromadb
-langchain
-langchain-community
-langchain-groq
+langchain==1.2.18
+langchain-core==1.3.3
+langchain-community==0.4.1
+langchain-groq==1.1.2
 pyTigerGraph
 requests
 bert-score
