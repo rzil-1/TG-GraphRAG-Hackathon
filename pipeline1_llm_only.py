@@ -1,21 +1,21 @@
 import os
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from utils import extract_text
 
 # Load environment variables
 load_dotenv()
 
-# Get Gemini API key
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-if not gemini_api_key or gemini_api_key == "your_gemini_api_key_here":
-    raise ValueError("Please set your GEMINI_API_KEY in the .env file.")
+# Get Groq API key
+groq_api_key = os.getenv("GROQ_API_KEY")
+if not groq_api_key or groq_api_key == "your_groq_api_key_here":
+    raise ValueError("Please set your GROQ_API_KEY in the .env file.")
 
-# Initialize the LangChain Gemini Wrapper
-llm = ChatGoogleGenerativeAI(
-    model="gemini-flash-latest", 
-    google_api_key=gemini_api_key,
+# Initialize the LangChain Groq Wrapper
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile", 
+    api_key=groq_api_key,
     temperature=0.3
 )
 

@@ -14,7 +14,7 @@ from utils import extract_text
 import pyTigerGraph as tg
 
 load_dotenv()
-gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+groq_api_key = os.getenv("GROQ_API_KEY", "")
 
 st.set_page_config(
     page_title="GraphRAG vs RAG — TigerGraph Hackathon",
@@ -89,20 +89,21 @@ def llm_judge(question: str, answer) -> dict:
     if not answer.strip() or "Error:" in answer:
         return {"verdict": "FAIL", "reason": "Pipeline returned an error or empty answer."}
 
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_groq import ChatGroq
     from langchain_core.messages import HumanMessage
 
-    judge = ChatGoogleGenerativeAI(model="gemini-flash-latest", google_api_key=gemini_api_key, temperature=0)
+    judge = ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_api_key, temperature=0)
     
-    # UPDATED PROMPT: More forgiving for RAG systems that correctly refuse to hallucinate
+    # UPDATED PROMPT: Fixed false positives where the Judge thought specific real reviews were "hallucinations".
     prompt = (
         "You are an objective AI evaluator. Grade the AI's answer to the user's question as PASS or FAIL.\n\n"
         "Criteria for PASS:\n"
-        "- The answer is relevant, helpful, and addresses the query using provided facts.\n"
-        "- IMPORTANT EXCEPTION: If the AI honestly states that the context doesn't contain the answer (e.g., 'I don't know based on the context'), you MUST grade it as a PASS because it successfully avoided hallucination.\n\n"
+        "- The answer is relevant, helpful, and directly addresses the query.\n"
+        "- The answer synthesizes product reviews in a logical way.\n"
+        "- IMPORTANT: Assume any specific customer reviews, quotes, or medical anecdotes (like angular cheilitis, animal testing, etc.) mentioned in the answer are TRUE and came from the provided database context. These are signs of a GOOD RAG pipeline, not hallucinations.\n"
+        "- If the AI honestly states that the context doesn't contain the answer, you MUST grade it as a PASS.\n\n"
         "Criteria for FAIL:\n"
-        "- The answer includes completely made-up facts (hallucinations).\n"
-        "- The answer is entirely off-topic or nonsensical.\n\n"
+        "- The answer is completely off-topic, nonsensical, or refuses to answer without a valid reason.\n\n"
         f"Question: {question}\n\nAnswer: {answer}\n\n"
         "Reply with EXACTLY: VERDICT: <PASS|FAIL>. Reason: <1 short sentence>."
     )

@@ -3,12 +3,12 @@ import time
 import pandas as pd
 from dotenv import load_dotenv
 import pyTigerGraph as tg
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from utils import extract_text
 
 load_dotenv()
-gemini_api_key = os.getenv("GEMINI_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
 # ---------------------------------------------------------------------------
 # Connection helper — reusable by the dashboard (app.py)
@@ -141,9 +141,9 @@ def run_graphrag_pipeline(conn, question, search_brand="Laneige", search_skin_ty
         search_brand: brand to filter on (from dashboard input)
         search_skin_type: skin type to filter on (from dashboard input)
     """
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-flash-latest", 
-        google_api_key=gemini_api_key,
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile", 
+        api_key=groq_api_key,
         temperature=0.3
     )
     

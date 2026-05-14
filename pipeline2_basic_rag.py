@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_community.document_loaders import DataFrameLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -9,7 +9,7 @@ from utils import extract_text
 
 
 load_dotenv()
-gemini_api_key = os.getenv("GEMINI_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
 def load_data(sample_size=5000):
     print(f"Loading {sample_size} reviews from Kaggle dataset...")
@@ -47,9 +47,9 @@ def build_vector_store(df):
     return vectorstore
 
 def get_rag_chain(vectorstore):
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-flash-latest", 
-        google_api_key=gemini_api_key,
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile", 
+        api_key=groq_api_key,
         temperature=0.3
     )
     
