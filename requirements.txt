@@ -1,0 +1,14 @@
+streamlit
+pandas
+chromadb
+langchain
+langchain-community
+langchain-groq
+pyTigerGraph
+requests
+bert-score
+evaluate
+python-dotenv
+tiktoken
+sentence-transformers
+langchain-huggingface
