@@ -13,6 +13,52 @@ We tackle the common "needle in a haystack" problem found in vector databases. B
 
 ## 🏗 Architecture
 
+```mermaid
+graph TD
+    %% Styling
+    classDef user fill:#8b5cf6,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef ui fill:#3b82f6,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef db fill:#f97316,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef llm fill:#10b981,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef eval fill:#ef4444,stroke:#fff,stroke-width:2px,color:#fff;
+
+    %% Nodes
+    User(("🧑‍💻 User")):::user
+    UI["💻 Streamlit Dashboard"]:::ui
+    
+    %% Pipelines
+    subgraph "Concurrent Evaluation Pipelines"
+        P1["Pipeline 1: LLM-Only<br>(Zero Context)"]:::llm
+        P2["Pipeline 2: Basic RAG<br>(Vector Similarity)"]:::llm
+        P3["Pipeline 3: GraphRAG<br>(Relationship Traversal)"]:::llm
+    end
+
+    %% Databases
+    Chroma[("🗄️ ChromaDB<br>(Unstructured Vectors)")]:::db
+    Tiger[("🐅 TigerGraph<br>(Structured Knowledge Graph)")]:::db
+    
+    %% Output & Judge
+    Judge{"⚖️ LLM-as-a-Judge<br>(Llama 3 70B)"}:::eval
+    Metrics["📊 Dashboard Metrics<br>(Tokens, Latency, Cost)"]:::ui
+
+    %% Connections
+    User -- "Enters Query + Filters" --> UI
+    
+    UI -- "Dispatches Query" --> P1
+    UI -- "Dispatches Query" --> P2
+    UI -- "Dispatches Query" --> P3
+    
+    P2 -- "Retrieves similar chunks" --> Chroma
+    P3 -- "Traverses connected entities" --> Tiger
+    
+    P1 -- "Generates Answer" --> Judge
+    P2 -- "Generates Answer" --> Judge
+    P3 -- "Generates Answer" --> Judge
+    
+    Judge -- "Scores Accuracy &<br>Extracts Metrics" --> Metrics
+    Metrics -- "Displays Results" --> User
+```
+
 Our Streamlit dashboard acts as an evaluation harness, running three pipelines side-by-side:
 
 1. **Pipeline 1: LLM-Only Baseline**
