@@ -92,7 +92,7 @@ def llm_judge(question: str, answer) -> dict:
     from langchain_groq import ChatGroq
     from langchain_core.messages import HumanMessage
 
-    judge = ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_api_key, temperature=0)
+    judge = ChatGroq(model="llama-3.1-8b-instant", api_key=groq_api_key, temperature=0)
     
     # UPDATED PROMPT: Fixed false positives where the Judge thought specific real reviews were "hallucinations".
     prompt = (

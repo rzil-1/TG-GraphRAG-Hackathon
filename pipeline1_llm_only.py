@@ -14,7 +14,7 @@ if not groq_api_key or groq_api_key == "your_groq_api_key_here":
 
 # Initialize the LangChain Groq Wrapper
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile", 
+    model="llama-3.1-8b-instant", 
     api_key=groq_api_key,
     temperature=0.3
 )

@@ -48,7 +48,7 @@ def build_vector_store(df):
 
 def get_rag_chain(vectorstore):
     llm = ChatGroq(
-        model="llama-3.3-70b-versatile", 
+        model="llama-3.1-8b-instant", 
         api_key=groq_api_key,
         temperature=0.3
     )
