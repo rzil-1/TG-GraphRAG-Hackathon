@@ -58,7 +58,7 @@ graph TD
 Our Streamlit dashboard acts as an evaluation harness, running three pipelines side-by-side:
 
 1. **Pipeline 1: LLM-Only Baseline**
-   * Prompts Gemini (`gemini-flash-latest`) directly with zero context. Prone to hallucination.
+   * Prompts Groq (`llama-3.3-70b-versatile`) directly with zero context. Prone to hallucination.
 2. **Pipeline 2: Basic Vector RAG**
    * Uses HuggingFace embeddings (`all-MiniLM-L6-v2`) and ChromaDB to retrieve top text chunks. High token usage and high latency due to unstructured text blobs.
 3. **Pipeline 3: TigerGraph GraphRAG (The Solution)**
@@ -83,7 +83,7 @@ pip install -r requirements_hackathon.txt
 ### 2. Configure Environment variables
 Create a `.env` file in the root directory and add the following keys:
 ```ini
-GEMINI_API_KEY="your_google_gemini_key"
+GROQ_API_KEY="your_groq_api_key_here"
 TG_HOST="your_tigergraph_host_url"
 TG_PASSWORD="your_tigergraph_password"
 ```

@@ -210,7 +210,7 @@ with st.sidebar:
     else:
         st.caption("No queries yet.")
     st.markdown("---")
-    st.markdown('<span style="font-family:\'DM Mono\',monospace;font-size:.68rem;color:#3d3d50;">TigerGraph · Chroma · Gemini 2.5 Flash</span>', unsafe_allow_html=True)
+    st.markdown('<span style="font-family:\'DM Mono\',monospace;font-size:.68rem;color:#3d3d50;">TigerGraph · Chroma · Groq · Llama 3.3</span>', unsafe_allow_html=True)
 
 # ── HEADER
 st.markdown('<div class="hero-title">GraphRAG Hackathon Dashboard</div>', unsafe_allow_html=True)
