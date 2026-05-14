@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import pyTigerGraph as tg
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
+from utils import extract_text
 
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -141,7 +142,7 @@ def run_graphrag_pipeline(conn, question, search_brand="Laneige", search_skin_ty
         search_skin_type: skin type to filter on (from dashboard input)
     """
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash", 
+        model="gemini-flash-latest", 
         google_api_key=gemini_api_key,
         temperature=0.3
     )
@@ -170,7 +171,7 @@ def run_graphrag_pipeline(conn, question, search_brand="Laneige", search_skin_ty
     for attempt in range(3):
         try:
             result = chain.invoke({"context": context, "question": question})
-            return result.content
+            return extract_text(result.content)
         except Exception as e:
             if "503" in str(e) or "UNAVAILABLE" in str(e):
                 wait = 2 ** attempt

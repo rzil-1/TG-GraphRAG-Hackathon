@@ -5,6 +5,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.document_loaders import DataFrameLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from utils import extract_text
 
 
 load_dotenv()
@@ -47,7 +48,7 @@ def build_vector_store(df):
 
 def get_rag_chain(vectorstore):
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash", 
+        model="gemini-flash-latest", 
         google_api_key=gemini_api_key,
         temperature=0.3
     )
@@ -98,7 +99,7 @@ if __name__ == "__main__":
     result = qa_chain.invoke(test_q)
     
     print("Answer:")
-    print(result.content)
+    print(extract_text(result.content if hasattr(result, 'content') else result))
     print("\n--- Retrieved Context Sources ---")
     for doc in docs:
         print(f"- {doc.page_content[:150]}...")

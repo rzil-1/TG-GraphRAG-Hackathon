@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
+from utils import extract_text
 
 # Load environment variables
 load_dotenv()
@@ -13,7 +14,7 @@ if not gemini_api_key or gemini_api_key == "your_gemini_api_key_here":
 
 # Initialize the LangChain Gemini Wrapper
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash", 
+    model="gemini-flash-latest", 
     google_api_key=gemini_api_key,
     temperature=0.3
 )
@@ -31,7 +32,7 @@ def ask_llm_baseline(question: str) -> str:
     for attempt in range(3):
         try:
             response = llm.invoke([HumanMessage(content=question)])
-            return response.content
+            return extract_text(response.content)
         except Exception as e:
             if "503" in str(e) or "UNAVAILABLE" in str(e):
                 wait = 2 ** attempt  # 1s, 2s, 4s

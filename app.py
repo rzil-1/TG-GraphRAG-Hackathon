@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from pipeline1_llm_only import ask_llm_baseline
 from pipeline2_basic_rag import load_data, build_vector_store, get_rag_chain
 from pipeline3_graphrag import run_graphrag_pipeline, get_tg_connection, is_graph_loaded, ingest_data_to_tigergraph
+from utils import extract_text
 import pyTigerGraph as tg
 
 load_dotenv()
@@ -81,15 +82,17 @@ def estimate_tokens(text: str) -> int:
 def compute_cost(prompt_tokens: int, completion_tokens: int) -> float:
     return (prompt_tokens / 1_000_000 * PRICE_PER_1M_INPUT) + (completion_tokens / 1_000_000 * PRICE_PER_1M_OUTPUT)
 
-def llm_judge(question: str, answer: str) -> dict:
+def llm_judge(question: str, answer) -> dict:
     """Evaluates answer accuracy using LLM-as-a-Judge with rate-limit handling and nuanced grading."""
+    # Normalize: ensure answer is always a clean string
+    answer = _ensure_str(answer)
     if not answer.strip() or "Error:" in answer:
         return {"verdict": "FAIL", "reason": "Pipeline returned an error or empty answer."}
 
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_core.messages import HumanMessage
 
-    judge = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=gemini_api_key, temperature=0)
+    judge = ChatGoogleGenerativeAI(model="gemini-flash-latest", google_api_key=gemini_api_key, temperature=0)
     
     # UPDATED PROMPT: More forgiving for RAG systems that correctly refuse to hallucinate
     prompt = (
@@ -108,7 +111,7 @@ def llm_judge(question: str, answer: str) -> dict:
         try:
             time.sleep(3) # Space out calls to prevent 429 Resource Exhausted
             resp = judge.invoke([HumanMessage(content=prompt)])
-            raw = resp.content.strip()
+            raw = extract_text(resp.content).strip()
             v = "PASS" if "PASS" in raw.upper() else "FAIL"
             
             # Extract just the reason to keep the UI clean
@@ -123,8 +126,13 @@ def llm_judge(question: str, answer: str) -> dict:
                 return {"verdict": "FAIL", "reason": f"Judge Error: {e}"}
     return {"verdict": "FAIL", "reason": "Rate limit exceeded."}
 
-def compute_bertscore(reference: str, candidate: str) -> float:
+def _ensure_str(val) -> str:
+    """Wrapper around extract_text for backwards compatibility."""
+    return extract_text(val)
+
+def compute_bertscore(reference: str, candidate) -> float:
     """Calculates semantic similarity. Falls back to keyword overlap if bert_score isn't installed."""
+    candidate = _ensure_str(candidate)
     try:
         from bert_score import BERTScorer
         scorer = BERTScorer(lang="en", rescale_with_baseline=True)
@@ -230,9 +238,11 @@ if run:
         def run_pipeline(name, fn):
             start = time.time()
             try:
-                answer = fn()
+                raw_answer = fn()
                 latency = time.time() - start
-                if isinstance(answer, str) and answer.startswith("Error"):
+                # Normalize answer to a clean string (handles AIMessage, list, etc.)
+                answer = _ensure_str(raw_answer)
+                if answer.startswith("Error"):
                     return {"answer":"","latency":latency,"error":answer, "tokens":0, "cost":0.0}
                 
                 # Hackathon Metric: Token Estimation
@@ -255,11 +265,10 @@ if run:
             if "LLM Only"  in pipelines_to_run:
                 results["LLM Only"]  = run_pipeline("LLM Only", lambda: ask_llm_baseline(user_query))
             if "Basic RAG" in pipelines_to_run:
-                def _rag():
-                    res = qa_chain.invoke(user_query)
-                    return res.content if hasattr(res,"content") else str(res)
-                results["Basic RAG"] = run_pipeline("Basic RAG", _rag)
+                time.sleep(2)  # Avoid rate-limiting between pipeline calls
+                results["Basic RAG"] = run_pipeline("Basic RAG", lambda: qa_chain.invoke(user_query))
             if "GraphRAG"  in pipelines_to_run:
+                time.sleep(2)  # Avoid rate-limiting between pipeline calls
                 results["GraphRAG"]  = run_pipeline("GraphRAG", lambda: run_graphrag_pipeline(conn, user_query, search_brand=brand, search_skin_type=skin_type))
 
             # Run Judges
