@@ -13,4 +13,4 @@ python-dotenv
 tiktoken
 sentence-transformers
 langchain-huggingface
-pyarrow==14.0.1
+datasets>=2.16.1
