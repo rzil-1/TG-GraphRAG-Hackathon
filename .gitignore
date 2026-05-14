@@ -20,3 +20,4 @@ data/
 debug_tg.py
 test_tg.py
 create_schema.py
+reviews_*.csv
